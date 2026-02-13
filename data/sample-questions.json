@@ -1,0 +1,189 @@
+{
+  "users": [
+    {
+      "id": "admin-user-id",
+      "email": "admin@admin.com",
+      "role": "admin",
+      "full_name": "Admin User",
+      "created_at": "2024-01-01T00:00:00Z"
+    },
+    {
+      "id": "student1-id",
+      "email": "student1@example.com",
+      "role": "student",
+      "full_name": "Alice Johnson",
+      "created_at": "2024-01-01T00:00:00Z"
+    },
+    {
+      "id": "student2-id",
+      "email": "student2@example.com",
+      "role": "student",
+      "full_name": "Bob Smith",
+      "created_at": "2024-01-01T00:00:00Z"
+    },
+    {
+      "id": "student3-id",
+      "email": "student3@example.com",
+      "role": "student",
+      "full_name": "Carol Williams",
+      "created_at": "2024-01-01T00:00:00Z"
+    },
+    {
+      "id": "student4-id",
+      "email": "student4@example.com",
+      "role": "student",
+      "full_name": "David Brown",
+      "created_at": "2024-01-01T00:00:00Z"
+    }
+  ],
+  "tests": [
+    {
+      "id": "1",
+      "name": "Listening Test",
+      "type": "listening",
+      "duration_minutes": 20,
+      "total_questions": 10,
+      "instructions": "You will hear an audio recording. Each audio clip can be played a maximum of 2 times. Questions will appear at specific timestamps. Select the best answer for each question."
+    },
+    {
+      "id": "2",
+      "name": "Speaking Test",
+      "type": "speaking",
+      "duration_minutes": 15,
+      "total_questions": 5,
+      "instructions": "Record your responses to the speaking prompts. Speak clearly and at a natural pace. You will have 30 seconds to prepare and 60 seconds to record each response."
+    },
+    {
+      "id": "3",
+      "name": "Reading Test",
+      "type": "reading",
+      "duration_minutes": 30,
+      "total_questions": 12,
+      "instructions": "Read the passage and answer the comprehension questions. The passage remains visible throughout the test. Choose the best answer for each question."
+    },
+    {
+      "id": "4",
+      "name": "Writing Test",
+      "type": "writing",
+      "duration_minutes": 45,
+      "total_questions": 2,
+      "instructions": "Write essays in response to the prompts. Your writing will be evaluated for grammar, vocabulary, organization, and coherence. Spend approximately 20 minutes on each essay."
+    },
+    {
+      "id": "5",
+      "name": "Vocabulary & Grammar Test",
+      "type": "vocabulary",
+      "duration_minutes": 25,
+      "total_questions": 15,
+      "instructions": "Complete the fill-in-the-blank and multiple-choice questions testing vocabulary and grammar. Choose the best option or type the correct word."
+    }
+  ],
+  "questions_summary": {
+    "listening_test": {
+      "total_questions": 10,
+      "question_types": {
+        "mcq": 8,
+        "fill_blank": 2
+      },
+      "topics": [
+        "University admission process",
+        "Application requirements",
+        "Interview preparation",
+        "Decision making"
+      ]
+    },
+    "speaking_test": {
+      "total_questions": 5,
+      "question_types": {
+        "audio_response": 5
+      },
+      "topics": [
+        "Personal experiences",
+        "Opinion sharing",
+        "Problem solving",
+        "Future planning"
+      ]
+    },
+    "reading_test": {
+      "total_questions": 12,
+      "question_types": {
+        "mcq": 10,
+        "fill_blank": 2
+      },
+      "topics": [
+        "Technology and AI",
+        "Human-computer interaction",
+        "Education and adaptation",
+        "Future workforce"
+      ]
+    },
+    "writing_test": {
+      "total_questions": 2,
+      "question_types": {
+        "essay": 2
+      },
+      "topics": [
+        "Technology impact on society",
+        "Educational reform"
+      ]
+    },
+    "vocabulary_test": {
+      "total_questions": 15,
+      "question_types": {
+        "mcq": 12,
+        "fill_blank": 3
+      },
+      "focus_areas": [
+        "Grammar correction",
+        "Vocabulary usage",
+        "Sentence structure",
+        "Prepositions",
+        "Verb forms"
+      ]
+    }
+  },
+  "sample_attempts": [
+    {
+      "student": "Alice Johnson",
+      "test": "Listening Test",
+      "status": "completed",
+      "score": "8/10",
+      "date": "1 day ago"
+    },
+    {
+      "student": "Alice Johnson",
+      "test": "Reading Test",
+      "status": "completed",
+      "score": "10/12",
+      "date": "2 days ago"
+    },
+    {
+      "student": "Bob Smith",
+      "test": "Vocabulary & Grammar Test",
+      "status": "completed",
+      "score": "12/15",
+      "date": "3 days ago"
+    },
+    {
+      "student": "Carol Williams",
+      "test": "Writing Test",
+      "status": "in_progress",
+      "score": "In progress",
+      "date": "Now"
+    },
+    {
+      "student": "David Brown",
+      "test": "Speaking Test",
+      "status": "abandoned",
+      "score": "Not completed",
+      "date": "1 hour ago"
+    }
+  ],
+  "usage_notes": [
+    "This JSON file provides an overview of the seed data structure",
+    "The actual implementation is in scripts/seed.ts with full TypeScript types",
+    "Use the seed script to populate your database with realistic sample data",
+    "The data includes various question types and realistic scenarios",
+    "Sample attempts show different completion statuses for testing purposes"
+  ]
+}

@@ -1,0 +1,198 @@
+from django.http import JsonResponse
+from django.views.decorators.http import require_http_methods
+from django.views.decorators.csrf import csrf_exempt
+from django.utils import timezone
+from django.db.models import Prefetch
+import json
+import logging
+from api.models import (
+    User, ClapTest, ClapTestComponent, StudentClapAssignment, 
+    ClapTestItem, StudentClapResponse
+)
+from api.utils.jwt_utils import get_user_from_request
+
+logger = logging.getLogger(__name__)
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def list_assigned_tests(request):
+    """
+    GET: List all CLAP tests assigned to the student
+    """
+    user = get_user_from_request(request)
+    if not user or user.role != 'student':
+        return JsonResponse({'error': 'Unauthorized'}, status=401)
+
+    try:
+        assignments = StudentClapAssignment.objects.filter(
+            student=user
+        ).select_related('clap_test').prefetch_related('clap_test__components').order_by('-assigned_at')
+
+        data = []
+        for assignment in assignments:
+            components = []
+            for comp in assignment.clap_test.components.all():
+                components.append({
+                    'id': str(comp.id),
+                    'type': comp.test_type,
+                    'title': comp.title,
+                    'duration': comp.duration_minutes
+                })
+
+            data.append({
+                'assignment_id': str(assignment.id),
+                'test_id': str(assignment.clap_test.id),
+                'test_name': assignment.clap_test.name,
+                'status': assignment.status,
+                'assigned_at': assignment.assigned_at.isoformat(),
+                'started_at': assignment.started_at.isoformat() if assignment.started_at else None,
+                'completed_at': assignment.completed_at.isoformat() if assignment.completed_at else None,
+                'components': components
+            })
+            
+        return JsonResponse({'assignments': data})
+
+    except Exception as e:
+        logger.error(f"Error listing assignments: {str(e)}")
+        return JsonResponse({'error': str(e)}, status=500)
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def student_test_items(request, assignment_id, component_id):
+    """
+    GET: List items for a specific component within an assignment
+    Ensures the student owns the assignment.
+    Hides correct answers/evaluation logic.
+    """
+    user = get_user_from_request(request)
+    if not user or user.role != 'student':
+        return JsonResponse({'error': 'Unauthorized'}, status=401)
+
+    try:
+        assignment = StudentClapAssignment.objects.get(id=assignment_id, student=user)
+    except StudentClapAssignment.DoesNotExist:
+        return JsonResponse({'error': 'Assignment not found'}, status=404)
+
+    # Verify component belongs to the assigned test
+    try:
+        component = ClapTestComponent.objects.get(id=component_id, clap_test=assignment.clap_test)
+    except ClapTestComponent.DoesNotExist:
+        return JsonResponse({'error': 'Component not found in this test'}, status=404)
+
+    # If assignment hasn't started, mark it as started
+    if not assignment.started_at:
+        assignment.started_at = timezone.now()
+        assignment.status = 'started'
+        assignment.save()
+
+    # Get items
+    items = ClapTestItem.objects.filter(component=component).order_by('order_index')
+    
+    # Get existing responses for this component
+    responses = StudentClapResponse.objects.filter(
+        assignment=assignment,
+        item__component=component
+    )
+    response_map = {str(r.item.id): r.response_data for r in responses}
+
+    items_data = []
+    for item in items:
+        # Sanitize content to remove answers if it's a quiz
+        content = item.content.copy()
+        if item.item_type == 'mcq' and 'correct_option' in content:
+            del content['correct_option'] # Don't send answer to frontend!
+            
+        items_data.append({
+            'id': str(item.id),
+            'item_type': item.item_type,
+            'order_index': item.order_index,
+            'points': item.points,
+            'content': content,
+            'saved_response': response_map.get(str(item.id))
+        })
+
+    return JsonResponse({
+        'component': {
+            'id': str(component.id),
+            'title': component.title,
+            'duration_minutes': component.duration_minutes
+        },
+        'items': items_data
+    })
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def submit_response(request, assignment_id):
+    """
+    POST: Submit a response for a single item
+    Body: { "item_id": "uuid", "response_data": {...} }
+    """
+    user = get_user_from_request(request)
+    if not user or user.role != 'student':
+        return JsonResponse({'error': 'Unauthorized'}, status=401)
+
+    try:
+        assignment = StudentClapAssignment.objects.get(id=assignment_id, student=user)
+    except StudentClapAssignment.DoesNotExist:
+        return JsonResponse({'error': 'Assignment not found'}, status=404)
+
+    try:
+        data = json.loads(request.body)
+        item_id = data.get('item_id')
+        response_data = data.get('response_data')
+
+        if not item_id:
+            return JsonResponse({'error': 'Item ID required'}, status=400)
+
+        item = ClapTestItem.objects.get(id=item_id)
+        
+        # Verify item belongs to the assigned test
+        if item.component.clap_test_id != assignment.clap_test_id:
+            return JsonResponse({'error': 'Item does not belong to this assignment'}, status=400)
+
+        # Create or update response
+        response, created = StudentClapResponse.objects.update_or_create(
+            assignment=assignment,
+            item=item,
+            defaults={
+                'response_data': response_data,
+                'updated_at': timezone.now()
+            }
+        )
+
+        # Auto-evaluate MCQ items
+        if item.item_type == 'mcq' and 'correct_option' in item.content:
+            try:
+                # Expecting response_data to be {'selected_option': index}
+                selected_option = response_data.get('selected_option')
+                correct_option = item.content.get('correct_option')
+                
+                if selected_option is not None and int(selected_option) == int(correct_option):
+                    response.is_correct = True
+                    response.marks_awarded = item.points
+                else:
+                    response.is_correct = False
+                    response.marks_awarded = 0
+                
+                response.save()
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Error evaluating MCQ response: {e}")
+
+        return JsonResponse({'message': 'Response saved', 'response_id': str(response.id)})
+
+    except ClapTestItem.DoesNotExist:
+        return JsonResponse({'error': 'Item not found'}, status=404)
+    except Exception as e:
+        logger.error(f"Error submitting response: {str(e)}")
+        return JsonResponse({'error': str(e)}, status=500)
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def finish_component(request, assignment_id, component_id):
+    """
+    POST: Mark a component as finished (could trigger auto-evaluation)
+    Currently, we just log it. Real status tracking might need a new table or field.
+    """
+    # For now, we don't have a 'ComponentAttempt' table, so we just return success.
+    # We could check if all components are done to mark the whole assignment as completed.
+    return JsonResponse({'message': 'Component finished successfully'})

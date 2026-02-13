@@ -1,0 +1,63 @@
+﻿git : remote: error: GH013: Repository 
+rule violations found for 
+refs/heads/main.        
+At line:1 char:1
++ git push -u origin main 2> 
+push_error.log
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~
+    + CategoryInfo          : NotSpecif 
+   ied: (remote: error: ...s/main.      
+      :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCom 
+   mandError
+ 
+remote: 
+remote: - GITHUB PUSH PROTECTION        
+remote:   ΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇö
+ΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓ
+ÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇ
+öΓÇöΓÇöΓÇöΓÇö        
+remote:     Resolve the following 
+violations before pushing again        
+remote: 
+remote:     - Push cannot contain 
+secrets        
+remote: 
+remote:             
+remote:      (?) Learn how to resolve a 
+blocked push        
+remote:      https://docs.github.com/cod
+e-security/secret-scanning/working-with-
+secret-scanning-and-push-protection/work
+ing-with-push-protection-from-the-comman
+d-line#resolving-a-blocked-push        
+remote:             
+remote:             
+remote:       ΓÇöΓÇö OpenAI API Key ΓÇöΓ
+ÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇ
+öΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇö
+ΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇöΓÇö        
+remote:        locations:        
+remote:          - commit: 9cf0f680e0528
+044e8b8f7eed91768bb6f5c40dd        
+remote:            path: 
+django-backend/.env.bak:15        
+remote:             
+remote:        (?) To push, remove 
+secret from commit(s) or follow this 
+URL to allow the secret.        
+remote:        https://github.com/pranav
+2004-bit/CLAP/security/secret-scanning/u
+nblock-secret/39d7OgVkOFhyFHVjNs3QSRufom
+A        
+remote:             
+remote: 
+remote: 
+To https://github.com/pranav2004-bit/CLA
+P.git
+ ! [remote rejected] main -> main (push 
+declined due to repository rule 
+violations)
+error: failed to push some refs to 'http
+s://github.com/pranav2004-bit/CLAP.git'
