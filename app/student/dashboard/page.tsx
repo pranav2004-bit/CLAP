@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
+import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -13,7 +14,6 @@ import { StatsOverview } from '@/components/StatsOverview'
 import { RecentActivity } from '@/components/RecentActivity'
 import { useStudentDashboard } from '@/hooks/useStudentDashboard'
 import {
-  GraduationCap,
   Headphones,
   Mic,
   BookOpen,
@@ -172,9 +172,7 @@ export default function StudentDashboard() {
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-primary flex items-center justify-center">
-                <GraduationCap className="w-6 h-6 text-primary-foreground" />
-              </div>
+              <Image src="/images/clap-logo.png" alt="CLAP Logo" width={40} height={40} className="rounded-xl" />
               <div>
                 <span className="text-lg font-bold gradient-text">CLAP</span>
                 <div className="flex items-baseline gap-2">

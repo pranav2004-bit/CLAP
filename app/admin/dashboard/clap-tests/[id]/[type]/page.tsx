@@ -1,18 +1,33 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { ArrowLeft, Save, Plus, Trash2, GripVertical, FileText, Mic, Image as ImageIcon, CheckSquare, Eye, Settings, Clock, X, Loader2, ArrowUp, ArrowDown } from 'lucide-react'
+import { ArrowLeft, Save, Plus, Trash2, GripVertical, FileText, Mic, Image as ImageIcon, CheckSquare, Eye, Settings, Clock, X, Loader2, ArrowUp, ArrowDown, Check } from 'lucide-react'
 import { toast } from 'sonner'
 import { getApiUrl } from '@/lib/api-config'
 import { TestPreviewModal } from '@/components/admin/TestPreviewModal'
 
+// Question classification helper - only MCQ and subjective count as questions
+const isQuestion = (itemType: string): boolean => {
+    return itemType === 'mcq' || itemType === 'subjective'
+}
+
+// ... imports ...
+
 export default function ClapTestEditorPage() {
+    return (
+        <Suspense fallback={<div className="p-8 text-center">Loading editor...</div>}>
+            <ClapTestEditorContent />
+        </Suspense>
+    )
+}
+
+function ClapTestEditorContent() {
     const params = useParams()
     const router = useRouter()
     // ID here is the CLAP TEST ID, not component ID. We need component ID.
@@ -225,6 +240,82 @@ export default function ClapTestEditorPage() {
         }
     }
 
+    const handleAudioUpload = async (itemId: string, file?: File) => {
+        let selectedFile = file
+        if (!selectedFile) {
+            const input = document.createElement('input')
+            input.type = 'file'
+            input.accept = 'audio/*'
+            input.onchange = (e) => {
+                const f = (e.target as HTMLInputElement).files?.[0]
+                if (f) handleAudioUpload(itemId, f)
+            }
+            input.click()
+            return
+        }
+
+        if (selectedFile.size > 10 * 1024 * 1024) {
+            toast.error('File too large (max 10MB)')
+            return
+        }
+
+        const formData = new FormData()
+        formData.append('audio', selectedFile)
+
+        try {
+            const response = await fetch(
+                getApiUrl(`admin/clap-items/${itemId}/upload-audio`),
+                {
+                    method: 'POST',
+                    headers: { 'x-user-id': localStorage.getItem('user_id') || '' },
+                    body: formData
+                }
+            )
+
+            const data = await response.json()
+            if (response.ok) {
+                setItems(items.map(i =>
+                    i.id === itemId
+                        ? { ...i, content: { ...i.content, has_audio_file: true } }
+                        : i
+                ))
+                toast.success('Audio uploaded successfully')
+            } else {
+                toast.error(data.error || 'Upload failed')
+            }
+        } catch (error) {
+            toast.error('Network error')
+        }
+    }
+
+    const handleDeleteAudio = async (itemId: string) => {
+        if (!confirm('Delete audio file? Students will not be able to play it.')) return
+
+        try {
+            const response = await fetch(
+                getApiUrl(`admin/clap-items/${itemId}/audio`),
+                {
+                    method: 'DELETE',
+                    headers: { 'x-user-id': localStorage.getItem('user_id') || '' }
+                }
+            )
+
+            if (response.ok) {
+                setItems(items.map(i =>
+                    i.id === itemId
+                        ? { ...i, content: { ...i.content, has_audio_file: false } }
+                        : i
+                ))
+                toast.success('Audio deleted')
+            } else {
+                const data = await response.json()
+                toast.error(data.error || 'Failed to delete')
+            }
+        } catch (error) {
+            toast.error('Network error')
+        }
+    }
+
 
     const [isSavingSettings, setIsSavingSettings] = useState(false)
 
@@ -270,8 +361,9 @@ export default function ClapTestEditorPage() {
             case 'text_block': return { text: 'Enter instructions or reading passage here...' }
             case 'mcq': return { question: 'Question text', options: ['Option 1', 'Option 2'], correct_option: 0 }
             case 'subjective': return { question: 'Question text', min_words: 50 }
-            case 'audio_block': return { title: 'Audio Clip', url: '', instructions: 'Listen to the audio...' }
+            case 'audio_block': return { title: 'Audio Clip', instructions: 'Listen carefully to the audio clip.', play_limit: 3, has_audio_file: false, url: '' }
             case 'file_upload': return { prompt: 'Upload your response', file_types: ['pdf', 'docx'] }
+            case 'audio_recording': return { question: 'Describe your weekend plans', instructions: 'Speak clearly for 1-2 minutes', max_duration: 120 }
             default: return {}
         }
     }
@@ -290,9 +382,9 @@ export default function ClapTestEditorPage() {
                     <div>
                         <h1 className="text-xl font-bold capitalize">{params.type} Test Editor</h1>
                         <p className="text-sm text-gray-500 mb-1">
-                            Total Marks: <span className="font-bold text-indigo-600">{items.reduce((sum, item) => sum + (item.points || 0), 0)}</span>
+                            Total Marks: <span className="font-bold text-indigo-600">{items.filter(item => isQuestion(item.item_type)).reduce((sum, item) => sum + (item.points || 0), 0)}</span>
                         </p>
-                        <p className="text-xs text-gray-400">{items.length} items • {component?.title}</p>
+                        <p className="text-xs text-gray-400">{items.length} items • {items.filter(item => isQuestion(item.item_type)).length} questions • {component?.title}</p>
                     </div>
                 </div>
                 <div className="flex gap-2">
@@ -395,12 +487,14 @@ export default function ClapTestEditorPage() {
 
                                     <div className="flex items-center ml-auto gap-2">
                                         <div className="flex items-center gap-2 mr-4">
-                                            <Label className="text-xs text-gray-500">Points:</Label>
+                                            <Label className={`text-xs ${isQuestion(item.item_type) ? 'text-gray-500' : 'text-gray-300'}`}>Points:</Label>
                                             <Input
                                                 type="number"
                                                 className="w-16 h-7 text-xs"
                                                 value={item.points}
                                                 onChange={(e) => handleUpdateItem(item.id, { points: parseInt(e.target.value) })}
+                                                disabled={!isQuestion(item.item_type)}
+                                                title={!isQuestion(item.item_type) ? 'Only questions (MCQ) have points' : ''}
                                             />
                                         </div>
 
@@ -538,20 +632,96 @@ export default function ClapTestEditorPage() {
                                 )}
 
                                 {item.item_type === 'audio_block' && (
-                                    <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
-                                        <Label className="mb-2 block">Audio URL</Label>
+                                    <div className="p-4 bg-gray-50 rounded-lg border border-gray-200 space-y-4">
+                                        {/* File Upload */}
+                                        <div>
+                                            <Label className="mb-2 block">Audio File</Label>
+                                            {item.content.has_audio_file ? (
+                                                <div className="flex items-center gap-2 p-2 bg-green-50 rounded">
+                                                    <Check className="w-4 h-4 text-green-600" />
+                                                    <span className="text-sm text-green-700">Audio uploaded</span>
+                                                    <Button size="sm" variant="outline" onClick={() => handleAudioUpload(item.id)}>
+                                                        Replace
+                                                    </Button>
+                                                    <Button size="sm" variant="destructive" onClick={() => handleDeleteAudio(item.id)}>
+                                                        Delete
+                                                    </Button>
+                                                </div>
+                                            ) : (
+                                                <Input
+                                                    type="file"
+                                                    accept="audio/wav,audio/mp3,audio/webm,audio/ogg,audio/m4a,audio/aac"
+                                                    onChange={(e) => e.target.files?.[0] && handleAudioUpload(item.id, e.target.files[0])}
+                                                />
+                                            )}
+                                        </div>
+
+                                        {/* Play Limit */}
+                                        <div>
+                                            <Label className="mb-2 block">Play Limit (required)</Label>
+                                            <Input
+                                                type="number"
+                                                min="1"
+                                                value={item.content.play_limit || 1}
+                                                onChange={(e) => handleUpdateItem(item.id, {
+                                                    content: { ...item.content, play_limit: parseInt(e.target.value) || 1 }
+                                                })}
+                                            />
+                                            <p className="text-xs text-gray-500 mt-1">Number of times students can play this audio</p>
+                                        </div>
+
+                                        {/* Instructions */}
+                                        <div>
+                                            <Label className="mb-2 block">Instructions</Label>
+                                            <Textarea
+                                                value={item.content.instructions || ''}
+                                                onChange={(e) => handleUpdateItem(item.id, {
+                                                    content: { ...item.content, instructions: e.target.value }
+                                                })}
+                                                placeholder="Instructions for students (e.g., 'Listen carefully...')"
+                                            />
+                                        </div>
+
+                                        {/* Legacy URL support */}
+                                        {!item.content.has_audio_file && (
+                                            <div>
+                                                <Label className="mb-2 block">Audio URL (legacy)</Label>
+                                                <Input
+                                                    value={item.content.url || ''}
+                                                    onChange={(e) => handleUpdateItem(item.id, {
+                                                        content: { ...item.content, url: e.target.value }
+                                                    })}
+                                                    placeholder="https://example.com/audio.mp3"
+                                                />
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {item.item_type === 'audio_recording' && (
+                                    <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
+                                        <Label className="mb-2 block font-semibold text-blue-900">Question / Prompt</Label>
                                         <Input
-                                            value={item.content.url || ''}
-                                            placeholder="https://..."
-                                            onChange={(e) => handleUpdateItem(item.id, { content: { url: e.target.value } })}
-                                            className="mb-2"
+                                            value={item.content.question || ''}
+                                            placeholder="e.g., Describe your weekend plans"
+                                            onChange={(e) => handleUpdateItem(item.id, { content: { ...item.content, question: e.target.value } })}
+                                            className="mb-3"
                                         />
-                                        <Label className="mb-2 block mt-3">Instructions</Label>
+                                        <Label className="mb-2 block font-semibold text-blue-900">Instructions (Optional)</Label>
                                         <Input
                                             value={item.content.instructions || ''}
-                                            placeholder="Instructions for students..."
-                                            onChange={(e) => handleUpdateItem(item.id, { content: { instructions: e.target.value } })}
+                                            placeholder="e.g., Speak clearly for 1-2 minutes"
+                                            onChange={(e) => handleUpdateItem(item.id, { content: { ...item.content, instructions: e.target.value } })}
+                                            className="mb-3"
                                         />
+                                        <Label className="mb-2 block font-semibold text-blue-900">Max Duration (seconds)</Label>
+                                        <Input
+                                            type="number"
+                                            value={item.content.max_duration || 120}
+                                            placeholder="120"
+                                            onChange={(e) => handleUpdateItem(item.id, { content: { ...item.content, max_duration: parseInt(e.target.value) } })}
+                                        />
+                                        <p className="text-xs text-blue-600 mt-2">Students can record audio up to this duration</p>
                                     </div>
                                 )}
 
@@ -584,6 +754,9 @@ export default function ClapTestEditorPage() {
                             </Button>
                             <Button variant="ghost" size="sm" className="justify-start w-48 hover:bg-orange-600 hover:text-white group transition-colors" onClick={() => handleAddItem('file_upload')}>
                                 <GripVertical className="w-4 h-4 mr-2 text-orange-500 group-hover:text-white" /> File Upload
+                            </Button>
+                            <Button variant="ghost" size="sm" className="justify-start w-48 hover:bg-pink-600 hover:text-white group transition-colors" onClick={() => handleAddItem('audio_recording')}>
+                                <Mic className="w-4 h-4 mr-2 text-pink-500 group-hover:text-white" /> 🎤 Audio Recording
                             </Button>
                         </div>
                     )}

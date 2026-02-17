@@ -29,17 +29,26 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={inter.variable}>
-      <body className={`${inter.className} min-h-screen`}>
+      <body className={`${inter.className} min-h-screen pb-12`}>
         <AuthProvider>
           {children}
           <Toaster richColors position="top-right" />
         </AuthProvider>
 
         {/* Company Footer Branding */}
-        <footer className="fixed bottom-0 left-0 right-0 bg-background border-t border-border py-2 px-4 text-center text-xs text-muted-foreground z-50">
-          <div className="flex items-center justify-center gap-2">
-            <span>Product developed by</span>
-            <span className="font-semibold text-primary">SANJIVO</span>
+        <footer className="fixed bottom-0 left-0 right-0 bg-background/80 backdrop-blur-sm border-t border-border py-2 px-6 text-xs text-muted-foreground z-50">
+          <div className="max-w-7xl mx-auto flex items-center justify-between">
+            <div className="flex-1"></div> {/* Left spacer */}
+
+            <div className="flex-1 flex justify-center items-center gap-1.5">
+              <span>Product by</span>
+              <span className="font-bold text-primary tracking-wide">SANJIVO</span>
+            </div>
+
+            <div className="flex-1 flex justify-end items-center gap-1.5 opacity-80">
+              <span className="italic">Co-Powered by</span>
+              <span className="font-semibold text-foreground/90">Aura-Tech-Vision</span>
+            </div>
           </div>
         </footer>
       </body>

@@ -6,9 +6,9 @@ Complete coverage of all 23 endpoints
 
 from django.urls import path
 from api.views.admin import (
-    batches, 
-    students, 
-    student_detail, 
+    batches,
+    students,
+    student_detail,
     clap_tests,
     batch_detail,
     student_password,
@@ -16,10 +16,12 @@ from api.views.admin import (
     clap_test_assignment,
     student_toggle_active,
     clap_test_items,
-    clap_components
+    clap_components,
+    audio_upload as admin_audio_upload,
+    clap_test_results
 )
-from api.views.student import profile, clap_attempt
-from api.views import evaluate
+from api.views.student import profile, clap_attempt, audio_upload, audio_playback
+from api.views import evaluate, legacy_tests, legacy_attempts
 
 app_name = 'api'
 
@@ -46,12 +48,17 @@ urlpatterns = [
     path('admin/clap-tests/<uuid:test_id>', clap_test_detail.clap_test_detail_handler, name='admin_clap_test_detail'),
     path('admin/clap-tests/<uuid:test_id>/assign', clap_test_assignment.assign_clap_test, name='admin_clap_test_assign'),
     path('admin/clap-tests/<uuid:test_id>/unassign', clap_test_assignment.unassign_clap_test, name='admin_clap_test_unassign'),
+    path('admin/clap-tests/<uuid:test_id>/results', clap_test_results.clap_test_results_handler, name='admin_clap_test_results'),
     
     # CLAP Test Items (Content)
     path('admin/clap-components/<uuid:component_id>', clap_components.clap_component_detail_handler, name='admin_clap_component_detail'),
     path('admin/clap-components/<uuid:component_id>/items', clap_test_items.clap_test_items_handler, name='admin_clap_test_items'),
     path('admin/clap-items/<uuid:item_id>', clap_test_items.clap_test_item_detail_handler, name='admin_clap_test_item_detail'),
     path('admin/clap-components/<uuid:component_id>/reorder-items', clap_test_items.reorder_items_handler, name='admin_reorder_items'),
+
+    # Audio Block File Upload
+    path('admin/clap-items/<uuid:item_id>/upload-audio', admin_audio_upload.upload_audio_file, name='admin_upload_audio'),
+    path('admin/clap-items/<uuid:item_id>/audio', admin_audio_upload.delete_audio_file, name='admin_delete_audio'),
     
     # ============================================
     # STUDENT PORTAL (6 endpoints)
@@ -64,6 +71,22 @@ urlpatterns = [
     path('student/clap-assignments/<uuid:assignment_id>/components/<uuid:component_id>/items', clap_attempt.student_test_items, name='student_test_items'),
     path('student/clap-assignments/<uuid:assignment_id>/submit', clap_attempt.submit_response, name='student_submit_response'),
     path('student/clap-assignments/<uuid:assignment_id>/components/<uuid:component_id>/finish', clap_attempt.finish_component, name='student_finish_component'),
+
+    # Audio Recording
+    path('student/clap-assignments/<uuid:assignment_id>/submit-audio', audio_upload.submit_audio_response, name='student_submit_audio'),
+    path('student/audio-responses/<uuid:audio_response_id>/file', audio_upload.retrieve_audio_file, name='student_audio_file'),
+
+    # Audio Block Playback
+    path('student/clap-items/<uuid:item_id>/audio', audio_playback.retrieve_audio_file, name='student_retrieve_audio'),
+    path('student/clap-items/<uuid:item_id>/track-playback', audio_playback.track_playback, name='student_track_playback'),
+    path('student/clap-items/<uuid:item_id>/playback-status', audio_playback.get_playback_status, name='student_playback_status'),
+
+    # ============================================
+    # LEGACY / SHARED TESTS (For Dashboard Compatibility)
+    # ============================================
+    path('tests', legacy_tests.tests_handler, name='legacy_tests_list'),
+    path('tests/<uuid:test_id>', legacy_tests.test_detail_handler, name='legacy_test_detail'),
+    path('attempts', legacy_attempts.attempts_handler, name='legacy_attempts_list'),
     
     # ============================================
     # AI EVALUATION (2 endpoints)
@@ -72,4 +95,4 @@ urlpatterns = [
     path('evaluate/writing', evaluate.evaluate_writing_test, name='evaluate_writing'),
 ]
 
-# Total: 23 + 6 = 29 endpoints
+# Total: 23 + 6 + 5 = 34 endpoints (added 5 audio block endpoints)

@@ -14,10 +14,10 @@
     --popover: 0 0% 100%;
     --popover-foreground: 224 71% 4%;
     
-    /* Primary: Deep Indigo - Trust & Education */
-    --primary: 243 75% 59%;
+    /* Primary: CLAP Red - Brand Color */
+    --primary: 4 68% 45%;
     --primary-foreground: 0 0% 100%;
-    --primary-glow: 243 75% 70%;
+    --primary-glow: 4 68% 55%;
     
     /* Secondary: Cool Slate */
     --secondary: 220 14% 96%;
@@ -49,7 +49,7 @@
     
     --border: 220 13% 91%;
     --input: 220 13% 91%;
-    --ring: 243 75% 59%;
+    --ring: 4 68% 45%;
     --radius: 0.75rem;
     
     /* Test-specific colors */
@@ -60,8 +60,8 @@
     --vocabulary: 340 82% 52%;
     
     /* Gradients */
-    --gradient-primary: linear-gradient(135deg, hsl(243 75% 59%), hsl(280 68% 60%));
-    --gradient-hero: linear-gradient(135deg, hsl(243 75% 59%) 0%, hsl(280 68% 60%) 50%, hsl(172 66% 50%) 100%);
+    --gradient-primary: linear-gradient(135deg, hsl(4 68% 45%), hsl(280 68% 60%));
+    --gradient-hero: linear-gradient(135deg, hsl(4 68% 45%) 0%, hsl(280 68% 60%) 50%, hsl(172 66% 50%) 100%);
     --gradient-card: linear-gradient(180deg, hsl(0 0% 100%) 0%, hsl(220 20% 98%) 100%);
     
     /* Shadows */
@@ -69,7 +69,7 @@
     --shadow-md: 0 4px 6px -1px hsl(220 9% 46% / 0.1), 0 2px 4px -2px hsl(220 9% 46% / 0.1);
     --shadow-lg: 0 10px 15px -3px hsl(220 9% 46% / 0.1), 0 4px 6px -4px hsl(220 9% 46% / 0.1);
     --shadow-xl: 0 20px 25px -5px hsl(220 9% 46% / 0.1), 0 8px 10px -6px hsl(220 9% 46% / 0.1);
-    --shadow-glow: 0 0 40px hsl(243 75% 59% / 0.3);
+    --shadow-glow: 0 0 40px hsl(4 68% 45% / 0.3);
     --shadow-card: 0 1px 3px 0 hsl(220 9% 46% / 0.1), 0 1px 2px -1px hsl(220 9% 46% / 0.1);
     --shadow-card-hover: 0 10px 15px -3px hsl(220 9% 46% / 0.1), 0 4px 6px -4px hsl(220 9% 46% / 0.1);
   }
@@ -84,9 +84,9 @@
     --popover: 224 71% 8%;
     --popover-foreground: 210 20% 98%;
     
-    --primary: 243 75% 65%;
+    --primary: 4 68% 58%;
     --primary-foreground: 0 0% 100%;
-    --primary-glow: 243 75% 75%;
+    --primary-glow: 4 68% 65%;
     
     --secondary: 215 28% 17%;
     --secondary-foreground: 210 20% 98%;
@@ -111,9 +111,9 @@
     
     --border: 215 28% 17%;
     --input: 215 28% 17%;
-    --ring: 243 75% 65%;
-    
-    --shadow-glow: 0 0 40px hsl(243 75% 65% / 0.4);
+    --ring: 4 68% 58%;
+
+    --shadow-glow: 0 0 40px hsl(4 68% 58% / 0.4);
   }
 }
 

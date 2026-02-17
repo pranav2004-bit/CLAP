@@ -105,6 +105,24 @@ USE_TZ = True
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
+# Media files (uploaded content)
+MEDIA_ROOT = BASE_DIR / 'media'
+MEDIA_URL = '/media/'
+
+# Audio upload settings
+AUDIO_UPLOAD_MAX_SIZE = 10 * 1024 * 1024  # 10 MB
+AUDIO_ALLOWED_EXTENSIONS = ['webm', 'mp4', 'mp3', 'wav', 'ogg', 'm4a', 'aac']
+AUDIO_ALLOWED_MIMETYPES = [
+    'audio/webm',
+    'audio/mp4',
+    'audio/mpeg',
+    'audio/wav',
+    'audio/ogg',
+    'audio/m4a',
+    'audio/aac',
+    'audio/x-m4a'
+]
+
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 

@@ -1,19 +1,19 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
+import Image from 'next/image'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { 
-  GraduationCap, 
-  Users, 
-  Shield, 
-  Eye, 
+import {
+  Users,
+  Shield,
+  Eye,
   EyeOff,
   ArrowLeft,
   Loader2,
@@ -24,13 +24,13 @@ import { signIn } from '@/lib/supabase'
 
 type UserRole = 'student' | 'admin'
 
-export default function LoginPage() {
+function LoginContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const initialRole = (searchParams.get('role') as UserRole) || 'student'
-  
+
   const [role, setRole] = useState<UserRole>('student')
-  
+
   // Force initial role from URL params
   useEffect(() => {
     const urlRole = searchParams.get('role') as UserRole;
@@ -38,7 +38,7 @@ export default function LoginPage() {
       setRole(urlRole);
     }
   }, [searchParams]);
-  
+
   // Debug logging
   console.log('Current role:', role);
   console.log('Initial role:', initialRole);
@@ -54,35 +54,35 @@ export default function LoginPage() {
     e.preventDefault()
     setIsLoading(true)
     setError('')
-    
+
     try {
       // For student login, we need to get the actual email from username
       let email = formData.identifier
-      
+
       if (role === 'student') {
         // In a real app, you'd look up the email by username
         // For now, we'll assume username is the email
         email = formData.identifier
       }
-      
+
       const { data, error: signInError } = await signIn(email, formData.password, role)
-      
+
       if (signInError) {
         setError(signInError.message || 'Invalid credentials')
         setIsLoading(false)
         return
       }
-      
+
       if (data?.user) {
         // Store user data
         localStorage.setItem('user_id', data.user.id)
         localStorage.setItem('user_email', data.user.email)
         localStorage.setItem('user_role', data.user.user_metadata?.role || 'student')
         localStorage.setItem('user_name', data.user.user_metadata?.full_name || '')
-        
+
         // Check if profile is completed
         const profileCompleted = data.user.user_metadata?.profile_completed || false
-        
+
         // Redirect based on role and profile completion
         if (data.user.user_metadata?.role === 'admin') {
           router.push('/admin/dashboard')
@@ -112,25 +112,23 @@ export default function LoginPage() {
       {/* Left Panel - Decorative */}
       <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-primary via-primary/90 to-speaking relative overflow-hidden">
         <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmYiIGZpbGwtb3BhY2l0eT0iMC4wNSI+PHBhdGggZD0iTTM2IDM0djItSDI0di0yaDEyek0zNiAyNHYySDI0di0yaDF6Ii8+PC9nPjwvZz48L3N2Zz4=')] opacity-50" />
-        
+
         <div className="relative z-10 flex flex-col justify-center px-12 py-16">
           <Link href="/" className="flex items-center gap-2 mb-12">
-            <div className="w-12 h-12 rounded-xl bg-primary-foreground/20 backdrop-blur-sm flex items-center justify-center">
-              <GraduationCap className="w-7 h-7 text-primary-foreground" />
-            </div>
+            <Image src="/images/clap-logo.png" alt="CLAP Logo" width={48} height={48} className="rounded-xl" />
             <div>
               <span className="text-2xl font-bold text-primary-foreground">CLAP</span>
               <div className="text-xs text-primary-foreground/70 mt-1">by SANJIVO</div>
             </div>
           </Link>
-          
+
           <h1 className="text-4xl font-bold text-primary-foreground mb-4">
             Welcome Back
           </h1>
           <p className="text-lg text-primary-foreground/80 mb-12 max-w-md">
             Continue your English language assessment journey with our comprehensive testing platform.
           </p>
-          
+
           <div className="space-y-4">
             <div className="flex items-start gap-3">
               <div className="w-8 h-8 rounded-lg bg-primary-foreground/20 flex items-center justify-center flex-shrink-0 mt-0.5">
@@ -182,11 +180,10 @@ export default function LoginPage() {
                   console.log('Role after timeout:', role);
                 }, 100);
               }}
-              className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 ease-in-out ${
-                role === 'student' 
-                  ? 'bg-card text-foreground shadow-sm transform scale-105' 
+              className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 ease-in-out ${role === 'student'
+                  ? 'bg-card text-foreground shadow-sm transform scale-105'
                   : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'
-              }`}
+                }`}
             >
               <Users className="w-4 h-4" />
               Student
@@ -200,11 +197,10 @@ export default function LoginPage() {
                   console.log('Role after timeout:', role);
                 }, 100);
               }}
-              className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 ease-in-out ${
-                role === 'admin' 
-                  ? 'bg-card text-foreground shadow-sm transform scale-105' 
+              className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 ease-in-out ${role === 'admin'
+                  ? 'bg-card text-foreground shadow-sm transform scale-105'
                   : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'
-              }`}
+                }`}
             >
               <Shield className="w-4 h-4" />
               Admin
@@ -228,7 +224,7 @@ export default function LoginPage() {
               </div>
               <CardTitle className="text-2xl">Sign In</CardTitle>
               <CardDescription>
-                {role === 'student' 
+                {role === 'student'
                   ? 'Enter your credentials provided by your institution'
                   : 'Access your admin dashboard to manage tests and students'
                 }
@@ -241,7 +237,7 @@ export default function LoginPage() {
                   <AlertDescription>{error}</AlertDescription>
                 </Alert>
               )}
-              
+
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="identifier">
@@ -281,9 +277,9 @@ export default function LoginPage() {
                   </div>
                 </div>
 
-                <Button 
-                  type="submit" 
-                  className="w-full h-12 mt-6" 
+                <Button
+                  type="submit"
+                  className="w-full h-12 mt-6"
                   variant="hero"
                   disabled={isLoading}
                 >
@@ -315,5 +311,17 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Loader2 className="w-10 h-10 animate-spin text-primary" />
+      </div>
+    }>
+      <LoginContent />
+    </Suspense>
   )
 }

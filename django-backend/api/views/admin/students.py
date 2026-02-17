@@ -80,7 +80,7 @@ def list_students(request):
                 'is_active': student.is_active,
                 'profile_completed': student.profile_completed,
                 'batch_id': str(student.batch_id) if student.batch_id else None,
-                'created_at': student.created_at.isoformat(),
+                'created_at': student.created_at.isoformat() if student.created_at else None,
                 'batches': {
                     'id': str(student.batch.id),
                     'batch_name': student.batch.batch_name
@@ -167,7 +167,7 @@ def create_student(request):
                 'is_active': deleted_student.is_active,
                 'profile_completed': deleted_student.profile_completed,
                 'batch_id': str(deleted_student.batch_id) if deleted_student.batch_id else None,
-                'created_at': deleted_student.created_at.isoformat(),
+                'created_at': deleted_student.created_at.isoformat() if deleted_student.created_at else None,
                 'restored': True  # Flag to indicate this was a restoration
             }
             
@@ -216,7 +216,7 @@ def create_student(request):
             'is_active': student.is_active,
             'profile_completed': student.profile_completed,
             'batch_id': str(student.batch_id) if student.batch_id else None,
-            'created_at': student.created_at.isoformat(),
+            'created_at': student.created_at.isoformat() if student.created_at else None,
             'restored': False
         }
         

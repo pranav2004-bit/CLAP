@@ -262,6 +262,7 @@ class ClapTestItem(models.Model):
         ('text_block', 'Text Block / Instructions'),
         ('audio_block', 'Audio Block'),
         ('file_upload', 'File Upload'),
+        ('audio_recording', 'Audio Recording'),
     ]
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -302,3 +303,120 @@ class StudentClapResponse(models.Model):
         
     def __str__(self):
         return f"Response to {self.item} by {self.assignment.student.email}"
+
+
+class StudentAudioResponse(models.Model):
+    """
+    Stores audio recording submissions for CLAP tests
+    Links to StudentClapResponse for evaluation results
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    # Relationships
+    assignment = models.ForeignKey(
+        StudentClapAssignment,
+        on_delete=models.CASCADE,
+        db_column='assignment_id',
+        related_name='audio_responses'
+    )
+    item = models.ForeignKey(
+        ClapTestItem,
+        on_delete=models.CASCADE,
+        db_column='item_id'
+    )
+    response = models.OneToOneField(
+        StudentClapResponse,
+        on_delete=models.CASCADE,
+        db_column='response_id',
+        null=True,
+        blank=True,
+        related_name='audio_file'
+    )
+
+    # Audio file metadata
+    file_path = models.CharField(max_length=500)  # Relative to MEDIA_ROOT
+    file_size = models.IntegerField()  # Bytes
+    mime_type = models.CharField(max_length=50)  # audio/webm, audio/mp4, etc.
+    duration_seconds = models.DecimalField(max_digits=6, decimal_places=2)
+
+    # Timestamps
+    recorded_at = models.DateTimeField(default=timezone.now)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    # Processing status (for future auto-transcription)
+    transcription = models.TextField(null=True, blank=True)
+    transcribed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'student_audio_responses'
+        managed = True  # This is a new table, Django manages it
+        unique_together = [['assignment', 'item']]
+        indexes = [
+            models.Index(fields=['assignment', 'item']),
+            models.Index(fields=['uploaded_at']),
+        ]
+
+    def __str__(self):
+        return f"Audio Response: {self.item} by {self.assignment.student.email}"
+
+    def get_file_url(self):
+        """Generate authenticated URL for file access"""
+        return f"/api/student/audio-responses/{self.id}/file"
+
+    def delete_file(self):
+        """Delete physical file from filesystem"""
+        import os
+        from django.conf import settings
+        full_path = os.path.join(settings.MEDIA_ROOT, self.file_path)
+        if os.path.exists(full_path):
+            os.remove(full_path)
+
+
+class AdminAudioFile(models.Model):
+    """
+    Stores admin-uploaded audio files for audio_block items
+    Used for playing audio clips to students
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    # Relationships
+    item = models.OneToOneField(
+        ClapTestItem,
+        on_delete=models.CASCADE,
+        db_column='item_id',
+        related_name='admin_audio'
+    )
+    uploaded_by = models.UUIDField(db_column='uploaded_by', null=True)
+
+    # Audio file metadata
+    file_path = models.CharField(max_length=500)  # Relative to MEDIA_ROOT
+    file_size = models.IntegerField()  # Bytes
+    mime_type = models.CharField(max_length=50)  # audio/mpeg, audio/wav, etc.
+    duration_seconds = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
+    original_filename = models.CharField(max_length=255)
+
+    # Timestamps
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'admin_audio_files'
+        managed = True  # This is a new table, Django manages it
+        indexes = [
+            models.Index(fields=['item'], name='idx_admin_audio_item'),
+        ]
+
+    def __str__(self):
+        return f"Admin Audio: {self.original_filename} for {self.item}"
+
+    def get_file_url(self):
+        """Generate authenticated URL for file access"""
+        return f"/api/student/clap-items/{self.item_id}/audio"
+
+    def delete_file(self):
+        """Delete physical file from filesystem"""
+        import os
+        from django.conf import settings
+        full_path = os.path.join(settings.MEDIA_ROOT, self.file_path)
+        if os.path.exists(full_path):
+            os.remove(full_path)

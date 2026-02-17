@@ -8,24 +8,22 @@ import {
   BarChart3,
   Users,
   FileText,
-  GraduationCap,
   Headphones,
   Mic,
   BookOpen,
   PenTool,
   Brain,
   Clock,
+  Settings,
   CheckCircle2,
   TrendingUp,
   TrendingDown,
   AlertCircle,
   Calendar,
-  Eye,
   Edit,
   Trash2,
   Menu,
   Bell,
-  Settings,
   LogOut,
   Plus,
   Download,
@@ -40,6 +38,7 @@ import {
   Loader2
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
+import Image from 'next/image'
 import { toast } from 'sonner'
 import { BatchManagement } from '@/components/BatchManagement'
 import { EnhancedStudentManagement } from '@/components/EnhancedStudentManagement'
@@ -48,24 +47,25 @@ import { getApiUrl } from '@/lib/api-config'
 import { feedback } from '@/lib/user-feedback'
 
 export default function SimplifiedAdminDashboard() {
-  const [activeTab, setActiveTab] = useState<'overview' | 'students' | 'tests' | 'analytics' | 'batches' | 'clap-tests'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'students' | 'analytics' | 'batches' | 'clap-tests'>('overview')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [isAddStudentModalOpen, setIsAddStudentModalOpen] = useState(false)
-  const [selectedTest, setSelectedTest] = useState<any>(null)
-  const [showTestDetails, setShowTestDetails] = useState(false)
-  const [showCreateTestModal, setShowCreateTestModal] = useState(false)
-  const [showTestReports, setShowTestReports] = useState(false)
-  const [showTestConfiguration, setShowTestConfiguration] = useState(false)
   const [showCreateClapTestModal, setShowCreateClapTestModal] = useState(false)
   const [showClapTestDetails, setShowClapTestDetails] = useState(false)
   const [showEditClapTestModal, setShowEditClapTestModal] = useState(false)
   const [selectedClapTest, setSelectedClapTest] = useState<any>(null)
   const [clapTests, setClapTests] = useState<any[]>([])
   const [batches, setBatches] = useState<any[]>([])
+
   const [newClapTestName, setNewClapTestName] = useState('')
   const [newClapTestBatchId, setNewClapTestBatchId] = useState('')
   const [isCreatingTest, setIsCreatingTest] = useState(false)
   const [loadingTestId, setLoadingTestId] = useState<string | null>(null)
+  const [showClapConfigureModal, setShowClapConfigureModal] = useState(false)
+  const [configureSaving, setConfigureSaving] = useState(false)
+  const [configName, setConfigName] = useState('')
+  const [configStatus, setConfigStatus] = useState('draft')
+  const [configComponents, setConfigComponents] = useState<any[]>([])
   const router = useRouter()
 
   const fetchBatches = async () => {
@@ -203,13 +203,7 @@ export default function SimplifiedAdminDashboard() {
     { id: 'BATCH003', name: '2025-29', startYear: 2025, endYear: 2029, studentCount: 5, isActive: false }
   ]
 
-  const testData = [
-    { name: 'Listening Test', type: 'listening', avgScore: 7.5, completionRate: 85, icon: Headphones, color: 'listening', marks: 10, duration: '20 min' },
-    { name: 'Speaking Test', type: 'speaking', avgScore: 6.8, completionRate: 72, icon: Mic, color: 'speaking', marks: 10, duration: '5 min' },
-    { name: 'Reading Test', type: 'reading', avgScore: 8.1, completionRate: 92, icon: BookOpen, color: 'reading', marks: 10, duration: '25 min' },
-    { name: 'Writing Test', type: 'writing', avgScore: 7.9, completionRate: 88, icon: PenTool, color: 'writing', marks: 10, duration: '30 min' },
-    { name: 'Vocabulary Test', type: 'vocabulary', avgScore: 8.3, completionRate: 95, icon: Brain, color: 'vocabulary', marks: 10, duration: '15 min' }
-  ]
+
 
   const getStatusVariant = (status: string) => {
     switch (status) {
@@ -287,69 +281,7 @@ export default function SimplifiedAdminDashboard() {
     }
   };
 
-  const handleViewTest = (test: any) => {
-    setSelectedTest(test);
-    setShowTestDetails(true);
-    console.log('Viewing test:', test.name);
-  };
 
-  const handleCloseTestDetails = () => {
-    setShowTestDetails(false);
-    setSelectedTest(null);
-  };
-
-  const handleConfigureTest = (test: any) => {
-    setSelectedTest(test);
-    setShowTestConfiguration(true);
-    console.log('Configuring test:', test.name);
-  };
-
-  const handleCreateTest = () => {
-    setShowCreateTestModal(true);
-    console.log('Opening test creation wizard');
-  };
-
-  const handleCloseCreateTest = () => {
-    setShowCreateTestModal(false);
-  };
-
-  const handleViewReport = (test: any) => {
-    setSelectedTest(test);
-    setShowTestReports(true);
-    console.log('Viewing report for:', test.name);
-  };
-
-  const handleCloseReports = () => {
-    setShowTestReports(false);
-    setSelectedTest(null);
-  };
-
-  const handleCloseConfiguration = () => {
-    setShowTestConfiguration(false);
-    setSelectedTest(null);
-  };
-
-  const handleSaveTestConfiguration = (configData: any) => {
-    console.log('Saving configuration:', configData);
-    toast.success(`${selectedTest?.name} configuration saved successfully`);
-    handleCloseConfiguration();
-  };
-
-  const handleCreateNewTest = (testData: any) => {
-    console.log('Creating new test:', testData);
-    toast.success(`New ${testData.type} test created successfully`);
-    handleCloseCreateTest();
-  };
-
-  const handlePublishTest = (test: any) => {
-    console.log('Publishing test:', test.name);
-    toast.success(`${test.name} published successfully`);
-  };
-
-  const handleUnpublishTest = (test: any) => {
-    console.log('Unpublishing test:', test.name);
-    toast.success(`${test.name} unpublished successfully`);
-  };
 
   // CLAP Test Handlers
   const handleCreateClapTest = () => {
@@ -414,6 +346,89 @@ export default function SimplifiedAdminDashboard() {
       feedback.networkError();
     }
   };
+
+  // ---- Configure Modal Handlers ----
+  const handleOpenClapConfigure = () => {
+    if (!selectedClapTest) return
+    setConfigName(selectedClapTest.name || '')
+    setConfigStatus(selectedClapTest.status || 'draft')
+    setConfigComponents(
+      (selectedClapTest.tests || []).map((comp: any) => ({
+        id: comp.id,
+        name: comp.name,
+        type: comp.type,
+        duration: comp.duration ?? 0,
+        max_marks: comp.max_marks ?? 10,
+      }))
+    )
+    setShowClapConfigureModal(true)
+  }
+
+  const handleSaveClapConfiguration = async () => {
+    if (!selectedClapTest) return
+    setConfigureSaving(true)
+    try {
+      // 1. Update test name/status
+      const testRes = await fetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}`), {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': localStorage.getItem('user_id') || ''
+        },
+        body: JSON.stringify({ name: configName, status: configStatus })
+      })
+      if (!testRes.ok) {
+        const err = await testRes.json().catch(() => ({}))
+        throw new Error(err.error || 'Failed to update test')
+      }
+
+      // 2. Update each component's duration and max_marks
+      for (const comp of configComponents) {
+        const compRes = await fetch(getApiUrl(`admin/clap-components/${comp.id}`), {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-user-id': localStorage.getItem('user_id') || ''
+          },
+          body: JSON.stringify({
+            duration: comp.duration,
+            max_marks: comp.max_marks
+          })
+        })
+        if (!compRes.ok) {
+          const err = await compRes.json().catch(() => ({}))
+          throw new Error(err.error || `Failed to update ${comp.name}`)
+        }
+      }
+
+      toast.success('Configuration saved successfully')
+      // Refresh test data
+      await fetchClapTests()
+      // Update selected test locally
+      setSelectedClapTest((prev: any) => ({
+        ...prev,
+        name: configName,
+        status: configStatus,
+        tests: configComponents.map((c: any) => ({
+          ...((prev?.tests || []).find((t: any) => t.id === c.id) || {}),
+          duration: c.duration,
+          max_marks: c.max_marks,
+        }))
+      }))
+      setShowClapConfigureModal(false)
+    } catch (error: any) {
+      console.error('Error saving configuration:', error)
+      toast.error(error.message || 'Failed to save configuration')
+    } finally {
+      setConfigureSaving(false)
+    }
+  }
+
+  // ---- View Results Handler ----
+  const handleOpenClapResults = () => {
+    if (!selectedClapTest) return
+    router.push(`/admin/dashboard/clap-tests/${selectedClapTest.id}/results`)
+  }
 
   const handleAssignClapTest = async (clapTest: any) => {
     try {
@@ -583,8 +598,6 @@ export default function SimplifiedAdminDashboard() {
     }
   };
 
-
-
   return (
     <div className="flex min-h-screen bg-gray-50">
       {/* Mobile sidebar overlay */}
@@ -600,11 +613,9 @@ export default function SimplifiedAdminDashboard() {
         <div className="flex flex-col h-full">
           {/* Logo Header */}
           <div className="flex items-center gap-3 px-6 py-5 border-b border-gray-200">
-            <div className="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center">
-              <GraduationCap className="w-6 h-6 text-white" />
-            </div>
+            <Image src="/images/clap-logo.png" alt="CLAP Logo" width={40} height={40} className="rounded-xl" />
             <div>
-              <span className="text-xl font-bold text-indigo-600">CLAP</span>
+              <span className="text-xl font-bold text-primary">CLAP</span>
               <p className="text-xs text-gray-500">Admin Portal</p>
             </div>
           </div>
@@ -657,20 +668,7 @@ export default function SimplifiedAdminDashboard() {
                 Batches
               </button>
 
-              <button
-                onClick={() => {
-                  console.log('Switching to Tests tab');
-                  setActiveTab('tests');
-                  setSidebarOpen(false);
-                }}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'tests'
-                  ? 'bg-indigo-100 text-indigo-700'
-                  : 'text-gray-600 hover:bg-gray-100'
-                  }`}
-              >
-                <FileText className="w-5 h-5" />
-                Tests
-              </button>
+
 
               <button
                 onClick={() => {
@@ -807,48 +805,7 @@ export default function SimplifiedAdminDashboard() {
                   </Card>
                 </div>
 
-                {/* Test Performance */}
-                <Card className="border border-gray-200 bg-white">
-                  <CardHeader>
-                    <CardTitle className="text-2xl">Test Performance Overview</CardTitle>
-                    <CardDescription>Performance metrics across all assessment types</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="grid md:grid-cols-2 lg:grid-cols-5 gap-4">
-                      {testData.map((test) => (
-                        <Card key={test.name} className="border-2 border-transparent hover:border-indigo-300 transition-all cursor-pointer">
-                          <CardHeader className="pb-3">
-                            <div className={`w-12 h-12 rounded-xl bg-indigo-100 flex items-center justify-center mb-3`}>
-                              <test.icon className="w-6 h-6 text-indigo-600" />
-                            </div>
-                            <Badge variant="secondary" className="w-fit mb-2">
-                              {test.marks} marks
-                            </Badge>
-                            <CardTitle className="text-base">{test.name}</CardTitle>
-                          </CardHeader>
-                          <CardContent className="pt-0">
-                            <div className="space-y-2">
-                              <div className="flex justify-between text-sm">
-                                <span className="text-gray-600">Avg Score</span>
-                                <span className="font-semibold">{test.avgScore}/10</span>
-                              </div>
-                              <div className="flex justify-between text-sm">
-                                <span className="text-gray-600">Completion</span>
-                                <span className="font-semibold">{test.completionRate}%</span>
-                              </div>
-                              <div className="w-full bg-gray-200 rounded-full h-1.5">
-                                <div
-                                  className="h-1.5 rounded-full bg-indigo-600"
-                                  style={{ width: `${test.completionRate}%` }}
-                                ></div>
-                              </div>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
+
               </div>
             </div>
           )}
@@ -881,555 +838,8 @@ export default function SimplifiedAdminDashboard() {
             </div>
           )}
 
-          {/* TESTS TAB */}
-          {activeTab === 'tests' && (
-            <div className="bg-white p-0 border-b border-gray-200">
-              <div className="py-4 px-6 bg-gray-50 border-b border-gray-200">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h1 className="text-2xl font-bold text-gray-900">Test Management</h1>
-                    <p className="text-sm text-gray-600 mt-1">Configure assessments and monitor performance</p>
-                  </div>
-                  <Button onClick={handleCreateTest}>
-                    <Plus className="w-4 h-4 mr-2" />
-                    Create Test
-                  </Button>
-                </div>
-              </div>
-              <div className="p-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
-                  {testData.map((test) => (
-                    <Card
-                      key={test.name}
-                      className="border border-gray-200 hover:border-indigo-300 transition-all duration-200 hover:shadow-md cursor-pointer"
-                      onClick={() => handleViewTest(test)}
-                    >
-                      <CardHeader className="pb-4">
-                        <div className="flex items-center justify-between mb-4">
-                          <div className="w-12 h-12 rounded-xl bg-indigo-100 flex items-center justify-center">
-                            <test.icon className="w-6 h-6 text-indigo-600" />
-                          </div>
-                          <div className="flex gap-2">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-8 w-8 p-0"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleConfigureTest(test);
-                              }}
-                            >
-                              <Settings className="w-4 h-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-8 w-8 p-0"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleViewTest(test);
-                              }}
-                            >
-                              <Eye className="w-4 h-4" />
-                            </Button>
-                          </div>
-                        </div>
-                        <Badge variant="secondary" className="mb-3">
-                          {test.marks} marks • {test.duration}
-                        </Badge>
-                        <CardTitle className="text-lg">{test.name}</CardTitle>
-                      </CardHeader>
-                      <CardContent className="pt-0">
-                        <div className="space-y-4">
-                          <div className="space-y-3">
-                            <div className="flex justify-between items-center">
-                              <span className="text-sm text-gray-600">Avg. Score</span>
-                              <span className="font-semibold">{test.avgScore}/10</span>
-                            </div>
-                            <div className="flex justify-between items-center">
-                              <span className="text-sm text-gray-600">Completion</span>
-                              <span className="font-semibold">{test.completionRate}%</span>
-                            </div>
-                          </div>
-                          <div className="w-full bg-gray-200 rounded-full h-2">
-                            <div
-                              className="h-2 rounded-full bg-indigo-600 transition-all duration-300"
-                              style={{ width: `${test.completionRate}%` }}
-                            ></div>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-              </div>
 
-              {/* Test Details Modal */}
-              {showTestDetails && selectedTest && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50">
-                  <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-                    <CardHeader className="border-b border-gray-200">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-4">
-                          <div className="w-16 h-16 rounded-xl bg-indigo-100 flex items-center justify-center">
-                            <selectedTest.icon className="w-8 h-8 text-indigo-600" />
-                          </div>
-                          <div>
-                            <CardTitle className="text-2xl">{selectedTest.name}</CardTitle>
-                            <Badge variant="secondary" className="mt-2">
-                              {selectedTest.marks} marks • {selectedTest.duration}
-                            </Badge>
-                          </div>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={handleCloseTestDetails}
-                          className="h-10 w-10 p-0"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </Button>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="p-6">
-                      <div className="space-y-6">
-                        {/* Performance Overview */}
-                        <div>
-                          <h3 className="text-lg font-semibold mb-4">Performance Overview</h3>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <Card className="border border-gray-200">
-                              <CardContent className="p-4">
-                                <div className="flex items-center justify-between">
-                                  <div>
-                                    <p className="text-sm text-gray-600">Average Score</p>
-                                    <p className="text-2xl font-bold text-indigo-600">{selectedTest.avgScore}/10</p>
-                                  </div>
-                                  <div className="w-12 h-12 rounded-lg bg-indigo-100 flex items-center justify-center">
-                                    <TrendingUp className="w-6 h-6 text-indigo-600" />
-                                  </div>
-                                </div>
-                              </CardContent>
-                            </Card>
-                            <Card className="border border-gray-200">
-                              <CardContent className="p-4">
-                                <div className="flex items-center justify-between">
-                                  <div>
-                                    <p className="text-sm text-gray-600">Completion Rate</p>
-                                    <p className="text-2xl font-bold text-green-600">{selectedTest.completionRate}%</p>
-                                  </div>
-                                  <div className="w-12 h-12 rounded-lg bg-green-100 flex items-center justify-center">
-                                    <CheckCircle2 className="w-6 h-6 text-green-600" />
-                                  </div>
-                                </div>
-                              </CardContent>
-                            </Card>
-                          </div>
-                        </div>
 
-                        {/* Quick Actions */}
-                        <div>
-                          <h3 className="text-lg font-semibold mb-4">Quick Actions</h3>
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                            <Button className="h-12" onClick={() => {
-                              handleCloseTestDetails();
-                              handleCreateTest();
-                            }}>
-                              <Plus className="w-4 h-4 mr-2" />
-                              Create New Test
-                            </Button>
-                            <Button variant="outline" className="h-12" onClick={() => {
-                              handleCloseTestDetails();
-                              handleViewReport(selectedTest);
-                            }}>
-                              <FileText className="w-4 h-4 mr-2" />
-                              View Report
-                            </Button>
-                            <Button variant="outline" className="h-12" onClick={() => {
-                              handleCloseTestDetails();
-                              handleConfigureTest(selectedTest);
-                            }}>
-                              <Settings className="w-4 h-4 mr-2" />
-                              Configure
-                            </Button>
-                          </div>
-                        </div>
-
-                        {/* Recent Activity */}
-                        <div>
-                          <h3 className="text-lg font-semibold mb-4">Recent Activity</h3>
-                          <div className="space-y-3">
-                            <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                              <div className="flex items-center gap-3">
-                                <div className="w-3 h-3 rounded-full bg-green-500"></div>
-                                <span className="text-sm">15 students completed this test today</span>
-                              </div>
-                              <span className="text-xs text-gray-500">2 hours ago</span>
-                            </div>
-                            <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                              <div className="flex items-center gap-3">
-                                <div className="w-3 h-3 rounded-full bg-blue-500"></div>
-                                <span className="text-sm">Average score increased by 0.3 points</span>
-                              </div>
-                              <span className="text-xs text-gray-500">1 day ago</span>
-                            </div>
-                            <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                              <div className="flex items-center gap-3">
-                                <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
-                                <span className="text-sm">3 students need attention (score {'<'} 5)</span>
-                              </div>
-                              <span className="text-xs text-gray-500">3 days ago</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-              )}
-
-              {/* Create Test Modal */}
-              {showCreateTestModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50">
-                  <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-                    <CardHeader className="border-b border-gray-200">
-                      <div className="flex items-center justify-between">
-                        <CardTitle className="text-2xl">Create New Test</CardTitle>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={handleCloseCreateTest}
-                          className="h-10 w-10 p-0"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </Button>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="p-6">
-                      <div className="space-y-6">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Test Type</label>
-                            <select className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
-                              <option value="listening">Listening Test</option>
-                              <option value="reading">Reading Test</option>
-                              <option value="speaking">Speaking Test</option>
-                              <option value="writing">Writing Test</option>
-                              <option value="vocabulary">Vocabulary & Grammar</option>
-                            </select>
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Test Name</label>
-                            <input
-                              type="text"
-                              placeholder="Enter test name"
-                              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                            />
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Duration (minutes)</label>
-                            <input
-                              type="number"
-                              defaultValue="20"
-                              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Total Questions</label>
-                            <input
-                              type="number"
-                              defaultValue="10"
-                              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Marks</label>
-                            <input
-                              type="number"
-                              defaultValue="10"
-                              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                            />
-                          </div>
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">Instructions</label>
-                          <textarea
-                            rows={4}
-                            placeholder="Enter test instructions..."
-                            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                          />
-                        </div>
-
-                        <div className="flex gap-3 pt-4">
-                          <Button
-                            variant="outline"
-                            onClick={handleCloseCreateTest}
-                            className="flex-1"
-                          >
-                            Cancel
-                          </Button>
-                          <Button
-                            className="flex-1"
-                            onClick={() => {
-                              // Mock data for demonstration
-                              handleCreateNewTest({
-                                type: 'listening',
-                                name: 'New Listening Test',
-                                duration: 20,
-                                questions: 10,
-                                marks: 10
-                              });
-                            }}
-                          >
-                            <Plus className="w-4 h-4 mr-2" />
-                            Create Test
-                          </Button>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-              )}
-
-              {/* Test Reports Modal */}
-              {showTestReports && selectedTest && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50">
-                  <Card className="w-full max-w-4xl max-h-[90vh] overflow-y-auto">
-                    <CardHeader className="border-b border-gray-200">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <CardTitle className="text-2xl">{selectedTest.name} - Detailed Report</CardTitle>
-                          <p className="text-sm text-gray-600 mt-1">Comprehensive performance analysis</p>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={handleCloseReports}
-                          className="h-10 w-10 p-0"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </Button>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="p-6">
-                      <div className="space-y-8">
-                        {/* Performance Metrics */}
-                        <div>
-                          <h3 className="text-lg font-semibold mb-4">Performance Metrics</h3>
-                          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                            <Card className="border border-gray-200">
-                              <CardContent className="p-4 text-center">
-                                <div className="text-3xl font-bold text-indigo-600">{selectedTest.avgScore}</div>
-                                <div className="text-sm text-gray-600 mt-1">Average Score</div>
-                              </CardContent>
-                            </Card>
-                            <Card className="border border-gray-200">
-                              <CardContent className="p-4 text-center">
-                                <div className="text-3xl font-bold text-green-600">{selectedTest.completionRate}%</div>
-                                <div className="text-sm text-gray-600 mt-1">Completion Rate</div>
-                              </CardContent>
-                            </Card>
-                            <Card className="border border-gray-200">
-                              <CardContent className="p-4 text-center">
-                                <div className="text-3xl font-bold text-blue-600">142</div>
-                                <div className="text-sm text-gray-600 mt-1">Total Attempts</div>
-                              </CardContent>
-                            </Card>
-                            <Card className="border border-gray-200">
-                              <CardContent className="p-4 text-center">
-                                <div className="text-3xl font-bold text-purple-600">8.7</div>
-                                <div className="text-sm text-gray-600 mt-1">Pass Rate</div>
-                              </CardContent>
-                            </Card>
-                          </div>
-                        </div>
-
-                        {/* Score Distribution */}
-                        <div>
-                          <h3 className="text-lg font-semibold mb-4">Score Distribution</h3>
-                          <div className="space-y-3">
-                            {[
-                              { range: '9-10', percentage: 15, count: 21, color: 'green' },
-                              { range: '7-8', percentage: 35, count: 49, color: 'blue' },
-                              { range: '5-6', percentage: 28, count: 39, color: 'yellow' },
-                              { range: '0-4', percentage: 22, count: 31, color: 'red' }
-                            ].map((item) => (
-                              <div key={item.range} className="flex items-center gap-4">
-                                <span className="text-sm font-medium w-16 text-gray-900">{item.range}</span>
-                                <div className="flex-1">
-                                  <div className="flex items-center justify-between mb-1">
-                                    <div className="w-full bg-gray-200 rounded-full h-3">
-                                      <div
-                                        className={`h-3 rounded-full bg-${item.color}-500`}
-                                        style={{ width: `${item.percentage}%` }}
-                                      ></div>
-                                    </div>
-                                    <span className="text-sm text-gray-600 ml-3 w-16 text-right">{item.percentage}%</span>
-                                  </div>
-                                  <div className="text-xs text-gray-600">{item.count} students</div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Export Options */}
-                        <div>
-                          <h3 className="text-lg font-semibold mb-4">Export Data</h3>
-                          <div className="flex gap-3">
-                            <Button variant="outline">
-                              <Download className="w-4 h-4 mr-2" />
-                              Export CSV
-                            </Button>
-                            <Button variant="outline">
-                              <FileText className="w-4 h-4 mr-2" />
-                              Generate PDF
-                            </Button>
-                            <Button variant="outline">
-                              <BarChart3 className="w-4 h-4 mr-2" />
-                              Detailed Analytics
-                            </Button>
-                          </div>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-              )}
-
-              {/* Test Configuration Modal */}
-              {showTestConfiguration && selectedTest && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50">
-                  <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-                    <CardHeader className="border-b border-gray-200">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <CardTitle className="text-2xl">Configure {selectedTest.name}</CardTitle>
-                          <p className="text-sm text-gray-600 mt-1">Manage test settings and availability</p>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={handleCloseConfiguration}
-                          className="h-10 w-10 p-0"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </Button>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="p-6">
-                      <div className="space-y-6">
-                        {/* Status Controls */}
-                        <div>
-                          <h3 className="text-lg font-semibold mb-4">Test Status</h3>
-                          <div className="flex gap-3">
-                            <Button
-                              className="flex-1"
-                              onClick={() => handlePublishTest(selectedTest)}
-                            >
-                              <CheckCircle2 className="w-4 h-4 mr-2" />
-                              Publish Test
-                            </Button>
-                            <Button
-                              variant="outline"
-                              className="flex-1"
-                              onClick={() => handleUnpublishTest(selectedTest)}
-                            >
-                              <X className="w-4 h-4 mr-2" />
-                              Unpublish Test
-                            </Button>
-                          </div>
-                        </div>
-
-                        {/* Timing Settings */}
-                        <div>
-                          <h3 className="text-lg font-semibold mb-4">Timing</h3>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                              <label className="block text-sm font-medium text-gray-700 mb-2">Duration (minutes)</label>
-                              <input
-                                type="number"
-                                defaultValue={selectedTest.duration.replace(' min', '')}
-                                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-sm font-medium text-gray-700 mb-2">Grace Period (seconds)</label>
-                              <input
-                                type="number"
-                                defaultValue="30"
-                                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                              />
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Access Control */}
-                        <div>
-                          <h3 className="text-lg font-semibold mb-4">Access Control</h3>
-                          <div className="space-y-4">
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <p className="font-medium">Allow Retakes</p>
-                                <p className="text-sm text-gray-600">Students can attempt this test multiple times</p>
-                              </div>
-                              <label className="relative inline-flex items-center cursor-pointer">
-                                <input type="checkbox" className="sr-only peer" defaultChecked />
-                                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-                              </label>
-                            </div>
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <p className="font-medium">Show Answers After Submission</p>
-                                <p className="text-sm text-gray-600">Display correct answers when test is completed</p>
-                              </div>
-                              <label className="relative inline-flex items-center cursor-pointer">
-                                <input type="checkbox" className="sr-only peer" defaultChecked />
-                                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-                              </label>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="flex gap-3 pt-4">
-                          <Button
-                            variant="outline"
-                            onClick={handleCloseConfiguration}
-                            className="flex-1"
-                          >
-                            Cancel
-                          </Button>
-                          <Button
-                            className="flex-1"
-                            onClick={() => handleSaveTestConfiguration({
-                              duration: 20,
-                              gracePeriod: 30,
-                              allowRetakes: true,
-                              showAnswers: true
-                            })}
-                          >
-                            <Save className="w-4 h-4 mr-2" />
-                            Save Configuration
-                          </Button>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-              )}
-            </div>
-          )}
 
           {/* ANALYTICS TAB */}
           {activeTab === 'analytics' && (
@@ -1988,7 +1398,7 @@ export default function SimplifiedAdminDashboard() {
                             <Button
                               variant="outline"
                               className="flex-1 border-gray-200 hover:bg-gray-800 hover:text-white hover:border-gray-800 transition-all"
-                              onClick={() => toast.info('Advanced configuration settings coming soon')}
+                              onClick={handleOpenClapConfigure}
                             >
                               <Settings className="w-4 h-4 mr-2" />
                               Configure
@@ -1996,7 +1406,7 @@ export default function SimplifiedAdminDashboard() {
                             <Button
                               variant="outline"
                               className="flex-1 border-gray-200 hover:bg-gray-800 hover:text-white hover:border-gray-800 transition-all"
-                              onClick={() => toast.info('Detailed results dashboard coming soon')}
+                              onClick={handleOpenClapResults}
                             >
                               <FileText className="w-4 h-4 mr-2" />
                               View Results
@@ -2035,6 +1445,117 @@ export default function SimplifiedAdminDashboard() {
         onSave={handleCreateStudent}
         mode="create"
       />
+
+      {/* Configure CLAP Test Modal */}
+      {showClapConfigureModal && selectedClapTest && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle>Configure Test</CardTitle>
+                <CardDescription>Update settings for {selectedClapTest.name}</CardDescription>
+              </div>
+              <Button variant="ghost" size="sm" onClick={() => setShowClapConfigureModal(false)}>
+                <X className="w-4 h-4" />
+              </Button>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {/* Test Name */}
+              <div>
+                <label className="text-sm font-medium block mb-2">Test Name</label>
+                <input
+                  type="text"
+                  className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-300"
+                  value={configName}
+                  onChange={(e) => setConfigName(e.target.value)}
+                />
+              </div>
+
+              {/* Status */}
+              <div>
+                <label className="text-sm font-medium block mb-2">Status</label>
+                <div className="flex gap-2">
+                  <Button
+                    variant={configStatus === 'draft' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setConfigStatus('draft')}
+                  >
+                    Draft
+                  </Button>
+                  <Button
+                    variant={configStatus === 'published' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setConfigStatus('published')}
+                  >
+                    Published
+                  </Button>
+                </div>
+              </div>
+
+              {/* Component Settings */}
+              <div>
+                <label className="text-sm font-medium block mb-3">Component Settings</label>
+                <div className="space-y-3">
+                  {configComponents.map((comp, idx) => (
+                    <div key={comp.id} className="flex items-center gap-4 p-3 bg-gray-50 rounded-lg">
+                      <span className="text-sm font-medium w-28 capitalize">{comp.type}</span>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-gray-500">Duration (min)</label>
+                        <input
+                          type="number"
+                          min={0}
+                          className="w-20 px-2 py-1 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-gray-300"
+                          value={comp.duration}
+                          onChange={(e) => {
+                            const updated = [...configComponents]
+                            updated[idx] = { ...updated[idx], duration: parseInt(e.target.value) || 0 }
+                            setConfigComponents(updated)
+                          }}
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-gray-500">Max Marks</label>
+                        <input
+                          type="number"
+                          min={0}
+                          className="w-20 px-2 py-1 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-gray-300"
+                          value={comp.max_marks}
+                          onChange={(e) => {
+                            const updated = [...configComponents]
+                            updated[idx] = { ...updated[idx], max_marks: parseInt(e.target.value) || 0 }
+                            setConfigComponents(updated)
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex justify-end gap-3 pt-4 border-t">
+                <Button variant="outline" onClick={() => setShowClapConfigureModal(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleSaveClapConfiguration} disabled={configureSaving || !configName.trim()}>
+                  {configureSaving ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-4 h-4 mr-2" />
+                      Save Configuration
+                    </>
+                  )}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
     </div>
   )
 }

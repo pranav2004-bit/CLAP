@@ -40,7 +40,7 @@ def list_clap_tests(request):
                 'batch_name': test.batch.batch_name if test.batch else 'Unknown Batch',
                 'status': test.status,
                 'is_assigned': bool(test.batch_id),
-                'created_at': test.created_at.isoformat(),
+                'created_at': test.created_at.isoformat() if test.created_at else None,
                 'tests': []
             }
             

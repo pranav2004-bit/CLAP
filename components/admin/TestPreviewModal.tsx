@@ -29,6 +29,11 @@ import {
 } from 'lucide-react'
 import { Textarea } from '@/components/ui/textarea'
 
+// Question classification helper
+const isQuestion = (itemType: string): boolean => {
+    return itemType === 'mcq' || itemType === 'subjective'
+}
+
 type TestPreviewModalProps = {
     isOpen: boolean
     onClose: () => void
@@ -366,11 +371,17 @@ export function TestPreviewModal({ isOpen, onClose, testType, items, testTitle, 
                         <div className="flex-1 overflow-y-auto p-4 content-start custom-scrollbar">
                             <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Questions Palette</h4>
                             <div className="grid grid-cols-4 gap-2">
-                                {items.map((_, index) => {
+                                {items.map((item, index) => {
+                                    // Only render questions in palette
+                                    if (!isQuestion(item.item_type)) return null;
+
                                     const isAnswered = answers[items[index].id] !== undefined;
                                     const isMarked = marked.has(index);
                                     const isVisited = visited.has(index);
                                     const isCurrent = currentQuestionIndex === index;
+
+                                    // Calculate question number (count of questions up to this index)
+                                    const questionNumber = items.slice(0, index + 1).filter(i => isQuestion(i.item_type)).length;
 
                                     let colorClass = 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200'; // Default Not Visited
 
@@ -400,7 +411,7 @@ export function TestPreviewModal({ isOpen, onClose, testType, items, testTitle, 
                                                 ${colorClass}
                                             `}
                                         >
-                                            {index + 1}
+                                            {questionNumber}
                                             {isMarked && (
                                                 <div className="absolute -top-1 -right-1 w-2 h-2 bg-purple-500 rounded-full border border-white" />
                                             )}
@@ -665,6 +676,45 @@ function ItemRenderer({ item, answer, onAnswer }: { item: any, answer: any, onAn
                         className="w-full text-red-500 hover:bg-red-600 hover:text-white transition-all"
                     >
                         Remove File
+                    </Button>
+                )}
+            </div>
+        )
+    }
+
+    // --- AUDIO RECORDING ---
+    if (item_type === 'audio_recording') {
+        return (
+            <div className="space-y-6">
+                <div className="bg-blue-50 p-6 rounded-xl border border-blue-200 shadow-sm">
+                    <p className="text-xl font-medium text-gray-800">{safeContent.question || "Question missing"}</p>
+                    {safeContent.instructions && (
+                        <p className="text-sm text-gray-600 mt-2">{safeContent.instructions}</p>
+                    )}
+                    <p className="text-xs text-blue-700 mt-2 font-medium">
+                        Max duration: {safeContent.max_duration || 300} seconds
+                    </p>
+                </div>
+
+                <div className="flex items-center justify-center gap-4 p-8 bg-gray-100 rounded-lg border border-gray-300">
+                    <Mic className="w-6 h-6 text-red-500" />
+                    <span className="text-gray-600 font-medium">Audio recorder will appear here</span>
+                </div>
+
+                {answer && (
+                    <div className="flex items-center gap-3 p-3 bg-green-50 rounded-lg text-green-700 border border-green-200">
+                        <CheckCircle className="w-5 h-5" />
+                        <span>Audio recorded ({answer}s)</span>
+                    </div>
+                )}
+
+                {!answer && (
+                    <Button
+                        variant="outline"
+                        onClick={() => onAnswer('45')}
+                        className="w-full border-dashed border-gray-300 hover:bg-blue-600 hover:text-white hover:border-blue-600 transition-all"
+                    >
+                        Simulate Audio Recording
                     </Button>
                 )}
             </div>

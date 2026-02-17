@@ -44,7 +44,7 @@ def list_assigned_tests(request):
                 'test_id': str(assignment.clap_test.id),
                 'test_name': assignment.clap_test.name,
                 'status': assignment.status,
-                'assigned_at': assignment.assigned_at.isoformat(),
+                'assigned_at': assignment.assigned_at.isoformat() if assignment.assigned_at else None,
                 'started_at': assignment.started_at.isoformat() if assignment.started_at else None,
                 'completed_at': assignment.completed_at.isoformat() if assignment.completed_at else None,
                 'components': components

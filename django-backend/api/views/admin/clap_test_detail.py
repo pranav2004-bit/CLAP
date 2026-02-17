@@ -56,14 +56,15 @@ def get_clap_test(request, test_id):
             'batch_name': clap_test.batch.batch_name if clap_test.batch else 'Unknown Batch',
             'status': clap_test.status,
             'is_assigned': bool(clap_test.batch_id),
-            'created_at': clap_test.created_at.isoformat(),
+            'created_at': clap_test.created_at.isoformat() if clap_test.created_at else None,
             'tests': [
                 {
                     'id': str(comp.id),  # Return actual component UUID
                     'name': comp.title,
                     'type': comp.test_type,
                     'status': comp.status,
-                    'duration': comp.duration_minutes
+                    'duration': comp.duration_minutes,
+                    'max_marks': comp.max_marks
                 }
                 for comp in clap_test.components.all()
             ]
@@ -141,8 +142,8 @@ def update_clap_test(request, test_id):
             'name': updated_test.name,
             'batch_id': str(updated_test.batch_id) if updated_test.batch_id else None,
             'status': updated_test.status,
-            'created_at': updated_test.created_at.isoformat(),
-            'updated_at': updated_test.updated_at.isoformat()
+            'created_at': updated_test.created_at.isoformat() if updated_test.created_at else None,
+            'updated_at': updated_test.updated_at.isoformat() if updated_test.updated_at else None
         }
         
         return JsonResponse({

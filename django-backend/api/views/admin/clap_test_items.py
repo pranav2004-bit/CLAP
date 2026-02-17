@@ -36,7 +36,7 @@ def clap_test_items_handler(request, component_id):
                 'order_index': item.order_index,
                 'points': item.points,
                 'content': item.content,
-                'created_at': item.created_at.isoformat()
+                'created_at': item.created_at.isoformat() if item.created_at else None
             } for item in items]
         })
 

@@ -8,6 +8,13 @@ import { Textarea } from '@/components/ui/textarea'
 import { ArrowLeft, Clock, Save, ChevronRight, ChevronLeft, CheckCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { getApiUrl } from '@/lib/api-config'
+import AudioRecorderItem from '@/components/audio-recorder'
+import AudioBlockPlayer from '@/components/AudioBlockPlayer'
+
+// Question classification helper
+const isQuestion = (itemType: string): boolean => {
+    return itemType === 'mcq' || itemType === 'subjective'
+}
 
 export default function ClapTestTakingPage() {
     const params = useParams()
@@ -135,6 +142,12 @@ export default function ClapTestTakingPage() {
 
     const currentItem = items[currentItemIndex]
 
+    // Calculate question numbering (only MCQs count as questions)
+    const totalQuestions = items.filter(item => isQuestion(item.item_type)).length
+    const questionNumber = items.slice(0, currentItemIndex).filter(item => isQuestion(item.item_type)).length +
+                          (currentItem && isQuestion(currentItem.item_type) ? 1 : 0)
+    const isCurrentItemQuestion = currentItem && isQuestion(currentItem.item_type)
+
     if (isLoading) return <div className="p-8 text-center">Loading assessment...</div>
 
     return (
@@ -168,7 +181,12 @@ export default function ClapTestTakingPage() {
                     <CardContent className="p-8 flex-1 overflow-y-auto">
                         {currentItem && (
                             <div className="space-y-6">
-                                <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Question {currentItemIndex + 1} of {items.length}</span>
+                                {isCurrentItemQuestion && totalQuestions > 0 && (
+                                    <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Question {questionNumber} of {totalQuestions}</span>
+                                )}
+                                {!isCurrentItemQuestion && (
+                                    <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Item {currentItemIndex + 1} of {items.length}</span>
+                                )}
 
                                 {currentItem.item_type === 'text_block' && (
                                     <div className="prose max-w-none bg-gray-50 p-6 rounded-lg border">
@@ -214,6 +232,36 @@ export default function ClapTestTakingPage() {
                                         />
                                         <p className="text-sm text-gray-500 text-right">Min words: {currentItem.content.min_words || 50}</p>
                                     </div>
+                                )}
+
+                                {currentItem.item_type === 'audio_block' && (
+                                    <AudioBlockPlayer
+                                        itemId={currentItem.id}
+                                        assignmentId={params.assignment_id as string}
+                                        title={currentItem.content.title}
+                                        instructions={currentItem.content.instructions}
+                                        playLimit={currentItem.content.play_limit || 3}
+                                        hasAudioFile={currentItem.content.has_audio_file}
+                                        legacyUrl={currentItem.content.url}
+                                    />
+                                )}
+
+                                {currentItem.item_type === 'audio_recording' && (
+                                    <AudioRecorderItem
+                                        itemId={currentItem.id}
+                                        assignmentId={params.assignment_id as string}
+                                        question={currentItem.content.question || 'Record your response'}
+                                        instructions={currentItem.content.instructions}
+                                        maxDuration={currentItem.content.max_duration || 300}
+                                        savedAudioUrl={answers[currentItem.id]?.file_url}
+                                        onSave={(data) => {
+                                            handleSaveAnswer({
+                                                type: 'audio',
+                                                file_url: data.audio_response.file_url,
+                                                duration: data.audio_response.duration
+                                            })
+                                        }}
+                                    />
                                 )}
 
                             </div>

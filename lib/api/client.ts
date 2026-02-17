@@ -1,5 +1,7 @@
 // API client utilities for fetching test data
 
+import { API_BASE_URL } from '@/lib/api-config'
+
 interface ApiError {
   message: string
   status?: number
@@ -15,7 +17,7 @@ interface ApiResponse<T> {
 class ApiClient {
   private baseUrl: string
 
-  constructor(baseUrl: string = '/api') {
+  constructor(baseUrl: string = API_BASE_URL) {
     this.baseUrl = baseUrl
   }
 
@@ -24,7 +26,7 @@ class ApiClient {
     options: RequestInit = {}
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`
-    
+
     const config: RequestInit = {
       headers: {
         'Content-Type': 'application/json',
@@ -35,17 +37,17 @@ class ApiClient {
 
     try {
       const response = await fetch(url, config)
-      
+
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`)
       }
-      
+
       const data: ApiResponse<T> = await response.json()
-      
+
       if (!data.success) {
         throw new Error(data.message || data.error || 'API request failed')
       }
-      
+
       return data.data as T
     } catch (error) {
       console.error(`API request failed for ${url}:`, error)
@@ -126,7 +128,7 @@ class ApiClient {
       answer,
       timestamp: new Date().toISOString()
     }))
-    
+
     return this.request(`/attempts/${attemptId}/answers/batch`, {
       method: 'POST',
       body: JSON.stringify({ answers: answersPayload }),
