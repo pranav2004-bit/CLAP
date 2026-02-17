@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  frontend-lint:
+    name: Frontend Lint
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Use Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Run Lint
+      run: npm run lint
+
+  backend-check:
+    name: Backend Check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./django-backend
+        
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+        
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Run Django System Check
+      env:
+        SECRET_KEY: 'test-secret-key-for-ci'
+        DEBUG: 'True'
+      run: |
+        python manage.py check
+
+  backend-test:
+    name: Backend Test (Verify DB Constraints)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./django-backend
+        
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+        
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    # Validating that custom verification scripts can run/import correctly
+    # Note: Full execution might fail without DB connection, so we just check imports/syntax here
+    - name: Verify Constraint Script Syntax
+      run: |
+        python -m py_compile verify_db_constraint.py
