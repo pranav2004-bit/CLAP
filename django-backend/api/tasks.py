@@ -213,6 +213,26 @@ def _semantic_guard(score: float, feedback: dict):
     return True
 
 
+
+
+_PII_PATTERNS = [
+    (re.compile(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'), '[REDACTED_EMAIL]'),
+    (re.compile(r'\b(?:\+?\d{1,3}[\s.-]?)?(?:\(?\d{2,4}\)?[\s.-]?)?\d{3,4}[\s.-]?\d{3,4}\b'), '[REDACTED_PHONE]'),
+    (re.compile(r'\b\d{3}-\d{2}-\d{4}\b'), '[REDACTED_ID]'),
+]
+
+
+def _redact_pii(text: str):
+    if not text:
+        return text, 0
+    redacted = text
+    replacements = 0
+    for pattern, token in _PII_PATTERNS:
+        redacted, count = pattern.subn(token, redacted)
+        replacements += count
+    return redacted, replacements
+
+
 def _gemini_generate_json(prompt: str):
     api_key = settings.GEMINI_API_KEY
     if not api_key:
@@ -237,6 +257,15 @@ def _gemini_generate_json(prompt: str):
 
 
 def _evaluate_writing_payload(essay: str, prompt: str):
+    safe_essay, redactions = _redact_pii(essay or '')
+    if redactions:
+        log_event('info', 'pii_redacted', domain='writing', redactions=redactions)
+
+    provider = settings.LLM_PROVIDER.lower()
+    if provider == 'gemini':
+        return _gemini_generate_json(f'Prompt: {prompt}\nEssay: {safe_essay}\nReturn JSON with score(0-10) and feedback object.')
+
+    result = openai_evaluate_writing(essay=safe_essay, prompt=prompt)
     provider = settings.LLM_PROVIDER.lower()
     if provider == 'gemini':
         return _gemini_generate_json(f'Prompt: {prompt}\nEssay: {essay}\nReturn JSON with score(0-10) and feedback object.')
@@ -252,6 +281,15 @@ def _evaluate_writing_payload(essay: str, prompt: str):
 
 
 def _evaluate_speaking_payload(transcript: str, prompt: str):
+    safe_transcript, redactions = _redact_pii(transcript or '')
+    if redactions:
+        log_event('info', 'pii_redacted', domain='speaking', redactions=redactions)
+
+    provider = settings.LLM_PROVIDER.lower()
+    if provider == 'gemini':
+        return _gemini_generate_json(f'Prompt: {prompt}\nTranscript: {safe_transcript}\nReturn JSON with score(0-10) and feedback object.')
+
+    result = openai_evaluate_speaking(transcript=safe_transcript, prompt=prompt)
     provider = settings.LLM_PROVIDER.lower()
     if provider == 'gemini':
         return _gemini_generate_json(f'Prompt: {prompt}\nTranscript: {transcript}\nReturn JSON with score(0-10) and feedback object.')
