@@ -4,6 +4,7 @@ Maintains behavioral parity with Next.js backend.
 """
 
 import os
+import json
 from pathlib import Path
 from decouple import config
 
@@ -155,6 +156,47 @@ CORS_ALLOW_HEADERS = [
 ]
 
 
+
+
+# Secrets Manager integration (optional)
+SECRETS_MANAGER_PROVIDER = config('SECRETS_MANAGER_PROVIDER', default='env')
+SECRETS_MANAGER_REGION = config('SECRETS_MANAGER_REGION', default='')
+SECRETS_MANAGER_PREFIX = config('SECRETS_MANAGER_PREFIX', default='clap/')
+
+
+def _resolve_secret(name: str, default: str = ''):
+    env_value = config(name, default='')
+    if env_value:
+        return env_value
+
+    if SECRETS_MANAGER_PROVIDER != 'aws':
+        return default
+
+    if importlib.util.find_spec('boto3') is None:
+        return default
+
+    import boto3
+
+    secret_id = f"{SECRETS_MANAGER_PREFIX}{name}"
+    client = boto3.client('secretsmanager', region_name=SECRETS_MANAGER_REGION or None)
+    try:
+        response = client.get_secret_value(SecretId=secret_id)
+    except Exception:
+        return default
+
+    secret_string = response.get('SecretString')
+    if not secret_string:
+        return default
+
+    try:
+        payload = json.loads(secret_string)
+        if isinstance(payload, dict):
+            return str(payload.get(name, default))
+    except Exception:
+        return secret_string
+
+    return default
+
 # REST Framework Settings
 REST_FRAMEWORK = {
     'DEFAULT_RENDERER_CLASSES': [
@@ -191,10 +233,10 @@ if importlib.util.find_spec('rest_framework_simplejwt'):
     }
 
 # OpenAI Configuration
-OPENAI_API_KEY = config('OPENAI_API_KEY', default='')
+OPENAI_API_KEY = _resolve_secret('OPENAI_API_KEY', default='')
 
 # Email Configuration (Resend)
-RESEND_API_KEY = config('RESEND_API_KEY', default='')
+RESEND_API_KEY = _resolve_secret('RESEND_API_KEY', default='')
 FROM_EMAIL = config('FROM_EMAIL', default='noreply@clap-test.com')
 
 # Logging Configuration - Match Next.js console logging behavior
@@ -281,6 +323,7 @@ S3_PRESIGNED_URL_EXPIRY_SECONDS = config('S3_PRESIGNED_URL_EXPIRY_SECONDS', defa
 # Email Provider Configuration (SES/SendGrid)
 EMAIL_PROVIDER = config('EMAIL_PROVIDER', default='ses')
 AWS_SES_REGION = config('AWS_SES_REGION', default='')
+SENDGRID_API_KEY = _resolve_secret('SENDGRID_API_KEY', default='')
 SENDGRID_API_KEY = config('SENDGRID_API_KEY', default='')
 
 S3_ACCESS_KEY_ID = config('S3_ACCESS_KEY_ID', default='')
@@ -316,6 +359,8 @@ EMAIL_PORT = config('EMAIL_PORT', default=587, cast=int)
 EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
 EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='apikey')
 EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default=SENDGRID_API_KEY)
+AWS_SES_ACCESS_KEY_ID = _resolve_secret('AWS_SES_ACCESS_KEY_ID', default='')
+AWS_SES_SECRET_ACCESS_KEY = _resolve_secret('AWS_SES_SECRET_ACCESS_KEY', default='')
 AWS_SES_ACCESS_KEY_ID = config('AWS_SES_ACCESS_KEY_ID', default='')
 AWS_SES_SECRET_ACCESS_KEY = config('AWS_SES_SECRET_ACCESS_KEY', default='')
 
@@ -334,6 +379,7 @@ SUBMISSION_RATE_LIMIT_GLOBAL_PER_INSTITUTION_PER_HOUR = config('SUBMISSION_RATE_
 # LLM Provider Configuration (OpenAI / Gemini)
 LLM_PROVIDER = config('LLM_PROVIDER', default='openai')
 OPENAI_MODEL = config('OPENAI_MODEL', default='gpt-4-turbo')
+GEMINI_API_KEY = _resolve_secret('GEMINI_API_KEY', default='')
 GEMINI_API_KEY = config('GEMINI_API_KEY', default='')
 GEMINI_MODEL = config('GEMINI_MODEL', default='gemini-1.5-pro')
 
