@@ -87,6 +87,7 @@ def _check_rate_limit(user, redis_client):
 
 
 def _dispatch_pipeline(submission_id, correlation_id=None):
+def _dispatch_pipeline(submission_id):
     if chain is None:
         logger.warning('Celery is unavailable; skipping pipeline dispatch for %s', submission_id)
         return False
@@ -103,6 +104,7 @@ def _dispatch_pipeline(submission_id, correlation_id=None):
         send_email_report.si(str(submission_id)),
     )
     pipeline.apply_async(headers={'correlation_id': correlation_id or str(submission_id)})
+    pipeline.apply_async()
     return True
 
 
@@ -136,6 +138,7 @@ def create_submission(request):
             submissions_total.labels(status='duplicate_cached').inc()
         log_event('info', 'submission_duplicate_cached', submission_id=cached, user_id=str(user.id))
         return JsonResponse({'submission_id': cached, 'cached': True}, status=202)
+            return JsonResponse({'submission_id': cached, 'cached': True}, status=202)
 
     try:
         submission = AssessmentSubmission.objects.create(
@@ -147,6 +150,7 @@ def create_submission(request):
         )
         correlation_id = serializer.validated_data.get('correlation_id') or str(submission.id)
         dispatched = _dispatch_pipeline(submission.id, correlation_id=correlation_id)
+        dispatched = _dispatch_pipeline(submission.id)
     except IntegrityError:
         existing = AssessmentSubmission.objects.get(idempotency_key=idempotency_key)
         if redis_client:
