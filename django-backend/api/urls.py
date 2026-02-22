@@ -22,6 +22,7 @@ from api.views.admin import (
     dlq,
     submissions_monitor,
     score_management,
+    llm_controls,
 )
 from api.views.student import profile, clap_attempt, audio_upload, audio_playback
 from api.views import evaluate, legacy_tests, legacy_attempts, submissions, email_webhooks
@@ -68,6 +69,8 @@ urlpatterns = [
     path('admin/submissions', submissions_monitor.submission_list, name='admin_submissions_list'),
     path('admin/submissions/health', submissions_monitor.pipeline_health, name='admin_submissions_health'),
     path('admin/submissions/<uuid:submission_id>', submissions_monitor.submission_detail, name='admin_submissions_detail'),
+
+    path('admin/llm/submissions/<uuid:submission_id>/retrigger', llm_controls.retrigger_llm_evaluation, name='admin_llm_retrigger'),
 
     # Score Management
     path('admin/scores/submissions/<uuid:submission_id>', score_management.scores_by_submission, name='admin_scores_submission'),
