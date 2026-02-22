@@ -1,5 +1,14 @@
 # CLAP — Live Execution Tracker
 > Auto-updated by AI agent after every completed action.
+> Last updated: 2026-02-22 06:24 UTC
+> Last active agent: GPT-5.2-Codex
+
+## 🔖 Current Status
+- **Current Phase:** Phase 7 — Failure Handling & DLQ
+- **Current Task:** Task 7.1 — Per-stage retry policies (as per Section 9.1 of arch doc)
+- **Current Subtask:** Task 7.1 — Per-stage retry policies (as per Section 9.1 of arch doc)
+- **Status:** BLOCKED
+- **Blockers (if any):** DB server unavailable in this environment (localhost:5432 refused), so migration apply/DB verification is blocked; package install proxy restriction still blocks Celery/S3 runtime checks
 > Last updated: 2026-02-22 06:21 UTC
 > Last active agent: GPT-5.2-Codex
 
@@ -171,6 +180,14 @@
 - [x] Task 5.2 — WeasyPrint PDF rendering ✅ COMPLETED [2026-02-22 06:21]
 - [x] Task 5.3 — S3 upload with key pattern: reports/{submission_id}/{timestamp}.pdf ✅ COMPLETED [2026-02-22 06:21]
 - [x] Task 5.4 — Update submission record with report_url, status=REPORT_READY ✅ COMPLETED [2026-02-22 06:21]
+
+### Phase 6 — Email Dispatch
+- [x] Task 6.1 — HTML email template (score summary + presigned S3 link) ✅ COMPLETED [2026-02-22 06:24]
+- [x] Task 6.2 — SES/SendGrid integration ✅ COMPLETED [2026-02-22 06:24]
+- [x] Task 6.3 — Dedicated Celery queue for email workers ✅ COMPLETED [2026-02-22 06:24]
+- [x] Task 6.4 — Bounce/complaint webhook endpoint ✅ COMPLETED [2026-02-22 06:24]
+- [x] Task 6.5 — Deduplication (email_sent_at check) ✅ COMPLETED [2026-02-22 06:24]
+- [x] Task 6.6 — Status transition to COMPLETE ✅ COMPLETED [2026-02-22 06:24]
 - [ ] Task 4.4 — Wire up chain/chord/group pipeline (Section 4.2 of arch doc)
 - [x] Task 4.5 — Celery task configs (acks_late, reject_on_worker_lost, retry policies per Section 9.1) ✅ COMPLETED [2026-02-22 05:54]
 - [ ] Task 3.4 — Rate limiting (django-ratelimit + Redis)

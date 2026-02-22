@@ -13,6 +13,7 @@ from django.db import transaction
 from django.db.models import F, Sum
 from django.utils import timezone
 from django.template.loader import render_to_string
+from django.core.mail import EmailMultiAlternatives
 
 from celery import shared_task
 from django.db import transaction
@@ -368,6 +369,52 @@ def generate_report(self, submission_id):
 
 
 @shared_task(bind=True, max_retries=3, autoretry_for=(Exception,), retry_backoff=True, retry_backoff_max=900, retry_jitter=True, acks_late=True, reject_on_worker_lost=True)
+def send_email_report(self, submission_id):
+    submission = AssessmentSubmission.objects.select_related('user', 'assessment').get(id=submission_id)
+
+    if submission.email_sent_at:
+        return {'status': 'skipped', 'task': 'send_email_report', 'submission_id': submission_id, 'reason': 'email already sent'}
+
+    _transition_submission_status(
+        submission,
+        AssessmentSubmission.STATUS_EMAIL_SENDING,
+        expected_status=AssessmentSubmission.STATUS_REPORT_READY,
+    )
+
+    scores = list(SubmissionScore.objects.filter(submission=submission).order_by('domain'))
+    student_name = submission.user.full_name or submission.user.email
+    report_url = submission.report_url or ''
+
+    html_body = render_to_string(
+        'emails/submission_ready.html',
+        {
+            'student_name': student_name,
+            'scores': scores,
+            'report_url': report_url,
+        },
+    )
+
+    message = EmailMultiAlternatives(
+        subject='Your CLAP Assessment Results Are Ready',
+        body=f'Your CLAP report is ready. Download: {report_url}',
+        from_email=getattr(settings, 'FROM_EMAIL', None),
+        to=[submission.user.email],
+    )
+    message.attach_alternative(html_body, 'text/html')
+    message.send()
+
+    AssessmentSubmission.objects.filter(id=submission.id).update(
+        email_sent_at=timezone.now(),
+        updated_at=timezone.now(),
+    )
+
+    _transition_submission_status(
+        submission,
+        AssessmentSubmission.STATUS_COMPLETE,
+        expected_status=AssessmentSubmission.STATUS_EMAIL_SENDING,
+    )
+
+    return {'status': 'ok', 'task': 'send_email_report', 'submission_id': submission_id}
 
             component_ids = ClapTestComponent.objects.filter(
                 clap_test=submission.assessment,

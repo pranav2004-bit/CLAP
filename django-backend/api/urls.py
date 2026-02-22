@@ -21,6 +21,7 @@ from api.views.admin import (
     clap_test_results
 )
 from api.views.student import profile, clap_attempt, audio_upload, audio_playback
+from api.views import evaluate, legacy_tests, legacy_attempts, submissions, email_webhooks
 from api.views import evaluate, legacy_tests, legacy_attempts, submissions
 
 app_name = 'api'
@@ -88,6 +89,9 @@ urlpatterns = [
     path('submissions', submissions.create_submission, name='submissions_create'),
     path('submissions/<uuid:submission_id>/status', submissions.submission_status, name='submissions_status'),
     path('submissions/<uuid:submission_id>/results', submissions.submission_results, name='submissions_results'),
+
+    # Email webhook events (SES/SendGrid)
+    path('email/webhook', email_webhooks.email_event_webhook, name='email_webhook'),
 
     # ============================================
     # LEGACY / SHARED TESTS (For Dashboard Compatibility)
