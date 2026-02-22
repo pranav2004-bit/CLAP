@@ -345,6 +345,7 @@ S3_PRESIGNED_URL_EXPIRY_SECONDS = config('S3_PRESIGNED_URL_EXPIRY_SECONDS', defa
 EMAIL_PROVIDER = config('EMAIL_PROVIDER', default='ses')
 AWS_SES_REGION = config('AWS_SES_REGION', default='')
 SENDGRID_API_KEY = _resolve_secret('SENDGRID_API_KEY', default='')
+SENDGRID_API_KEY = config('SENDGRID_API_KEY', default='')
 
 S3_ACCESS_KEY_ID = config('S3_ACCESS_KEY_ID', default='')
 S3_SECRET_ACCESS_KEY = config('S3_SECRET_ACCESS_KEY', default='')
@@ -381,6 +382,8 @@ EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='apikey')
 EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default=SENDGRID_API_KEY)
 AWS_SES_ACCESS_KEY_ID = _resolve_secret('AWS_SES_ACCESS_KEY_ID', default='')
 AWS_SES_SECRET_ACCESS_KEY = _resolve_secret('AWS_SES_SECRET_ACCESS_KEY', default='')
+AWS_SES_ACCESS_KEY_ID = config('AWS_SES_ACCESS_KEY_ID', default='')
+AWS_SES_SECRET_ACCESS_KEY = config('AWS_SES_SECRET_ACCESS_KEY', default='')
 
 if EMAIL_PROVIDER == 'ses':
     EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
@@ -398,6 +401,7 @@ SUBMISSION_RATE_LIMIT_GLOBAL_PER_INSTITUTION_PER_HOUR = config('SUBMISSION_RATE_
 LLM_PROVIDER = config('LLM_PROVIDER', default='openai')
 OPENAI_MODEL = config('OPENAI_MODEL', default='gpt-4-turbo')
 GEMINI_API_KEY = _resolve_secret('GEMINI_API_KEY', default='')
+GEMINI_API_KEY = config('GEMINI_API_KEY', default='')
 GEMINI_MODEL = config('GEMINI_MODEL', default='gemini-1.5-pro')
 
 CELERY_BEAT_SCHEDULE = {
