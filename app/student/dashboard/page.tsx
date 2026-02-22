@@ -148,8 +148,11 @@ export default function StudentDashboard() {
     setSessionStarted(true)
   }
 
-  const handleStartTest = (testId: string) => {
-    router.push(`/student/test/${testId}`)
+  const handleStartTest = (_testId: string) => {
+    // Task 12.1 integration:
+    // Route students to the assignment-driven CLAP flow, whose submit action
+    // dispatches the new /api/submissions pipeline endpoint.
+    router.push('/student/clap-tests')
   }
 
   const handleLogout = () => {

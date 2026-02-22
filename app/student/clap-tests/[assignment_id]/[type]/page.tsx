@@ -134,7 +134,7 @@ export default function ClapTestTakingPage() {
             }
 
             const idempotencyKey = crypto.randomUUID()
-            await fetch(getApiUrl('submissions'), {
+            const submitResp = await fetch(getApiUrl('submissions'), {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -147,8 +147,15 @@ export default function ClapTestTakingPage() {
                 })
             })
 
-            toast.success('Test Submitted!')
-            router.push(`/student/clap-tests/${params.assignment_id}`)
+            if (!submitResp.ok) {
+                throw new Error('Submission creation failed')
+            }
+
+            const submissionData = await submitResp.json()
+            const submissionId = submissionData.submission_id
+
+            toast.success('Test Submitted! Processing has started.')
+            router.push(`/student/clap-tests/${params.assignment_id}?submission_id=${submissionId}`)
         } catch (error) {
             toast.error('Failed to submit test')
             console.error(error)
