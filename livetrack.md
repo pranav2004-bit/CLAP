@@ -2,6 +2,13 @@
 > Auto-updated by AI agent after every completed action.
 > Last updated: 2026-02-22 13:05 UTC
 > Last updated: 2026-02-22 11:26 UTC
+> Last updated: 2026-02-22 12:42 UTC
+> Last updated: 2026-02-22 11:26 UTC
+> Last updated: 2026-02-22 12:10 UTC
+> Last updated: 2026-02-22 11:26 UTC
+> Last updated: 2026-02-22 11:14 UTC
+> Last updated: 2026-02-22 11:26 UTC
+> Last updated: 2026-02-22 11:01 UTC
 > Last updated: 2026-02-22 08:49 UTC
 > Last updated: 2026-02-22 08:37 UTC
 > Last updated: 2026-02-22 08:24 UTC
@@ -11,6 +18,14 @@
 - **Current Phase:** Phase 11 — Admin Dashboard — Pipeline & Results Management
 - **Current Task:** Task 11.7 — Admin Notifications
 - **Current Subtask:** Subtask 11.7.1 — In-app alerts for pipeline failures (P1/P2 events)
+- **Current Task:** Task 11.6 — DLQ Management
+- **Current Subtask:** Subtask 11.6.1 — DLQ dashboard widget (unresolved count, oldest entry age)
+- **Current Task:** Task 11.5 — Email Management
+- **Current Subtask:** Subtask 11.5.1 — Email delivery status per student (sent, bounced, pending)
+- **Current Task:** Task 11.4 — Report Management
+- **Current Subtask:** Subtask 11.4.1 — View/download any student's PDF report
+- **Current Task:** Task 11.3 — LLM Evaluation Controls
+- **Current Subtask:** Subtask 11.3.2 — View LLM prompt and raw response for any submission (for debugging/QA)
 - **Status:** IN PROGRESS
 - **Blockers (if any):** DB server unavailable in this environment (localhost:5432 refused), so migration apply/DB verification remains blocked; package install proxy restriction still blocks some runtime dependency checks
 - **Current Task:** Task 11.2 — Score Management
@@ -474,6 +489,24 @@
 - [x] Task 11.6 — DLQ Management (if not already covered by Phase 7.4, wire UI here) ✅ COMPLETED [2026-02-22 13:05]
   - [x] Subtask 11.6.1 — DLQ dashboard widget (unresolved count, oldest entry age) ✅ COMPLETED [2026-02-22 13:05]
   - [x] Subtask 11.6.2 — One-click retry and resolve actions from admin dashboard ✅ COMPLETED [2026-02-22 13:05]
+- [ ] Task 11.3 — LLM Evaluation Controls
+  - [x] Subtask 11.3.1 — Re-trigger LLM evaluation for a specific submission (writing/speaking/both) ✅ COMPLETED [2026-02-22 11:01]
+  - [ ] Subtask 11.3.2 — View LLM prompt and raw response for any submission (for debugging/QA)
+  - [ ] Subtask 11.3.3 — LLM evaluation analytics (avg response time, validation failure rate, token usage)
+  - [ ] Subtask 11.3.4 — Manual score entry for submissions stuck in DLQ (bypass LLM)
+- [ ] Task 11.4 — Report Management
+  - [ ] Subtask 11.4.1 — View/download any student's PDF report
+  - [ ] Subtask 11.4.2 — Re-generate report for a specific submission
+  - [ ] Subtask 11.4.3 — Bulk report download (by batch or test)
+  - [ ] Subtask 11.4.4 — Report template preview/config (branding, layout)
+- [ ] Task 11.5 — Email Management
+  - [ ] Subtask 11.5.1 — Email delivery status per student (sent, bounced, pending)
+  - [ ] Subtask 11.5.2 — Re-send email for specific submission
+  - [ ] Subtask 11.5.3 — Bulk email resend (by batch or test)
+  - [ ] Subtask 11.5.4 — Bounce/complaint log view
+- [ ] Task 11.6 — DLQ Management (if not already covered by Phase 7.4, wire UI here)
+  - [ ] Subtask 11.6.1 — DLQ dashboard widget (unresolved count, oldest entry age)
+  - [ ] Subtask 11.6.2 — One-click retry and resolve actions from admin dashboard
 - [ ] Task 11.7 — Admin Notifications
   - [ ] Subtask 11.7.1 — In-app alerts for pipeline failures (P1/P2 events)
   - [ ] Subtask 11.7.2 — Daily summary email to admin (submissions processed, failures, DLQ count)
