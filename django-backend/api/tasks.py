@@ -12,10 +12,16 @@ from urllib.parse import urlparse
 from celery import shared_task
 from django.conf import settings
 from django.db import transaction, connection
+from django.db import transaction
 from django.db.models import F, Sum
 from django.utils import timezone
 from django.template.loader import render_to_string
 from django.core.mail import EmailMultiAlternatives
+
+from celery import shared_task
+from django.db import transaction
+from django.db.models import F, Sum
+from django.utils import timezone
 
 from api.models import (
     AssessmentSubmission,
@@ -147,6 +153,8 @@ def _transition_submission_status(
     new_status: str,
     expected_status: Optional[str] = None,
 ):
+    """Atomic status transition with optimistic lock semantics."""
+
     qs = AssessmentSubmission.objects.filter(id=submission.id)
     if expected_status:
         qs = qs.filter(status=expected_status)
@@ -258,6 +266,11 @@ def _evaluate_writing_payload(essay: str, prompt: str):
         return _gemini_generate_json(f'Prompt: {prompt}\nEssay: {safe_essay}\nReturn JSON with score(0-10) and feedback object.')
 
     result = openai_evaluate_writing(essay=safe_essay, prompt=prompt)
+    provider = settings.LLM_PROVIDER.lower()
+    if provider == 'gemini':
+        return _gemini_generate_json(f'Prompt: {prompt}\nEssay: {essay}\nReturn JSON with score(0-10) and feedback object.')
+
+    result = openai_evaluate_writing(essay=essay, prompt=prompt)
     return {
         'score': float(result.get('score', 0)),
         'feedback': {
@@ -277,6 +290,11 @@ def _evaluate_speaking_payload(transcript: str, prompt: str):
         return _gemini_generate_json(f'Prompt: {prompt}\nTranscript: {safe_transcript}\nReturn JSON with score(0-10) and feedback object.')
 
     result = openai_evaluate_speaking(transcript=safe_transcript, prompt=prompt)
+    provider = settings.LLM_PROVIDER.lower()
+    if provider == 'gemini':
+        return _gemini_generate_json(f'Prompt: {prompt}\nTranscript: {transcript}\nReturn JSON with score(0-10) and feedback object.')
+
+    result = openai_evaluate_speaking(transcript=transcript, prompt=prompt)
     return {
         'score': float(result.get('score', 0)),
         'feedback': {
@@ -306,6 +324,9 @@ def _persist_llm_score(submission: AssessmentSubmission, domain: str, payload: d
         llm_validation_failures_total.labels(domain=domain, failure_type='feedback_schema').inc()
         raise ValueError('LLM feedback must be object')
 
+        raise ValueError('LLM feedback must be object')
+
+    # Semantic guard
     guarded = _semantic_guard(score, feedback)
     if not guarded:
         feedback['semantic_warning'] = 'Potential contradiction detected'
@@ -365,6 +386,65 @@ def score_rule_based(self, submission_id):
         if self.request.retries >= self.max_retries:
             _record_dlq('score_rule_based', submission_id, {'submission_id': str(submission_id)}, exc, self.request.retries)
         raise
+    submission = AssessmentSubmission.objects.select_related('user', 'assessment').get(id=submission_id)
+
+@shared_task(
+    bind=True,
+    max_retries=3,
+    autoretry_for=(Exception,),
+    retry_backoff=False,
+    default_retry_delay=5,
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
+def score_rule_based(self, submission_id):
+    """Phase A: Compute Listening + Reading + Vocabulary rule-based scores."""
+
+    submission = AssessmentSubmission.objects.select_related('user', 'assessment').get(id=submission_id)
+
+    # Idempotent short-circuit
+    existing_rule_domains = set(
+        SubmissionScore.objects.filter(
+            submission=submission,
+            domain__in=['listening', 'reading', 'vocab'],
+        ).values_list('domain', flat=True)
+    )
+
+    assignment = StudentClapAssignment.objects.filter(student=submission.user, clap_test=submission.assessment).first()
+    if not assignment:
+        raise ValueError(f'No assignment found for submission {submission_id}')
+
+    component_map = {'listening': 'listening', 'reading': 'reading', 'vocab': 'vocabulary'}
+    assignment = StudentClapAssignment.objects.filter(
+        student=submission.user,
+        clap_test=submission.assessment,
+    ).first()
+
+    if not assignment:
+        raise ValueError(f'No assignment found for submission {submission_id}')
+
+    component_map = {
+        'listening': 'listening',
+        'reading': 'reading',
+        'vocab': 'vocabulary',
+    }
+
+    with transaction.atomic():
+        for domain, component_type in component_map.items():
+            if domain in existing_rule_domains:
+                continue
+            component_ids = ClapTestComponent.objects.filter(clap_test=submission.assessment, test_type=component_type).values_list('id', flat=True)
+            if not component_ids:
+                _upsert_rule_score(submission, domain, Decimal('0.00'))
+                continue
+            marks = StudentClapResponse.objects.filter(assignment=assignment, item__component_id__in=component_ids).aggregate(total=Sum('marks_awarded'))['total']
+            _upsert_rule_score(submission, domain, Decimal(marks or 0).quantize(Decimal('0.01')))
+
+    moved = _transition_submission_status(submission, AssessmentSubmission.STATUS_RULES_COMPLETE, expected_status=AssessmentSubmission.STATUS_PENDING)
+    if moved:
+        _transition_submission_status(submission, AssessmentSubmission.STATUS_LLM_PROCESSING, expected_status=AssessmentSubmission.STATUS_RULES_COMPLETE)
+
+    return {'status': 'ok', 'task': 'score_rule_based', 'submission_id': str(submission.id), 'domains_scored': ['listening', 'reading', 'vocab']}
 
 
 @shared_task(bind=True, max_retries=3, autoretry_for=(TimeoutError, ConnectionError, ValueError), retry_backoff=True, retry_backoff_max=300, retry_jitter=True, acks_late=True, reject_on_worker_lost=True)
@@ -393,6 +473,22 @@ def evaluate_writing(self, submission_id):
         if self.request.retries >= self.max_retries:
             _record_dlq('evaluate_writing', submission_id, {'submission_id': str(submission_id)}, exc, self.request.retries)
         raise
+    submission = AssessmentSubmission.objects.select_related('user', 'assessment').get(id=submission_id)
+
+    if SubmissionScore.objects.filter(submission=submission, domain='writing').exists():
+        return {'status': 'skipped', 'reason': 'writing score already exists', 'submission_id': submission_id}
+
+    assignment = StudentClapAssignment.objects.filter(student=submission.user, clap_test=submission.assessment).first()
+    response = StudentClapResponse.objects.filter(assignment=assignment, item__component__test_type='writing').order_by('-updated_at').first()
+
+    essay = ''
+    if response and response.response_data is not None:
+        essay = response.response_data if isinstance(response.response_data, str) else json.dumps(response.response_data)
+
+    payload = _evaluate_writing_payload(essay=essay, prompt='Evaluate writing response using rubric and return JSON')
+    _persist_llm_score(submission, 'writing', payload)
+    _try_mark_llm_complete(submission)
+    return {'status': 'ok', 'task': 'evaluate_writing', 'submission_id': submission_id}
 
 
 @shared_task(bind=True, max_retries=3, autoretry_for=(TimeoutError, ConnectionError, ValueError), retry_backoff=True, retry_backoff_max=300, retry_jitter=True, acks_late=True, reject_on_worker_lost=True)
@@ -420,6 +516,23 @@ def evaluate_speaking(self, submission_id):
         if self.request.retries >= self.max_retries:
             _record_dlq('evaluate_speaking', submission_id, {'submission_id': str(submission_id)}, exc, self.request.retries)
         raise
+    submission = AssessmentSubmission.objects.select_related('user', 'assessment').get(id=submission_id)
+
+    if SubmissionScore.objects.filter(submission=submission, domain='speaking').exists():
+        return {'status': 'skipped', 'reason': 'speaking score already exists', 'submission_id': submission_id}
+
+    assignment = StudentClapAssignment.objects.filter(student=submission.user, clap_test=submission.assessment).first()
+    audio = StudentAudioResponse.objects.filter(assignment=assignment, item__component__test_type='speaking').order_by('-uploaded_at').first()
+    transcript = (audio.transcription or '') if audio else ''
+
+    payload = _evaluate_speaking_payload(transcript=transcript, prompt='Evaluate speaking transcript using rubric and return JSON')
+    _persist_llm_score(submission, 'speaking', payload)
+
+    _try_mark_llm_complete(submission)
+    if SubmissionScore.objects.filter(submission=submission, domain='writing').exists():
+        _transition_submission_status(submission, AssessmentSubmission.STATUS_LLM_COMPLETE, expected_status=AssessmentSubmission.STATUS_LLM_PROCESSING)
+
+    return {'status': 'ok', 'task': 'evaluate_speaking', 'submission_id': submission_id}
 
 
 @shared_task(bind=True, max_retries=3, autoretry_for=(Exception,), retry_backoff=False, default_retry_delay=30, acks_late=True, reject_on_worker_lost=True)
@@ -431,6 +544,10 @@ def generate_report(self, submission_id):
         start_ts = timezone.now()
         with transaction.atomic():
             submission = AssessmentSubmission.objects.select_for_update().select_related('assessment', 'user').get(id=submission_id)
+        with transaction.atomic():
+            submission = AssessmentSubmission.objects.select_for_update().select_related('assessment', 'user').get(id=submission_id)
+    try:
+        submission = AssessmentSubmission.objects.select_related('assessment', 'user').get(id=submission_id)
 
         if submission.report_url:
             return {'status': 'skipped', 'task': 'generate_report', 'submission_id': submission_id, 'reason': 'report already exists'}
@@ -507,6 +624,79 @@ def generate_report(self, submission_id):
         if self.request.retries >= self.max_retries:
             _record_dlq('generate_report', submission_id, {'submission_id': str(submission_id)}, exc, self.request.retries)
         raise
+    submission = AssessmentSubmission.objects.select_related('assessment', 'user').get(id=submission_id)
+
+    if submission.report_url:
+        return {'status': 'skipped', 'task': 'generate_report', 'submission_id': submission_id, 'reason': 'report already exists'}
+
+    _transition_submission_status(
+        submission,
+        AssessmentSubmission.STATUS_REPORT_GENERATING,
+        expected_status=AssessmentSubmission.STATUS_LLM_COMPLETE,
+    )
+
+    scores = list(SubmissionScore.objects.filter(submission=submission).order_by('domain'))
+    if len(scores) < 5:
+        raise ValueError(f'Report generation requires 5 domain scores; found {len(scores)} for {submission_id}')
+
+    html = render_to_string('reports/submission_report.html', {
+        'submission': submission,
+        'scores': scores,
+        'generated_at': timezone.now().isoformat(),
+    })
+
+    timestamp = timezone.now().strftime('%Y%m%d%H%M%S')
+    report_relpath = f'reports/{submission.id}/{timestamp}.pdf'
+
+    pdf_bytes = None
+    try:
+        from weasyprint import HTML
+        pdf_bytes = HTML(string=html).write_pdf()
+    except Exception:
+        # Fallback when WeasyPrint is unavailable in runtime environment
+        pdf_bytes = html.encode('utf-8')
+
+    report_url = None
+    # Attempt S3 upload if configured and boto3 is available
+    try:
+        import boto3
+        if getattr(settings, 'S3_BUCKET_NAME', ''):
+            client = boto3.client(
+                's3',
+                endpoint_url=getattr(settings, 'S3_ENDPOINT_URL', None) or None,
+                region_name=getattr(settings, 'S3_REGION_NAME', None) or None,
+                aws_access_key_id=getattr(settings, 'S3_ACCESS_KEY_ID', None) or None,
+                aws_secret_access_key=getattr(settings, 'S3_SECRET_ACCESS_KEY', None) or None,
+            )
+            client.put_object(
+                Bucket=settings.S3_BUCKET_NAME,
+                Key=report_relpath,
+                Body=pdf_bytes,
+                ContentType='application/pdf',
+            )
+            report_url = f's3://{settings.S3_BUCKET_NAME}/{report_relpath}'
+    except Exception:
+        report_url = None
+
+    if not report_url:
+        from django.conf import settings as dj_settings
+        full_path = os.path.join(dj_settings.MEDIA_ROOT, report_relpath)
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        with open(full_path, 'wb') as f:
+            f.write(pdf_bytes)
+        report_url = f"{dj_settings.MEDIA_URL.rstrip('/')}/{report_relpath}"
+
+    AssessmentSubmission.objects.filter(id=submission.id).update(
+        report_url=report_url,
+        updated_at=timezone.now(),
+    )
+    _transition_submission_status(
+        submission,
+        AssessmentSubmission.STATUS_REPORT_READY,
+        expected_status=AssessmentSubmission.STATUS_REPORT_GENERATING,
+    )
+
+    return {'status': 'ok', 'task': 'generate_report', 'submission_id': submission_id, 'report_url': report_url}
 
 
 @shared_task(bind=True, max_retries=3, autoretry_for=(Exception,), retry_backoff=True, retry_backoff_max=900, retry_jitter=True, acks_late=True, reject_on_worker_lost=True)
@@ -529,6 +719,7 @@ def send_email_report(self, submission_id):
         scores = list(SubmissionScore.objects.filter(submission=submission).order_by('domain'))
         student_name = submission.user.full_name or submission.user.email
         report_url = _presigned_report_download_url(submission.report_url or '')
+        report_url = submission.report_url or ''
 
         html_body = render_to_string(
             'emails/submission_ready.html',
@@ -564,6 +755,51 @@ def send_email_report(self, submission_id):
         if self.request.retries >= self.max_retries:
             _record_dlq('send_email_report', submission_id, {'submission_id': str(submission_id)}, exc, self.request.retries)
         raise
+    submission = AssessmentSubmission.objects.select_related('user', 'assessment').get(id=submission_id)
+
+    if submission.email_sent_at:
+        return {'status': 'skipped', 'task': 'send_email_report', 'submission_id': submission_id, 'reason': 'email already sent'}
+
+    _transition_submission_status(
+        submission,
+        AssessmentSubmission.STATUS_EMAIL_SENDING,
+        expected_status=AssessmentSubmission.STATUS_REPORT_READY,
+    )
+
+    scores = list(SubmissionScore.objects.filter(submission=submission).order_by('domain'))
+    student_name = submission.user.full_name or submission.user.email
+    report_url = submission.report_url or ''
+
+    html_body = render_to_string(
+        'emails/submission_ready.html',
+        {
+            'student_name': student_name,
+            'scores': scores,
+            'report_url': report_url,
+        },
+    )
+
+    message = EmailMultiAlternatives(
+        subject='Your CLAP Assessment Results Are Ready',
+        body=f'Your CLAP report is ready. Download: {report_url}',
+        from_email=getattr(settings, 'FROM_EMAIL', None),
+        to=[submission.user.email],
+    )
+    message.attach_alternative(html_body, 'text/html')
+    message.send()
+
+    AssessmentSubmission.objects.filter(id=submission.id).update(
+        email_sent_at=timezone.now(),
+        updated_at=timezone.now(),
+    )
+
+    _transition_submission_status(
+        submission,
+        AssessmentSubmission.STATUS_COMPLETE,
+        expected_status=AssessmentSubmission.STATUS_EMAIL_SENDING,
+    )
+
+    return {'status': 'ok', 'task': 'send_email_report', 'submission_id': submission_id}
 
 
 @shared_task(bind=True, max_retries=0, acks_late=True, reject_on_worker_lost=True)
@@ -617,3 +853,123 @@ def dlq_sweeper(self):
     finally:
         with connection.cursor() as cursor:
             cursor.execute('SELECT pg_advisory_unlock(%s);', [lock_key])
+    threshold = timezone.now() - timezone.timedelta(minutes=5)
+    entries = DeadLetterQueue.objects.filter(resolved=False, created_at__lte=threshold).order_by('created_at')[:100]
+
+    processed = 0
+    for entry in entries:
+        retry_dlq_entry.delay(entry.id)
+        processed += 1
+
+    return {'status': 'ok', 'processed': processed}
+            component_ids = ClapTestComponent.objects.filter(
+                clap_test=submission.assessment,
+                test_type=component_type,
+            ).values_list('id', flat=True)
+
+            if not component_ids:
+                _upsert_rule_score(submission, domain, Decimal('0.00'))
+                continue
+
+            marks = (
+                StudentClapResponse.objects.filter(
+                    assignment=assignment,
+                    item__component_id__in=component_ids,
+                ).aggregate(total=Sum('marks_awarded'))
+            )['total']
+
+            _upsert_rule_score(submission, domain, Decimal(marks or 0).quantize(Decimal('0.01')))
+
+    moved = _transition_submission_status(
+        submission,
+        AssessmentSubmission.STATUS_RULES_COMPLETE,
+        expected_status=AssessmentSubmission.STATUS_PENDING,
+    )
+
+    if moved:
+        _transition_submission_status(
+            submission,
+            AssessmentSubmission.STATUS_LLM_PROCESSING,
+            expected_status=AssessmentSubmission.STATUS_RULES_COMPLETE,
+        )
+
+    return {
+        'status': 'ok',
+        'task': 'score_rule_based',
+        'submission_id': str(submission.id),
+        'domains_scored': ['listening', 'reading', 'vocab'],
+    }
+
+
+@shared_task(
+    bind=True,
+    max_retries=3,
+    autoretry_for=(TimeoutError, ConnectionError),
+    retry_backoff=True,
+    retry_backoff_max=300,
+    retry_jitter=True,
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
+"""Celery task stubs for CLAP submission processing pipeline.
+
+These tasks are placeholders to establish queue routing and worker startup
+for the Phase 1 infrastructure milestone.
+"""
+
+from celery import shared_task
+
+
+@shared_task(bind=True)
+def score_rule_based(self, submission_id):
+    return {'status': 'not_implemented', 'task': 'score_rule_based', 'submission_id': submission_id}
+
+
+@shared_task(bind=True)
+def evaluate_writing(self, submission_id):
+    return {'status': 'not_implemented', 'task': 'evaluate_writing', 'submission_id': submission_id}
+
+
+@shared_task(
+    bind=True,
+    max_retries=3,
+    autoretry_for=(TimeoutError, ConnectionError),
+    retry_backoff=True,
+    retry_backoff_max=300,
+    retry_jitter=True,
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
+@shared_task(bind=True)
+def evaluate_speaking(self, submission_id):
+    return {'status': 'not_implemented', 'task': 'evaluate_speaking', 'submission_id': submission_id}
+
+
+@shared_task(
+    bind=True,
+    max_retries=3,
+    autoretry_for=(Exception,),
+    retry_backoff=False,
+    default_retry_delay=30,
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
+@shared_task(bind=True)
+def generate_report(self, submission_id):
+    return {'status': 'not_implemented', 'task': 'generate_report', 'submission_id': submission_id}
+
+
+@shared_task(bind=True, max_retries=3, autoretry_for=(Exception,), retry_backoff=True, retry_backoff_max=900, retry_jitter=True, acks_late=True, reject_on_worker_lost=True)
+@shared_task(
+    bind=True,
+    max_retries=3,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=900,
+    retry_jitter=True,
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
+@shared_task(bind=True)
+def send_email_report(self, submission_id):
+    return {'status': 'not_implemented', 'task': 'send_email_report', 'submission_id': submission_id}
