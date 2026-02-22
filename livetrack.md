@@ -1,5 +1,14 @@
 # CLAP — Live Execution Tracker
 > Auto-updated by AI agent after every completed action.
+> Last updated: 2026-02-22 08:24 UTC
+> Last active agent: GPT-5.2-Codex
+
+## 🔖 Current Status
+- **Current Phase:** Phase 11 — Admin Dashboard — Pipeline & Results Management
+- **Current Task:** Phase 11.1 — Submission Pipeline Monitor
+- **Current Subtask:** Subtask 11.1.1 — Real-time submission status overview
+- **Status:** IN PROGRESS
+- **Blockers (if any):** DB server unavailable in this environment (localhost:5432 refused), so migration apply/DB verification remains blocked; package install proxy restriction still blocks some runtime dependency checks
 > Last updated: 2026-02-22 08:12 UTC
 > Last updated: 2026-02-22 08:03 UTC
 > Last updated: 2026-02-22 07:54 UTC
@@ -284,6 +293,7 @@
 - [x] Task 10.3 — Secrets manager integration for API keys ✅ COMPLETED [2026-02-22 07:54]
 - [x] Task 10.4 — PII exclusion verification in LLM prompts ✅ COMPLETED [2026-02-22 08:03]
 - [x] Task 10.5 — TLS enforcement on all connections ✅ COMPLETED [2026-02-22 08:12]
+- [x] Task 10.6 — Least-privilege DB roles ✅ COMPLETED [2026-02-22 08:24]
 - [ ] Task 4.4 — Wire up chain/chord/group pipeline (Section 4.2 of arch doc)
 - [x] Task 4.5 — Celery task configs (acks_late, reject_on_worker_lost, retry policies per Section 9.1) ✅ COMPLETED [2026-02-22 05:54]
 - [ ] Task 3.4 — Rate limiting (django-ratelimit + Redis)
