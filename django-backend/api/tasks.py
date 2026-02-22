@@ -145,6 +145,15 @@ def _evaluate_speaking_payload(transcript: str, prompt: str):
     }
 
 
+def _try_mark_llm_complete(submission: AssessmentSubmission):
+    if SubmissionScore.objects.filter(submission=submission, domain='writing').exists() and SubmissionScore.objects.filter(submission=submission, domain='speaking').exists():
+        _transition_submission_status(
+            submission,
+            AssessmentSubmission.STATUS_LLM_COMPLETE,
+            expected_status=AssessmentSubmission.STATUS_LLM_PROCESSING,
+        )
+
+
 def _persist_llm_score(submission: AssessmentSubmission, domain: str, payload: dict):
     score = float(payload.get('score', 0))
     if not (0 <= score <= 10):
@@ -251,6 +260,7 @@ def evaluate_writing(self, submission_id):
 
     payload = _evaluate_writing_payload(essay=essay, prompt='Evaluate writing response using rubric and return JSON')
     _persist_llm_score(submission, 'writing', payload)
+    _try_mark_llm_complete(submission)
     return {'status': 'ok', 'task': 'evaluate_writing', 'submission_id': submission_id}
 
 
@@ -268,6 +278,7 @@ def evaluate_speaking(self, submission_id):
     payload = _evaluate_speaking_payload(transcript=transcript, prompt='Evaluate speaking transcript using rubric and return JSON')
     _persist_llm_score(submission, 'speaking', payload)
 
+    _try_mark_llm_complete(submission)
     if SubmissionScore.objects.filter(submission=submission, domain='writing').exists():
         _transition_submission_status(submission, AssessmentSubmission.STATUS_LLM_COMPLETE, expected_status=AssessmentSubmission.STATUS_LLM_PROCESSING)
 

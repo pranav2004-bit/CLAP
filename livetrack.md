@@ -1,5 +1,14 @@
 # CLAP — Live Execution Tracker
 > Auto-updated by AI agent after every completed action.
+> Last updated: 2026-02-22 06:18 UTC
+> Last active agent: GPT-5.2-Codex
+
+## 🔖 Current Status
+- **Current Phase:** Phase 5 — Report Generation
+- **Current Task:** Task 5.1 — HTML report template (Django/Jinja2 with institution branding)
+- **Current Subtask:** Task 5.1 — HTML report template (Django/Jinja2 with institution branding)
+- **Status:** BLOCKED
+- **Blockers (if any):** DB server unavailable in this environment (localhost:5432 refused), so migration apply/DB verification is blocked; package install proxy restriction still blocks Celery/S3 runtime checks
 > Last updated: 2026-02-22 06:00 UTC
 > Last updated: 2026-02-22 05:54 UTC
 > Last updated: 2026-02-22 05:50 UTC
@@ -145,6 +154,8 @@
   - [x] Subtask 4.3.2 — Prompt construction with transcript + rubric ✅ COMPLETED [2026-02-22 06:00]
   - [x] Subtask 4.3.3 — OpenAI/Gemini API call + 3-stage validation ✅ COMPLETED [2026-02-22 06:00]
   - [x] Subtask 4.3.4 — Persist score with optimistic locking ✅ COMPLETED [2026-02-22 06:00]
+- [x] Task 4.4 — Wire up chain/chord/group pipeline (Section 4.2 of arch doc) ✅ COMPLETED [2026-02-22 06:18]
+- [x] Task 4.5 — Celery task configs (acks_late, reject_on_worker_lost, retry policies per Section 9.1) ✅ COMPLETED [2026-02-22 05:54]
 - [ ] Task 4.4 — Wire up chain/chord/group pipeline (Section 4.2 of arch doc)
 - [x] Task 4.5 — Celery task configs (acks_late, reject_on_worker_lost, retry policies per Section 9.1) ✅ COMPLETED [2026-02-22 05:54]
 - [ ] Task 3.4 — Rate limiting (django-ratelimit + Redis)
