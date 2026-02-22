@@ -70,7 +70,7 @@ WSGI_APPLICATION = 'clap_backend.wsgi.application'
 # Database - Using Supabase PostgreSQL
 # Same database as Next.js frontend
 DB_APP_USER = config('DB_APP_USER', default=config('DB_USER', default='postgres'))
-DB_APP_PASSWORD = config('DB_APP_PASSWORD', default=config('DB_PASSWORD'))
+DB_APP_PASSWORD = config('DB_APP_PASSWORD', default=config('DB_PASSWORD', default=''))
 
 # Database - Using Supabase PostgreSQL
 # Same database as Next.js frontend
@@ -84,7 +84,7 @@ DATABASES = {
         'NAME': config('DB_NAME', default='postgres'),
         'USER': DB_APP_USER,
         'PASSWORD': DB_APP_PASSWORD,
-        'HOST': config('DB_HOST'),
+        'HOST': config('DB_HOST', default='localhost'),
         'PORT': config('DB_PORT', default='5432'),
         'OPTIONS': {
             'sslmode': 'require',
