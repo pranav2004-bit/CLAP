@@ -1,6 +1,9 @@
 import json
 import logging
 from importlib.util import find_spec
+from urllib.parse import urlparse
+
+from django.conf import settings
 
 from django.db import IntegrityError
 from django.http import JsonResponse
@@ -104,6 +107,65 @@ def _dispatch_pipeline(submission_id):
         send_email_report.si(str(submission_id)),
     )
     pipeline.apply_async(headers={'correlation_id': correlation_id or str(submission_id)})
+    return True
+
+
+def _parse_s3_report_location(report_url):
+    if not report_url:
+        return None, None
+
+    if report_url.startswith('s3://'):
+        without_scheme = report_url[5:]
+        bucket, _, key = without_scheme.partition('/')
+        if bucket and key:
+            return bucket, key
+        return None, None
+
+    parsed = urlparse(report_url)
+    if parsed.scheme in {'http', 'https'} and parsed.netloc:
+        endpoint = getattr(settings, 'S3_ENDPOINT_URL', '')
+        bucket = getattr(settings, 'S3_BUCKET_NAME', '')
+        if endpoint and bucket and report_url.startswith(endpoint):
+            path = parsed.path.lstrip('/')
+            if path.startswith(f'{bucket}/'):
+                return bucket, path[len(bucket) + 1:]
+
+    return None, None
+
+
+def _report_download_url(submission):
+    raw_url = submission.report_url or ''
+    bucket, key = _parse_s3_report_location(raw_url)
+
+    if not bucket or not key:
+        return raw_url
+
+    if find_spec('boto3') is None:
+        return raw_url
+
+    try:
+        import boto3
+
+        expiry = getattr(settings, 'S3_PRESIGNED_URL_EXPIRY_SECONDS', 604800)
+        expiry = max(60, min(int(expiry), 604800))
+
+        client = boto3.client(
+            's3',
+            endpoint_url=getattr(settings, 'S3_ENDPOINT_URL', None) or None,
+            region_name=getattr(settings, 'S3_REGION_NAME', None) or None,
+            aws_access_key_id=getattr(settings, 'S3_ACCESS_KEY_ID', None) or None,
+            aws_secret_access_key=getattr(settings, 'S3_SECRET_ACCESS_KEY', None) or None,
+        )
+        return client.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': bucket, 'Key': key},
+            ExpiresIn=expiry,
+        )
+    except Exception:
+        logger.exception('Failed generating presigned report URL for submission %s', submission.id)
+        return raw_url
+
+
     pipeline.apply_async()
     return True
 
@@ -136,6 +198,7 @@ def create_submission(request):
         cached = redis_client.get(cache_key)
         if cached:
             submissions_total.labels(status='duplicate_cached').inc()
+            log_event('info', 'submission_duplicate_cached', submission_id=cached, user_id=str(user.id))
         log_event('info', 'submission_duplicate_cached', submission_id=cached, user_id=str(user.id))
         return JsonResponse({'submission_id': cached, 'cached': True}, status=202)
             return JsonResponse({'submission_id': cached, 'cached': True}, status=202)
@@ -163,6 +226,14 @@ def create_submission(request):
         redis_client.setex(cache_key, 86400, str(submission.id))
 
     submissions_total.labels(status='accepted').inc()
+    log_event(
+        'info',
+        'submission_created',
+        submission_id=str(submission.id),
+        user_id=str(user.id),
+        correlation_id=correlation_id,
+        pipeline_dispatched=dispatched,
+    )
     log_event('info', 'submission_created', submission_id=str(submission.id), user_id=str(user.id), correlation_id=correlation_id, pipeline_dispatched=dispatched)
 
     return JsonResponse(
@@ -221,6 +292,9 @@ def submission_results(request, submission_id):
         for score in scores
     ]
 
+    report_download_url = _report_download_url(submission)
+
+    log_event('info', 'submission_results_viewed', submission_id=str(submission.id), user_id=str(user.id))
     submissions_total.labels(status='accepted').inc()
     log_event('info', 'submission_created', submission_id=str(submission.id), user_id=str(user.id), correlation_id=correlation_id, pipeline_dispatched=dispatched)
 
@@ -230,6 +304,7 @@ def submission_results(request, submission_id):
             'assessment_id': str(submission.assessment_id),
             'status': submission.status,
             'report_url': submission.report_url,
+            'report_download_url': report_download_url,
             'email_sent_at': submission.email_sent_at.isoformat() if submission.email_sent_at else None,
             'scores': score_rows,
             'generated_at': timezone.now().isoformat(),

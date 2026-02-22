@@ -7,6 +7,7 @@ import re
 import os
 from importlib.util import find_spec
 from urllib import request as urlrequest
+from urllib.parse import urlparse
 
 from celery import shared_task
 from django.conf import settings
@@ -66,6 +67,58 @@ def _task_already_processed(task_id: str):
         return True
     client.setex(key, 86400, '1')
     return False
+
+
+
+
+def _parse_s3_report_location(report_url: str):
+    if not report_url:
+        return None, None
+
+    if report_url.startswith('s3://'):
+        without_scheme = report_url[5:]
+        bucket, _, key = without_scheme.partition('/')
+        if bucket and key:
+            return bucket, key
+        return None, None
+
+    parsed = urlparse(report_url)
+    if parsed.scheme in {'http', 'https'} and parsed.netloc:
+        endpoint = getattr(settings, 'S3_ENDPOINT_URL', '')
+        bucket = getattr(settings, 'S3_BUCKET_NAME', '')
+        if endpoint and bucket and report_url.startswith(endpoint):
+            path = parsed.path.lstrip('/')
+            if path.startswith(f'{bucket}/'):
+                return bucket, path[len(bucket) + 1:]
+
+    return None, None
+
+
+def _presigned_report_download_url(report_url: str):
+    bucket, key = _parse_s3_report_location(report_url)
+    if not bucket or not key:
+        return report_url
+
+    try:
+        import boto3
+
+        expiry = getattr(settings, 'S3_PRESIGNED_URL_EXPIRY_SECONDS', 604800)
+        expiry = max(60, min(int(expiry), 604800))
+
+        client = boto3.client(
+            's3',
+            endpoint_url=getattr(settings, 'S3_ENDPOINT_URL', None) or None,
+            region_name=getattr(settings, 'S3_REGION_NAME', None) or None,
+            aws_access_key_id=getattr(settings, 'S3_ACCESS_KEY_ID', None) or None,
+            aws_secret_access_key=getattr(settings, 'S3_SECRET_ACCESS_KEY', None) or None,
+        )
+        return client.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': bucket, 'Key': key},
+            ExpiresIn=expiry,
+        )
+    except Exception:
+        return report_url
 
 
 def _record_dlq(task_name: str, submission_id, payload: dict, error: Exception, retry_count: int):
@@ -627,6 +680,7 @@ def send_email_report(self, submission_id):
 
         scores = list(SubmissionScore.objects.filter(submission=submission).order_by('domain'))
         student_name = submission.user.full_name or submission.user.email
+        report_url = _presigned_report_download_url(submission.report_url or '')
         report_url = submission.report_url or ''
 
         html_body = render_to_string(
