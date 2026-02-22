@@ -1,5 +1,7 @@
 # CLAP — Live Execution Tracker
 > Auto-updated by AI agent after every completed action.
+> Last updated: 2026-02-22 15:08 UTC
+> Last updated: 2026-02-22 11:26 UTC
 > Last updated: 2026-02-22 14:44 UTC
 > Last updated: 2026-02-22 11:26 UTC
 > Last updated: 2026-02-22 14:18 UTC
@@ -24,6 +26,8 @@
 
 ## 🔖 Current Status
 - **Current Phase:** Phase 11 — Admin Dashboard — Pipeline & Results Management
+- **Current Task:** Task 12.5 — Report download
+- **Current Subtask:** Subtask 12.5.1 — Download PDF report button (presigned S3 URL)
 - **Current Task:** Task 12.4 — Results display page
 - **Current Subtask:** Subtask 12.4.1 — Overall score summary (all 5 domains)
 - **Current Task:** Task 12.3 — Submission progress indicator
@@ -508,6 +512,17 @@
 - [x] Task 11.7 — Admin Notifications ✅ COMPLETED [2026-02-22 13:28]
   - [x] Subtask 11.7.1 — In-app alerts for pipeline failures (P1/P2 events) ✅ COMPLETED [2026-02-22 13:28]
   - [x] Subtask 11.7.2 — Daily summary email to admin (submissions processed, failures, DLQ count) ✅ COMPLETED [2026-02-22 13:28]
+
+### Phase 12 — Student Dashboard — Results & Reports (EXISTING student UI)
+- [x] Task 12.1 — Wire existing test submit button to new submission API endpoint ✅ COMPLETED [2026-02-22 13:46]
+- [x] Task 12.2 — Add presigned S3 upload for speaking audio (if not already done) ✅ COMPLETED [2026-02-22 14:18]
+- [x] Task 12.3 — Submission progress indicator ✅ COMPLETED [2026-02-22 14:44]
+  - [x] Subtask 12.3.1 — Status polling / SSE after submission ✅ COMPLETED [2026-02-22 14:44]
+  - [x] Subtask 12.3.2 — Progress UI (e.g., "Scoring your answers..." → "Evaluating writing..." → "Generating report...") ✅ COMPLETED [2026-02-22 14:44]
+- [x] Task 12.4 — Results display page ✅ COMPLETED [2026-02-22 15:08]
+  - [x] Subtask 12.4.1 — Overall score summary (all 5 domains) ✅ COMPLETED [2026-02-22 15:08]
+  - [x] Subtask 12.4.2 — Per-domain score with LLM feedback (writing, speaking) ✅ COMPLETED [2026-02-22 15:08]
+  - [x] Subtask 12.4.3 — Score history (if student has taken multiple tests) ✅ COMPLETED [2026-02-22 15:08]
 
 ### Phase 12 — Student Dashboard — Results & Reports (EXISTING student UI)
 - [x] Task 12.1 — Wire existing test submit button to new submission API endpoint ✅ COMPLETED [2026-02-22 13:46]

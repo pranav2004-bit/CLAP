@@ -293,3 +293,37 @@ def submission_results(request, submission_id):
             'generated_at': timezone.now().isoformat(),
         }
     )
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def submission_history(request):
+    user = get_user_from_request(request)
+    if not user:
+        return JsonResponse({'error': 'Unauthorized'}, status=401)
+
+    qs = AssessmentSubmission.objects.select_related('assessment').filter(user_id=user.id).order_by('-created_at')
+
+    assessment_id = request.GET.get('assessment_id')
+    if assessment_id:
+        qs = qs.filter(assessment_id=assessment_id)
+
+    rows = []
+    for sub in qs[:50]:
+        domain_scores = SubmissionScore.objects.filter(submission=sub)
+        overall_score = None
+        if domain_scores.exists():
+            vals = [float(s.score) for s in domain_scores]
+            overall_score = round(sum(vals) / len(vals), 2)
+
+        rows.append({
+            'submission_id': str(sub.id),
+            'assessment_id': str(sub.assessment_id),
+            'assessment_name': getattr(sub.assessment, 'name', None),
+            'status': sub.status,
+            'overall_score': overall_score,
+            'created_at': sub.created_at.isoformat() if sub.created_at else None,
+            'report_download_url': _report_download_url(sub),
+        })
+
+    return JsonResponse({'rows': rows, 'count': len(rows)})

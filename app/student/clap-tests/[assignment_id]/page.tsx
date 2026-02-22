@@ -5,6 +5,7 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { ArrowLeft, Headphones, Mic, BookOpen, PenTool, Brain, CheckCircle, PlayCircle, Loader2, Download } from 'lucide-react'
 import { ArrowLeft, Headphones, Mic, BookOpen, PenTool, Brain, CheckCircle, PlayCircle, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { getApiUrl } from '@/lib/api-config'
@@ -29,6 +30,17 @@ export default function StudentClapTestDetailPage() {
 
   const [submission, setSubmission] = useState<any>(null)
   const [polling, setPolling] = useState(false)
+  const [results, setResults] = useState<any>(null)
+  const [history, setHistory] = useState<any[]>([])
+
+  const submissionId = searchParams.get('submission_id')
+
+  useEffect(() => {
+    const fetchAssignment = async () => {
+      try {
+        const response = await fetch(getApiUrl('student/clap-assignments'))
+        const data = await response.json()
+
 
   const submissionId = searchParams.get('submission_id')
 
@@ -96,6 +108,55 @@ export default function StudentClapTestDetailPage() {
 
     return () => {
       if (interval) clearInterval(interval)
+      setPolling(false)
+    }
+  }, [submissionId])
+
+  useEffect(() => {
+    if (!submissionId || !submission?.status) return
+    if (submission.status !== 'COMPLETE' && !submission.status.startsWith('REPORT_')) return
+
+    const fetchResults = async () => {
+      try {
+        const userId = localStorage.getItem('user_id') || ''
+        const resp = await fetch(getApiUrl(`submissions/${submissionId}/results`), {
+          headers: userId ? { 'x-user-id': userId } : {},
+        })
+        if (!resp.ok) return
+        const data = await resp.json()
+        setResults(data)
+      } catch (e) {
+        console.error('Failed loading results', e)
+      }
+    }
+
+    fetchResults()
+  }, [submissionId, submission])
+
+  useEffect(() => {
+    const fetchHistory = async () => {
+      try {
+        const userId = localStorage.getItem('user_id') || ''
+        const assessmentId = assignment?.test_id || assignment?.clap_test_id || assignment?.id || ''
+        const url = assessmentId ? getApiUrl(`submissions/history?assessment_id=${assessmentId}`) : getApiUrl('submissions/history')
+        const resp = await fetch(url, { headers: userId ? { 'x-user-id': userId } : {} })
+        if (!resp.ok) return
+        const data = await resp.json()
+        setHistory(Array.isArray(data.rows) ? data.rows : [])
+      } catch (e) {
+        console.error('Failed loading history', e)
+      }
+    }
+
+    if (assignment) fetchHistory()
+  }, [assignment])
+    }
+
+    poll()
+    interval = setInterval(poll, 5000)
+
+    return () => {
+      if (interval) clearInterval(interval)
       if (!stopped) setPolling(false)
     }
   }, [submissionId])
@@ -106,6 +167,12 @@ export default function StudentClapTestDetailPage() {
     if (idx < 0) return 0
     return Math.round(((idx + 1) / STATUS_STEPS.length) * 100)
   }, [submission])
+
+  const overallScore = useMemo(() => {
+    if (!results?.scores?.length) return null
+    const vals = results.scores.map((s: any) => Number(s.score || 0))
+    return Math.round((vals.reduce((a: number, b: number) => a + b, 0) / vals.length) * 100) / 100
+  }, [results])
 
   const getIcon = (type: string) => {
     switch (type) {
@@ -149,7 +216,60 @@ export default function StudentClapTestDetailPage() {
               </div>
               {polling && <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />}
             </div>
+            <div className="w-full bg-gray-200 h-2 rounded-full">
+              <div className="bg-indigo-600 h-2 rounded-full transition-all duration-300" style={{ width: `${statusProgress}%` }} />
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
+      {results && (
+        <Card className="mb-6 border-green-200">
+          <CardContent className="p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-500">Latest Result Summary</p>
+                <p className="text-xl font-bold">Overall Score: {overallScore ?? '-'} / 10</p>
+              </div>
+              {results.report_download_url && (
+                <a href={results.report_download_url} target="_blank" rel="noreferrer">
+                  <Button><Download className="w-4 h-4 mr-2" />Download Report</Button>
+                </a>
+              )}
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-3">
+              {results.scores?.map((s: any) => (
+                <div key={s.domain} className="rounded-lg border p-3 bg-white">
+                  <div className="flex items-center justify-between">
+                    <p className="capitalize font-medium">{s.domain}</p>
+                    <Badge>{s.score}</Badge>
+                  </div>
+                  {s.feedback?.overall && <p className="text-sm text-gray-600 mt-2">{s.feedback.overall}</p>}
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {history.length > 0 && (
+        <Card className="mb-6">
+          <CardContent className="p-5">
+            <p className="font-semibold mb-3">Score History</p>
+            <div className="space-y-2">
+              {history.slice(0, 8).map((row: any) => (
+                <div key={row.submission_id} className="flex items-center justify-between rounded border p-3">
+                  <div>
+                    <p className="text-sm">{new Date(row.created_at).toLocaleString()}</p>
+                    <p className="text-xs text-gray-500">Status: {row.status}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-semibold">{row.overall_score ?? '-'} / 10</p>
+                  </div>
+                </div>
+              ))}
+            </div>
             <div className="w-full bg-gray-200 h-2 rounded-full">
               <div className="bg-indigo-600 h-2 rounded-full transition-all duration-300" style={{ width: `${statusProgress}%` }} />
             </div>
@@ -182,6 +302,7 @@ export default function StudentClapTestDetailPage() {
                     <p className="text-sm text-gray-500">{comp.duration || 10} min • 10 Marks</p>
                   </div>
                 </div>
+                <Button size="sm" className="rounded-full px-6">Start <PlayCircle className="w-4 h-4 ml-2" /></Button>
                 <div className="flex items-center gap-4">
                   <Button size="sm" className="rounded-full px-6">
                     Start <PlayCircle className="w-4 h-4 ml-2" />
