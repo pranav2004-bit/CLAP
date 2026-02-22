@@ -1,5 +1,14 @@
 # CLAP — Live Execution Tracker
 > Auto-updated by AI agent after every completed action.
+> Last updated: 2026-02-22 06:32 UTC
+> Last active agent: GPT-5.2-Codex
+
+## 🔖 Current Status
+- **Current Phase:** Phase 8 — Concurrency & Idempotency Controls
+- **Current Task:** Task 8.1 — Optimistic locking on all status transitions
+- **Current Subtask:** Task 8.1 — Optimistic locking on all status transitions
+- **Status:** BLOCKED
+- **Blockers (if any):** DB server unavailable in this environment (localhost:5432 refused), so migration apply/DB verification is blocked; package install proxy restriction still blocks Celery/S3 runtime checks
 > Last updated: 2026-02-22 06:28 UTC
 > Last updated: 2026-02-22 06:24 UTC
 > Last active agent: GPT-5.2-Codex
@@ -196,6 +205,9 @@
 
 ### Phase 7 — Failure Handling & DLQ
 - [x] Task 7.1 — Per-stage retry policies (as per Section 9.1 of arch doc) ✅ COMPLETED [2026-02-22 06:28]
+- [x] Task 7.2 — DLQ recording on retry exhaustion ✅ COMPLETED [2026-02-22 06:32]
+- [x] Task 7.3 — Celery beat periodic DLQ sweeper (every 15 min) ✅ COMPLETED [2026-02-22 06:28]
+- [x] Task 7.4 — Admin DLQ management interface (add to EXISTING admin dashboard) ✅ COMPLETED [2026-02-22 06:32]
 - [ ] Task 7.2 — DLQ recording on retry exhaustion
 - [x] Task 7.3 — Celery beat periodic DLQ sweeper (every 15 min) ✅ COMPLETED [2026-02-22 06:28]
 - [ ] Task 7.4 — Admin DLQ management interface (add to EXISTING admin dashboard) 🔄 IN PROGRESS
