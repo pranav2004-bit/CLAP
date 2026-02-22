@@ -4,6 +4,7 @@ from importlib.util import find_spec
 from urllib.parse import urlparse
 
 from django.conf import settings
+
 from django.db import IntegrityError
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -41,6 +42,7 @@ logger = logging.getLogger(__name__)
 def _redis_client():
     if redis is None:
         return None
+    from django.conf import settings
 
     redis_url = getattr(settings, 'REDIS_URL', None)
     if not redis_url:
@@ -52,6 +54,8 @@ def _idempotency_cache_key(user_id, idempotency_key):
     return f'submission:idempotency:{user_id}:{idempotency_key}'
 
 
+
+
 def _rate_limit_keys(user):
     ts_bucket = timezone.now().strftime('%Y%m%d%H')
     user_key = f'submission:ratelimit:user:{user.id}:{ts_bucket}'
@@ -61,6 +65,8 @@ def _rate_limit_keys(user):
 
 
 def _check_rate_limit(user, redis_client):
+    from django.conf import settings
+
     if redis_client is None:
         return True, None
 
@@ -84,6 +90,7 @@ def _check_rate_limit(user, redis_client):
 
 
 def _dispatch_pipeline(submission_id, correlation_id=None):
+def _dispatch_pipeline(submission_id):
     if chain is None:
         logger.warning('Celery is unavailable; skipping pipeline dispatch for %s', submission_id)
         return False
@@ -159,6 +166,10 @@ def _report_download_url(submission):
         return raw_url
 
 
+    pipeline.apply_async()
+    return True
+
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def create_submission(request):
@@ -188,6 +199,8 @@ def create_submission(request):
         if cached:
             submissions_total.labels(status='duplicate_cached').inc()
             log_event('info', 'submission_duplicate_cached', submission_id=cached, user_id=str(user.id))
+        log_event('info', 'submission_duplicate_cached', submission_id=cached, user_id=str(user.id))
+        return JsonResponse({'submission_id': cached, 'cached': True}, status=202)
             return JsonResponse({'submission_id': cached, 'cached': True}, status=202)
 
     try:
@@ -200,6 +213,7 @@ def create_submission(request):
         )
         correlation_id = serializer.validated_data.get('correlation_id') or str(submission.id)
         dispatched = _dispatch_pipeline(submission.id, correlation_id=correlation_id)
+        dispatched = _dispatch_pipeline(submission.id)
     except IntegrityError:
         existing = AssessmentSubmission.objects.get(idempotency_key=idempotency_key)
         if redis_client:
@@ -220,6 +234,7 @@ def create_submission(request):
         correlation_id=correlation_id,
         pipeline_dispatched=dispatched,
     )
+    log_event('info', 'submission_created', submission_id=str(submission.id), user_id=str(user.id), correlation_id=correlation_id, pipeline_dispatched=dispatched)
 
     return JsonResponse(
         {
@@ -280,6 +295,8 @@ def submission_results(request, submission_id):
     report_download_url = _report_download_url(submission)
 
     log_event('info', 'submission_results_viewed', submission_id=str(submission.id), user_id=str(user.id))
+    submissions_total.labels(status='accepted').inc()
+    log_event('info', 'submission_created', submission_id=str(submission.id), user_id=str(user.id), correlation_id=correlation_id, pipeline_dispatched=dispatched)
 
     return JsonResponse(
         {
