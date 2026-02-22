@@ -11,6 +11,8 @@ from django.utils import timezone
 from api.models import AssessmentSubmission, SubmissionScore
 from api.serializers import SubmissionCreateSerializer, SubmissionStatusSerializer
 from api.utils.jwt_utils import get_user_from_request
+from api.utils.observability import log_event
+from api.utils.metrics import submissions_total
 
 if find_spec('redis') is not None:
     import redis
@@ -84,6 +86,7 @@ def _check_rate_limit(user, redis_client):
     return True, None
 
 
+def _dispatch_pipeline(submission_id, correlation_id=None):
 def _dispatch_pipeline(submission_id):
     if chain is None:
         logger.warning('Celery is unavailable; skipping pipeline dispatch for %s', submission_id)
@@ -100,6 +103,7 @@ def _dispatch_pipeline(submission_id):
         ),
         send_email_report.si(str(submission_id)),
     )
+    pipeline.apply_async(headers={'correlation_id': correlation_id or str(submission_id)})
     pipeline.apply_async()
     return True
 
@@ -131,6 +135,9 @@ def create_submission(request):
     if redis_client:
         cached = redis_client.get(cache_key)
         if cached:
+            submissions_total.labels(status='duplicate_cached').inc()
+        log_event('info', 'submission_duplicate_cached', submission_id=cached, user_id=str(user.id))
+        return JsonResponse({'submission_id': cached, 'cached': True}, status=202)
             return JsonResponse({'submission_id': cached, 'cached': True}, status=202)
 
     try:
@@ -141,15 +148,22 @@ def create_submission(request):
             status=AssessmentSubmission.STATUS_PENDING,
             correlation_id=serializer.validated_data.get('correlation_id') or None,
         )
+        correlation_id = serializer.validated_data.get('correlation_id') or str(submission.id)
+        dispatched = _dispatch_pipeline(submission.id, correlation_id=correlation_id)
         dispatched = _dispatch_pipeline(submission.id)
     except IntegrityError:
         existing = AssessmentSubmission.objects.get(idempotency_key=idempotency_key)
         if redis_client:
             redis_client.setex(cache_key, 86400, str(existing.id))
+        submissions_total.labels(status='duplicate_db').inc()
+        log_event('info', 'submission_duplicate_db', submission_id=str(existing.id), user_id=str(user.id))
         return JsonResponse({'submission_id': str(existing.id), 'cached': True}, status=202)
 
     if redis_client:
         redis_client.setex(cache_key, 86400, str(submission.id))
+
+    submissions_total.labels(status='accepted').inc()
+    log_event('info', 'submission_created', submission_id=str(submission.id), user_id=str(user.id), correlation_id=correlation_id, pipeline_dispatched=dispatched)
 
     return JsonResponse(
         {
@@ -206,6 +220,9 @@ def submission_results(request, submission_id):
         }
         for score in scores
     ]
+
+    submissions_total.labels(status='accepted').inc()
+    log_event('info', 'submission_created', submission_id=str(submission.id), user_id=str(user.id), correlation_id=correlation_id, pipeline_dispatched=dispatched)
 
     return JsonResponse(
         {

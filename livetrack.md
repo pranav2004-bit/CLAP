@@ -1,10 +1,15 @@
 # CLAP — Live Execution Tracker
 > Auto-updated by AI agent after every completed action.
+> Last updated: 2026-02-22 06:37 UTC
 > Last updated: 2026-02-22 06:34 UTC
 > Last active agent: GPT-5.2-Codex
 
 ## 🔖 Current Status
 - **Current Phase:** Phase 9 — Observability & Monitoring
+- **Current Task:** Task 9.4 — Grafana dashboard configs
+- **Current Subtask:** Task 9.4 — Grafana dashboard configs
+- **Status:** BLOCKED
+- **Blockers (if any):** DB server unavailable in this environment (localhost:5432 refused), so migration apply/DB verification is blocked; package install proxy restriction still blocks Celery/S3 runtime checks
 - **Current Task:** Task 9.1 — Structured JSON logging across all services
 - **Current Subtask:** Task 9.1 — Structured JSON logging across all services
 - **Status:** BLOCKED
@@ -231,6 +236,11 @@
 - [x] Task 8.2 — SELECT FOR UPDATE on report generation trigger ✅ COMPLETED [2026-02-22 06:34]
 - [x] Task 8.3 — Database advisory locks on DLQ sweeper ✅ COMPLETED [2026-02-22 06:34]
 - [x] Task 8.4 — Celery task_id deduplication via Redis ✅ COMPLETED [2026-02-22 06:34]
+
+### Phase 9 — Observability & Monitoring
+- [x] Task 9.1 — Structured JSON logging across all services ✅ COMPLETED [2026-02-22 06:37]
+- [x] Task 9.2 — correlation_id propagation through task chain ✅ COMPLETED [2026-02-22 06:37]
+- [x] Task 9.3 — Prometheus metrics (Section 12.2 of arch doc) ✅ COMPLETED [2026-02-22 06:37]
 - [ ] Task 4.4 — Wire up chain/chord/group pipeline (Section 4.2 of arch doc)
 - [x] Task 4.5 — Celery task configs (acks_late, reject_on_worker_lost, retry policies per Section 9.1) ✅ COMPLETED [2026-02-22 05:54]
 - [ ] Task 3.4 — Rate limiting (django-ratelimit + Redis)

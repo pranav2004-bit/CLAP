@@ -34,11 +34,18 @@ from api.models import (
 )
 from api.utils.openai_client import evaluate_speaking as openai_evaluate_speaking
 from api.utils.openai_client import evaluate_writing as openai_evaluate_writing
+from api.utils.observability import log_event
+from api.utils.metrics import llm_validation_failures_total, report_generation_duration, dlq_unresolved_count
 
 if find_spec('redis') is not None:
     import redis
 else:
     redis = None
+
+
+def _correlation_id(task, submission_id):
+    headers = getattr(task.request, "headers", {}) or {}
+    return headers.get("correlation_id", str(submission_id))
 
 
 def _redis_client():
@@ -84,6 +91,8 @@ def _record_dlq(task_name: str, submission_id, payload: dict, error: Exception, 
         worker_id='celery-worker',
         error_detail=str(error)[:2000],
     )
+    dlq_unresolved_count.inc()
+    log_event('error', 'dlq_recorded', submission_id=str(submission_id), task_name=task_name, retry_count=retry_count, error=str(error)[:300])
 
 
 def _transition_submission_status(
@@ -216,10 +225,14 @@ def _try_mark_llm_complete(submission: AssessmentSubmission):
 def _persist_llm_score(submission: AssessmentSubmission, domain: str, payload: dict):
     score = float(payload.get('score', 0))
     if not (0 <= score <= 10):
+        llm_validation_failures_total.labels(domain=domain, failure_type='score_range').inc()
         raise ValueError('LLM score out of range 0-10')
 
     feedback = payload.get('feedback', {}) or {}
     if not isinstance(feedback, dict):
+        llm_validation_failures_total.labels(domain=domain, failure_type='feedback_schema').inc()
+        raise ValueError('LLM feedback must be object')
+
         raise ValueError('LLM feedback must be object')
 
     # Semantic guard
@@ -247,6 +260,7 @@ def score_rule_based(self, submission_id):
 
     try:
         submission = AssessmentSubmission.objects.select_related('user', 'assessment').get(id=submission_id)
+        log_event('info', 'task_started', task='score_rule_based', submission_id=str(submission_id), correlation_id=_correlation_id(self, submission_id))
 
         existing_rule_domains = set(
             SubmissionScore.objects.filter(
@@ -436,6 +450,9 @@ def generate_report(self, submission_id):
         return {'status': 'skipped', 'reason': 'task already processed', 'task_id': self.request.id}
 
     try:
+        start_ts = timezone.now()
+        with transaction.atomic():
+            submission = AssessmentSubmission.objects.select_for_update().select_related('assessment', 'user').get(id=submission_id)
         with transaction.atomic():
             submission = AssessmentSubmission.objects.select_for_update().select_related('assessment', 'user').get(id=submission_id)
     try:
@@ -508,6 +525,9 @@ def generate_report(self, submission_id):
             expected_status=AssessmentSubmission.STATUS_REPORT_GENERATING,
         )
 
+        duration = (timezone.now() - start_ts).total_seconds()
+        report_generation_duration.observe(duration)
+        log_event('info', 'report_generated', submission_id=str(submission_id), duration_seconds=duration, report_url=report_url)
         return {'status': 'ok', 'task': 'generate_report', 'submission_id': submission_id, 'report_url': report_url}
     except Exception as exc:
         if self.request.retries >= self.max_retries:
