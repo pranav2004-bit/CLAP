@@ -126,6 +126,7 @@ urlpatterns = [
     path('student/clap-assignments/<uuid:assignment_id>/components/<uuid:component_id>/finish', clap_attempt.finish_component, name='student_finish_component'),
 
     # Audio Recording
+    path('student/clap-assignments/<uuid:assignment_id>/audio-upload-url', audio_upload.get_audio_upload_url, name='student_audio_upload_url'),
     path('student/clap-assignments/<uuid:assignment_id>/submit-audio', audio_upload.submit_audio_response, name='student_submit_audio'),
     path('student/audio-responses/<uuid:audio_response_id>/file', audio_upload.retrieve_audio_file, name='student_audio_file'),
 
