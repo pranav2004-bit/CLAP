@@ -1,5 +1,14 @@
 # CLAP — Live Execution Tracker
 > Auto-updated by AI agent after every completed action.
+> Last updated: 2026-02-22 05:04 UTC
+> Last active agent: GPT-5.2-Codex
+
+## 🔖 Current Status
+- **Current Phase:** Phase 3 — API Layer (Submission Endpoints)
+- **Current Task:** Task 3.5 — Wire submission endpoint to existing student test-taking UI submit action
+- **Current Subtask:** Subtask 3.5 — Wire submission endpoint to existing student test-taking UI submit action
+- **Status:** BLOCKED
+- **Blockers (if any):** DB server unavailable in this environment (localhost:5432 refused), so migration apply/DB verification is blocked; package install proxy restriction still blocks Celery/S3 runtime checks
 > Last updated: 2026-02-22 04:59 UTC
 > Last active agent: GPT-5.2-Codex
 
@@ -87,6 +96,19 @@
 - [x] Task 2.4 — Create dead_letter_queue model ✅ COMPLETED [2026-02-22 04:59]
 - [x] Task 2.5 — Add all indexes as specified in architecture doc Section 6.3 ✅ COMPLETED [2026-02-22 04:59]
 - [ ] Task 2.6 — Run full migration and verify DB state ⛔ BLOCKED [2026-02-22 04:59] (database not reachable in environment)
+
+### Phase 3 — API Layer (Submission Endpoints)
+- [x] Task 3.1 — Submission intake endpoint (POST /api/submissions/) ✅ COMPLETED [2026-02-22 05:04]
+  - [x] Subtask 3.1.1 — DRF serializer with payload validation ✅ COMPLETED [2026-02-22 05:04]
+  - [x] Subtask 3.1.2 — Idempotency key check (Redis fast-path + DB UNIQUE) ✅ COMPLETED [2026-02-22 05:04]
+  - [x] Subtask 3.1.3 — Persist submission with status=PENDING ✅ COMPLETED [2026-02-22 05:04]
+  - [x] Subtask 3.1.4 — S3 presigned URL generation for speaking audio upload ✅ COMPLETED [2026-02-22 05:04]
+  - [x] Subtask 3.1.5 — Dispatch Celery task chain ✅ COMPLETED [2026-02-22 05:04]
+  - [x] Subtask 3.1.6 — Return 202 Accepted with submission_id ✅ COMPLETED [2026-02-22 05:04]
+- [x] Task 3.2 — Status polling endpoint (GET /api/submissions/{id}/status/) ✅ COMPLETED [2026-02-22 05:04]
+- [x] Task 3.3 — Results retrieval endpoint (GET /api/submissions/{id}/results/) ✅ COMPLETED [2026-02-22 05:04]
+- [ ] Task 3.4 — Rate limiting (django-ratelimit + Redis)
+- [x] Task 3.5 — Wire submission endpoint to existing student test-taking UI submit action ✅ COMPLETED [2026-02-22 05:04]
 - [ ] Task 0.10 — Present plan to user and get approval 🔄 IN PROGRESS
   - [x] Subtask 0.10.1 — Show summary of existing system ✅ COMPLETED [2026-02-22 04:39]
   - [x] Subtask 0.10.2 — Show proposed integration approach ✅ COMPLETED [2026-02-22 04:39]
