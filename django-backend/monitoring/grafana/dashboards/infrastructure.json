@@ -1,0 +1,44 @@
+{
+  "title": "CLAP Infrastructure",
+  "uid": "clap-infrastructure",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "tags": ["clap", "infra"],
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Active Workers",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "clap_active_workers",
+          "legendFormat": "{{worker_pool}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Redis Memory Used",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
+      "targets": [
+        {
+          "expr": "redis_memory_used_bytes",
+          "legendFormat": "redis"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "PostgreSQL Connections",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(pg_stat_activity_count)",
+          "legendFormat": "db_connections"
+        }
+      ]
+    }
+  ]
+}
