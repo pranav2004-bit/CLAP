@@ -20,6 +20,11 @@ export const metadata: Metadata = {
     description: 'Comprehensive English language assessment platform with AI-powered scoring',
     type: 'website',
   },
+  icons: {
+    icon: '/images/clap-icon.png?v=new',
+    shortcut: '/images/clap-icon.png?v=new',
+    apple: '/images/clap-icon.png?v=new',
+  },
 }
 
 export default function RootLayout({

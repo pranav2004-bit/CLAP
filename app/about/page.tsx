@@ -5,7 +5,7 @@ import Image from 'next/image'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { 
+import {
   Users,
   Brain,
   Target,
@@ -71,8 +71,7 @@ export default function AboutPage() {
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between">
             <Link href="/" className="flex items-center gap-2">
-              <Image src="/images/clap-logo.png" alt="CLAP Logo" width={40} height={40} className="rounded-xl" />
-              <span className="text-xl font-bold gradient-text">CLAP</span>
+              <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={128} height={52} className="w-auto h-12 object-contain" priority />
             </Link>
             <div className="hidden md:flex items-center gap-8">
               <Link href="/#features" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Features</Link>
@@ -98,14 +97,14 @@ export default function AboutPage() {
             <Badge variant="secondary" className="mb-6 px-4 py-1.5">
               About CLAP
             </Badge>
-            
+
             <h1 className="text-display-lg md:text-display-xl mb-6">
               Empowering Language Learners with{' '}
               <span className="gradient-text">AI Technology</span>
             </h1>
-            
+
             <p className="text-xl text-muted-foreground mb-12 max-w-3xl mx-auto">
-              CLAP (Continuing Language Assessment Program) is revolutionizing English language assessment 
+              CLAP (Continuing Language Assessment Program) is revolutionizing English language assessment
               through cutting-edge artificial intelligence, making quality evaluation accessible to learners worldwide.
             </p>
           </div>
@@ -120,11 +119,11 @@ export default function AboutPage() {
               <div>
                 <h2 className="text-display-sm mb-6">Our Mission</h2>
                 <p className="text-lg text-muted-foreground mb-6">
-                  We believe every language learner deserves access to high-quality, affordable assessment 
+                  We believe every language learner deserves access to high-quality, affordable assessment
                   that provides meaningful feedback for improvement.
                 </p>
                 <p className="text-muted-foreground mb-6">
-                  Traditional language testing is expensive, time-consuming, and often inaccessible. 
+                  Traditional language testing is expensive, time-consuming, and often inaccessible.
                   CLAP changes this by leveraging AI to deliver instant, accurate evaluations at scale.
                 </p>
                 <ul className="space-y-3">
@@ -165,7 +164,7 @@ export default function AboutPage() {
               Our unique approach combines advanced technology with educational expertise
             </p>
           </div>
-          
+
           <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
             {features.map((feature, index) => (
               <Card key={feature.title} className="card-hover border-0 bg-card">
@@ -194,7 +193,7 @@ export default function AboutPage() {
               Our team combines decades of language education experience with cutting-edge AI research
             </p>
           </div>
-          
+
           <div className="grid md:grid-cols-3 gap-8 max-w-4xl mx-auto">
             {teamMembers.map((member) => (
               <Card key={member.name} className="text-center">

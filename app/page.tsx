@@ -6,16 +6,17 @@ import Image from 'next/image'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { 
-  Headphones, 
-  Mic, 
-  BookOpen, 
-  PenTool, 
-  Brain, 
-  CheckCircle2, 
-  Clock, 
-  Shield, 
-  BarChart3, 
+import { ActionButton } from '@/components/ui/action-button'
+import {
+  Headphones,
+  Mic,
+  BookOpen,
+  PenTool,
+  Brain,
+  CheckCircle2,
+  Clock,
+  Shield,
+  BarChart3,
   Users,
   ArrowRight,
   Sparkles,
@@ -98,22 +99,19 @@ export default function LandingPage() {
       <nav className="fixed top-0 left-0 right-0 z-50 glass">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Image src="/images/clap-logo.png" alt="CLAP Logo" width={40} height={40} className="rounded-xl" />
-              <span className="text-xl font-bold gradient-text">CLAP</span>
-            </div>
             <div className="hidden md:flex items-center gap-8">
               <a href="#features" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Features</a>
               <a href="#tests" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Tests</a>
               <Link href="/about" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">About</Link>
             </div>
+
             <div className="flex items-center gap-3">
-              <Link href="/login">
-                <Button variant="ghost" size="sm">Sign In</Button>
-              </Link>
-              <Link href="/login">
-                <Button size="sm">Get Started</Button>
-              </Link>
+              <ActionButton href="/login" variant="ghost" size="sm">
+                Sign In
+              </ActionButton>
+              <ActionButton href="/login" size="sm">
+                Get Started
+              </ActionButton>
             </div>
           </div>
         </div>
@@ -125,36 +123,36 @@ export default function LandingPage() {
         <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-background to-accent/5" />
         <div className="absolute top-20 left-1/4 w-96 h-96 bg-primary/10 rounded-full blur-3xl" />
         <div className="absolute bottom-20 right-1/4 w-96 h-96 bg-accent/10 rounded-full blur-3xl" />
-        
+
         <div className="container relative mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="max-w-4xl mx-auto text-center">
-            <Badge variant="secondary" className="mb-6 px-4 py-1.5">
-              <Sparkles className="w-3 h-3 mr-1.5" />
+          <div className="max-w-5xl mx-auto flex flex-col items-center text-center">
+            <div className="mb-8 w-full flex justify-center">
+              <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={354} height={144} className="w-auto h-28 object-contain" priority />
+            </div>
+
+            <Badge variant="secondary" className="mb-8 px-6 py-2 text-sm font-medium rounded-full shadow-sm border border-border/50 backdrop-blur-sm">
+              <Sparkles className="w-4 h-4 mr-2 text-primary" />
               AI-Powered Assessment Platform
             </Badge>
-            
-            <h1 className="text-display-lg md:text-display-xl mb-6 text-balance">
+
+            <h1 className="text-display-lg md:text-display-2xl mb-8 text-balance font-extrabold tracking-tight">
               Master English with{' '}
               <span className="gradient-text">Confidence</span>
             </h1>
-            
-            <p className="text-xl text-muted-foreground mb-10 max-w-2xl mx-auto text-balance">
-              Comprehensive language assessment across 5 core skills. Get accurate, 
+
+            <p className="text-xl md:text-2xl text-muted-foreground mb-12 max-w-3xl text-balance leading-relaxed">
+              Comprehensive language assessment across 5 core skills. Get accurate,
               AI-powered evaluation and detailed feedback to accelerate your learning journey.
             </p>
-            
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-              <Link href="/login">
-                <Button variant="hero" size="xl" className="group">
-                  Start Assessment
-                  <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
-                </Button>
-              </Link>
-              <Link href="#tests">
-                <Button variant="outline" size="xl">
-                  View Test Structure
-                </Button>
-              </Link>
+
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-5 w-full">
+              <ActionButton href="/login" variant="hero" size="xl" className="group min-w-[200px] shadow-lg shadow-primary/20 hover:shadow-primary/30 transition-all duration-300">
+                Start Assessment
+                <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
+              </ActionButton>
+              <ActionButton href="#tests" variant="outline" size="xl" className="group">
+                View Test Structure
+              </ActionButton>
             </div>
 
             {/* Stats */}
@@ -186,7 +184,7 @@ export default function LandingPage() {
               Built with cutting-edge technology to provide the most accurate and fair assessment experience
             </p>
           </div>
-          
+
           <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
             {features.map((feature, index) => (
               <Card key={feature.title} className="card-hover border-0 bg-card">
@@ -215,14 +213,13 @@ export default function LandingPage() {
               Each test is carefully designed to evaluate specific language competencies
             </p>
           </div>
-          
+
           <div className="grid md:grid-cols-2 lg:grid-cols-5 gap-4">
             {testTypes.map((test, index) => (
-              <Card 
+              <Card
                 key={test.name}
-                className={`card-hover cursor-pointer border-2 transition-all duration-300 ${
-                  hoveredTest === test.name ? 'border-primary shadow-glow' : 'border-transparent'
-                }`}
+                className={`card-hover cursor-pointer border-2 transition-all duration-300 ${hoveredTest === test.name ? 'border-primary shadow-glow' : 'border-transparent'
+                  }`}
                 onMouseEnter={() => setHoveredTest(test.name)}
                 onMouseLeave={() => setHoveredTest(null)}
               >
@@ -288,19 +285,15 @@ export default function LandingPage() {
               Join thousands of learners who have improved their English proficiency with CLAP
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-              <Link href="/login?role=student">
-                <Button variant="hero" size="xl" className="group">
-                  <Users className="mr-2 w-5 h-5" />
-                  Student Login
-                  <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
-                </Button>
-              </Link>
-              <Link href="/login?role=admin">
-                <Button variant="outline" size="xl">
-                  <Shield className="mr-2 w-5 h-5" />
-                  Admin Portal
-                </Button>
-              </Link>
+              <ActionButton href="/login?role=student" variant="hero" size="xl" className="group">
+                <Users className="mr-2 w-5 h-5" />
+                Student Login
+                <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
+              </ActionButton>
+              <ActionButton href="/login?role=admin" variant="outline" size="xl">
+                <Shield className="mr-2 w-5 h-5" />
+                Admin Portal
+              </ActionButton>
             </div>
           </div>
         </div>
@@ -311,9 +304,8 @@ export default function LandingPage() {
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-2">
-              <Image src="/images/clap-logo.png" alt="CLAP Logo" width={32} height={32} className="rounded-lg" />
-              <span className="font-semibold">CLAP</span>
-              <span className="text-sm text-muted-foreground">by SANJIVO</span>
+              <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={84} height={34} className="w-auto h-8 object-contain" />
+              <span className="text-sm text-muted-foreground ml-2">by SANJIVO</span>
             </div>
             <p className="text-sm text-muted-foreground">
               © 2026 CLAP. All rights reserved.

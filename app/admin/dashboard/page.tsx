@@ -35,7 +35,8 @@ import {
   Save,
   Play,
   Square,
-  Loader2
+  Loader2,
+  Monitor
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
@@ -47,8 +48,9 @@ import { getApiUrl } from '@/lib/api-config'
 import { feedback } from '@/lib/user-feedback'
 
 export default function SimplifiedAdminDashboard() {
-  const [activeTab, setActiveTab] = useState<'overview' | 'students' | 'analytics' | 'batches' | 'clap-tests'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'students' | 'analytics' | 'batches' | 'clap-tests' | 'control-room'>('overview')
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [controlRoomSubTab, setControlRoomSubTab] = useState<'wt' | 'st'>('wt')
   const [isAddStudentModalOpen, setIsAddStudentModalOpen] = useState(false)
   const [showCreateClapTestModal, setShowCreateClapTestModal] = useState(false)
   const [showClapTestDetails, setShowClapTestDetails] = useState(false)
@@ -612,12 +614,9 @@ export default function SimplifiedAdminDashboard() {
       <aside className={`fixed left-0 top-0 z-50 h-screen w-64 bg-white border-r border-gray-200 transform transition-transform duration-300 ease-in-out ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}>
         <div className="flex flex-col h-full">
           {/* Logo Header */}
-          <div className="flex items-center gap-3 px-6 py-5 border-b border-gray-200">
-            <Image src="/images/clap-logo.png" alt="CLAP Logo" width={40} height={40} className="rounded-xl" />
-            <div>
-              <span className="text-xl font-bold text-primary">CLAP</span>
-              <p className="text-xs text-gray-500">Admin Portal</p>
-            </div>
+          <div className="flex flex-col gap-1 px-6 py-5 border-b border-gray-200">
+            <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={113} height={46} className="w-auto h-10 object-contain" priority />
+            <p className="text-xs text-gray-500 font-medium pl-1">Admin Portal</p>
           </div>
 
           {/* Navigation */}
@@ -698,6 +697,20 @@ export default function SimplifiedAdminDashboard() {
               >
                 <FileText className="w-5 h-5" />
                 CLAP Tests
+              </button>
+
+              <button
+                onClick={() => {
+                  setActiveTab('control-room');
+                  setSidebarOpen(false);
+                }}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'control-room'
+                  ? 'bg-indigo-100 text-indigo-700'
+                  : 'text-gray-600 hover:bg-gray-100'
+                  }`}
+              >
+                <Monitor className="w-5 h-5" />
+                Control Room
               </button>
             </div>
           </nav>
@@ -1433,6 +1446,47 @@ export default function SimplifiedAdminDashboard() {
                   </Card>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* CONTROL ROOM TAB */}
+          {activeTab === 'control-room' && (
+            <div className="bg-white p-0 border-b border-gray-200">
+              <div className="py-4 px-6 bg-gray-50 border-b border-gray-200">
+                <h1 className="text-2xl font-bold text-gray-900">Control Room</h1>
+                <p className="text-sm text-gray-600 mt-1">WT and ST Control Panels</p>
+              </div>
+              <div className="px-6 pt-4">
+                <div className="flex gap-2 border-b border-gray-200">
+                  <button
+                    onClick={() => setControlRoomSubTab('wt')}
+                    className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${controlRoomSubTab === 'wt'
+                      ? 'border-indigo-600 text-indigo-700'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                      }`}
+                  >
+                    WT Control Panel
+                  </button>
+                  <button
+                    onClick={() => setControlRoomSubTab('st')}
+                    className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${controlRoomSubTab === 'st'
+                      ? 'border-indigo-600 text-indigo-700'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                      }`}
+                  >
+                    ST Control Panel
+                  </button>
+                </div>
+              </div>
+              <div className="flex items-center justify-center py-24">
+                <div className="text-center">
+                  <Monitor className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+                  <h2 className="text-xl font-semibold text-gray-400">Coming Soon</h2>
+                  <p className="text-sm text-gray-400 mt-1">
+                    {controlRoomSubTab === 'wt' ? 'WT Control Panel' : 'ST Control Panel'} is under development.
+                  </p>
+                </div>
+              </div>
             </div>
           )}
         </div>

@@ -114,12 +114,9 @@ function LoginContent() {
         <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmYiIGZpbGwtb3BhY2l0eT0iMC4wNSI+PHBhdGggZD0iTTM2IDM0djItSDI0di0yaDEyek0zNiAyNHYySDI0di0yaDF6Ii8+PC9nPjwvZz48L3N2Zz4=')] opacity-50" />
 
         <div className="relative z-10 flex flex-col justify-center px-12 py-16">
-          <Link href="/" className="flex items-center gap-2 mb-12">
-            <Image src="/images/clap-logo.png" alt="CLAP Logo" width={48} height={48} className="rounded-xl" />
-            <div>
-              <span className="text-2xl font-bold text-primary-foreground">CLAP</span>
-              <div className="text-xs text-primary-foreground/70 mt-1">by SANJIVO</div>
-            </div>
+          <Link href="/" className="block mb-12">
+            <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={172} height={70} className="w-auto h-16 object-contain mb-2 brightness-0 invert" priority />
+            <div className="text-sm text-primary-foreground/80 font-medium pl-1">by SANJIVO</div>
           </Link>
 
           <h1 className="text-4xl font-bold text-primary-foreground mb-4">
@@ -181,8 +178,8 @@ function LoginContent() {
                 }, 100);
               }}
               className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 ease-in-out ${role === 'student'
-                  ? 'bg-card text-foreground shadow-sm transform scale-105'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'
+                ? 'bg-card text-foreground shadow-sm transform scale-105'
+                : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'
                 }`}
             >
               <Users className="w-4 h-4" />
@@ -198,8 +195,8 @@ function LoginContent() {
                 }, 100);
               }}
               className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 ease-in-out ${role === 'admin'
-                  ? 'bg-card text-foreground shadow-sm transform scale-105'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'
+                ? 'bg-card text-foreground shadow-sm transform scale-105'
+                : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'
                 }`}
             >
               <Shield className="w-4 h-4" />

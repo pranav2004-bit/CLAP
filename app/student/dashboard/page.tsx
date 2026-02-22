@@ -172,13 +172,10 @@ export default function StudentDashboard() {
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between">
             <div className="flex items-center gap-3">
-              <Image src="/images/clap-logo.png" alt="CLAP Logo" width={40} height={40} className="rounded-xl" />
-              <div>
-                <span className="text-lg font-bold gradient-text">CLAP</span>
-                <div className="flex items-baseline gap-2">
-                  <p className="text-xs text-muted-foreground">Student Portal</p>
-                  <span className="text-xs text-muted-foreground">by SANJIVO</span>
-                </div>
+              <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={113} height={46} className="w-auto h-10 object-contain" priority />
+              <div className="flex flex-col justify-center h-8 border-l border-border pl-3 ml-2">
+                <p className="text-xs font-semibold text-primary">Student Portal</p>
+                <span className="text-[10px] text-muted-foreground">by SANJIVO</span>
               </div>
             </div>
 
