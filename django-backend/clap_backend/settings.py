@@ -278,9 +278,21 @@ LOGGING = {
 }
 
 # CSRF Settings - Disable for API (using header-based auth like Next.js)
-CSRF_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_HTTPONLY = True
-SESSION_COOKIE_SECURE = not DEBUG
+
+
+# TLS enforcement
+ENFORCE_TLS = config('ENFORCE_TLS', default=not DEBUG, cast=bool)
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+SECURE_SSL_REDIRECT = ENFORCE_TLS
+SESSION_COOKIE_SECURE = ENFORCE_TLS
+CSRF_COOKIE_SECURE = ENFORCE_TLS
+SECURE_HSTS_SECONDS = config('SECURE_HSTS_SECONDS', default=31536000 if ENFORCE_TLS else 0, cast=int)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = config('SECURE_HSTS_INCLUDE_SUBDOMAINS', default=ENFORCE_TLS, cast=bool)
+SECURE_HSTS_PRELOAD = config('SECURE_HSTS_PRELOAD', default=False, cast=bool)
+SECURE_REFERRER_POLICY = config('SECURE_REFERRER_POLICY', default='strict-origin-when-cross-origin')
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_CROSS_ORIGIN_OPENER_POLICY = 'same-origin'
 
 # Custom settings matching Next.js behavior
 DEFAULT_PASSWORD = 'CLAP@123'  # Default password for new students
