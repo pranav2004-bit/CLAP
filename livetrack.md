@@ -1,5 +1,6 @@
 # CLAP — Live Execution Tracker
 > Auto-updated by AI agent after every completed action.
+> Last updated: 2026-02-22 11:01 UTC
 > Last updated: 2026-02-22 08:49 UTC
 > Last updated: 2026-02-22 08:37 UTC
 > Last updated: 2026-02-22 08:24 UTC
@@ -8,7 +9,7 @@
 ## 🔖 Current Status
 - **Current Phase:** Phase 11 — Admin Dashboard — Pipeline & Results Management
 - **Current Task:** Task 11.3 — LLM Evaluation Controls
-- **Current Subtask:** Subtask 11.3.1 — Re-trigger LLM evaluation
+- **Current Subtask:** Subtask 11.3.2 — View LLM prompt and raw response for any submission (for debugging/QA)
 - **Status:** IN PROGRESS
 - **Blockers (if any):** DB server unavailable in this environment (localhost:5432 refused), so migration apply/DB verification remains blocked; package install proxy restriction still blocks some runtime dependency checks
 - **Current Task:** Task 11.2 — Score Management
@@ -446,7 +447,7 @@
   - [ ] Subtask 11.2.4 — Manual score override (admin can edit LLM-generated scores with reason log)
   - [ ] Subtask 11.2.5 — Score export to CSV/Excel (by batch, by test, by date range)
 - [ ] Task 11.3 — LLM Evaluation Controls
-  - [ ] Subtask 11.3.1 — Re-trigger LLM evaluation for a specific submission (writing/speaking/both)
+  - [x] Subtask 11.3.1 — Re-trigger LLM evaluation for a specific submission (writing/speaking/both) ✅ COMPLETED [2026-02-22 11:01]
   - [ ] Subtask 11.3.2 — View LLM prompt and raw response for any submission (for debugging/QA)
   - [ ] Subtask 11.3.3 — LLM evaluation analytics (avg response time, validation failure rate, token usage)
   - [ ] Subtask 11.3.4 — Manual score entry for submissions stuck in DLQ (bypass LLM)
