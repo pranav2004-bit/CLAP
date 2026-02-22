@@ -70,6 +70,8 @@ urlpatterns = [
     path('admin/submissions/overview', submissions_monitor.submission_status_overview, name='admin_submissions_overview'),
     path('admin/submissions', submissions_monitor.submission_list, name='admin_submissions_list'),
     path('admin/submissions/health', submissions_monitor.pipeline_health, name='admin_submissions_health'),
+    path('admin/submissions/dlq-widget', submissions_monitor.dlq_dashboard_widget, name='admin_submissions_dlq_widget'),
+    path('admin/submissions/dlq/<int:dlq_id>/quick-action', submissions_monitor.dlq_quick_action, name='admin_submissions_dlq_quick_action'),
     path('admin/submissions/<uuid:submission_id>', submissions_monitor.submission_detail, name='admin_submissions_detail'),
 
     path('admin/llm/submissions/<uuid:submission_id>/retrigger', llm_controls.retrigger_llm_evaluation, name='admin_llm_retrigger'),

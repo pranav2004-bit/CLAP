@@ -1,5 +1,7 @@
 # CLAP — Live Execution Tracker
 > Auto-updated by AI agent after every completed action.
+> Last updated: 2026-02-22 13:05 UTC
+> Last updated: 2026-02-22 11:26 UTC
 > Last updated: 2026-02-22 12:42 UTC
 > Last updated: 2026-02-22 11:26 UTC
 > Last updated: 2026-02-22 12:10 UTC
@@ -14,6 +16,8 @@
 
 ## 🔖 Current Status
 - **Current Phase:** Phase 11 — Admin Dashboard — Pipeline & Results Management
+- **Current Task:** Task 11.7 — Admin Notifications
+- **Current Subtask:** Subtask 11.7.1 — In-app alerts for pipeline failures (P1/P2 events)
 - **Current Task:** Task 11.6 — DLQ Management
 - **Current Subtask:** Subtask 11.6.1 — DLQ dashboard widget (unresolved count, oldest entry age)
 - **Current Task:** Task 11.5 — Email Management
@@ -482,6 +486,9 @@
   - [x] Subtask 11.5.2 — Re-send email for specific submission ✅ COMPLETED [2026-02-22 12:42]
   - [x] Subtask 11.5.3 — Bulk email resend (by batch or test) ✅ COMPLETED [2026-02-22 12:42]
   - [x] Subtask 11.5.4 — Bounce/complaint log view ✅ COMPLETED [2026-02-22 12:42]
+- [x] Task 11.6 — DLQ Management (if not already covered by Phase 7.4, wire UI here) ✅ COMPLETED [2026-02-22 13:05]
+  - [x] Subtask 11.6.1 — DLQ dashboard widget (unresolved count, oldest entry age) ✅ COMPLETED [2026-02-22 13:05]
+  - [x] Subtask 11.6.2 — One-click retry and resolve actions from admin dashboard ✅ COMPLETED [2026-02-22 13:05]
 - [ ] Task 11.3 — LLM Evaluation Controls
   - [x] Subtask 11.3.1 — Re-trigger LLM evaluation for a specific submission (writing/speaking/both) ✅ COMPLETED [2026-02-22 11:01]
   - [ ] Subtask 11.3.2 — View LLM prompt and raw response for any submission (for debugging/QA)
