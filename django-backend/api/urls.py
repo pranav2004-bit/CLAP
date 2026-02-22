@@ -23,6 +23,7 @@ from api.views.admin import (
     submissions_monitor,
     score_management,
     llm_controls,
+    report_management,
 )
 from api.views.student import profile, clap_attempt, audio_upload, audio_playback
 from api.views import evaluate, legacy_tests, legacy_attempts, submissions, email_webhooks
@@ -75,6 +76,14 @@ urlpatterns = [
     path('admin/llm/submissions/<uuid:submission_id>/trace', llm_controls.llm_trace_by_submission, name='admin_llm_trace'),
     path('admin/llm/analytics', llm_controls.llm_analytics, name='admin_llm_analytics'),
     path('admin/llm/dlq/<int:dlq_id>/manual-score', llm_controls.manual_score_from_dlq, name='admin_llm_manual_score_from_dlq'),
+
+    # Report Management
+    path('admin/reports', report_management.report_list, name='admin_reports_list'),
+    path('admin/reports/submissions/<uuid:submission_id>', report_management.report_by_submission, name='admin_report_submission'),
+    path('admin/reports/submissions/<uuid:submission_id>/regenerate', report_management.regenerate_report, name='admin_report_regenerate'),
+    path('admin/reports/bulk-download', report_management.bulk_report_download, name='admin_reports_bulk_download'),
+    path('admin/reports/template-config', report_management.report_template_config, name='admin_report_template_config'),
+    path('admin/reports/template-preview', report_management.report_template_preview, name='admin_report_template_preview'),
 
     # Score Management
     path('admin/scores/submissions/<uuid:submission_id>', score_management.scores_by_submission, name='admin_scores_submission'),
