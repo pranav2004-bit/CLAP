@@ -72,6 +72,7 @@ export function EnhancedStudentManagement({ refreshKey = 0 }: EnhancedStudentMan
   useEffect(() => {
     // Only do initial load
     fetchStudents()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Filter students based on search

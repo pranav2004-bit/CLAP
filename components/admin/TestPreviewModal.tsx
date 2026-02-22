@@ -98,6 +98,7 @@ export function TestPreviewModal({ isOpen, onClose, testType, items, testTitle, 
         if (isOpen && !visited.has(currentQuestionIndex)) {
             setVisited(prev => new Set(prev).add(currentQuestionIndex))
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [currentQuestionIndex, isOpen])
 
     // Safety: ensure index relies on items

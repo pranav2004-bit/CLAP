@@ -81,6 +81,7 @@ export default function SpeakingTestPage() {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRecording, isPaused, recordTime, maxRecordTime])
 
   const startRecording = () => {

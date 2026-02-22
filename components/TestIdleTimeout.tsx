@@ -36,6 +36,7 @@ export function TestIdleTimeout({
   useEffect(() => {
     startTimeout()
     return () => pauseTimeout()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   if (!showWarning || !isWarning) return null

@@ -376,6 +376,7 @@ export default function ListeningTestPage() {
     }, 1000)
 
     return () => clearInterval(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Tab visibility detection
@@ -394,6 +395,7 @@ export default function ListeningTestPage() {
 
     document.addEventListener('visibilitychange', handleVisibilityChange)
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabSwitchCount])
 
   // Disable right-click

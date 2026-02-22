@@ -192,6 +192,7 @@ export default function ReadingTestPage() {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const handleSubmit = () => {
