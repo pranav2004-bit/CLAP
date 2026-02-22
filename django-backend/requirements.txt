@@ -12,6 +12,8 @@ psycopg2-binary==2.9.9
 
 # Authentication & Security
 bcrypt==4.1.2
+PyJWT==2.9.0
+djangorestframework-simplejwt==5.3.1
 
 # OpenAI Integration
 openai==1.10.0

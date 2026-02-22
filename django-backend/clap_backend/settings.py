@@ -7,6 +7,9 @@ import os
 from pathlib import Path
 from decouple import config
 
+from datetime import timedelta
+import importlib.util
+
 # Build paths inside the project
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -164,6 +167,28 @@ REST_FRAMEWORK = {
     ],
     'EXCEPTION_HANDLER': 'api.utils.custom_exception_handler',
 }
+
+# JWT settings (architecture target: 15 minute access, 7 day refresh)
+JWT_ACCESS_TOKEN_MINUTES = config('JWT_ACCESS_TOKEN_MINUTES', default=15, cast=int)
+JWT_REFRESH_TOKEN_DAYS = config('JWT_REFRESH_TOKEN_DAYS', default=7, cast=int)
+JWT_ROTATE_REFRESH_TOKENS = config('JWT_ROTATE_REFRESH_TOKENS', default=True, cast=bool)
+JWT_BLACKLIST_AFTER_ROTATION = config('JWT_BLACKLIST_AFTER_ROTATION', default=True, cast=bool)
+
+if importlib.util.find_spec('rest_framework_simplejwt'):
+    INSTALLED_APPS.append('rest_framework_simplejwt.token_blacklist')
+    REST_FRAMEWORK['DEFAULT_AUTHENTICATION_CLASSES'] = (
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    )
+    SIMPLE_JWT = {
+        'ACCESS_TOKEN_LIFETIME': timedelta(minutes=JWT_ACCESS_TOKEN_MINUTES),
+        'REFRESH_TOKEN_LIFETIME': timedelta(days=JWT_REFRESH_TOKEN_DAYS),
+        'ROTATE_REFRESH_TOKENS': JWT_ROTATE_REFRESH_TOKENS,
+        'BLACKLIST_AFTER_ROTATION': JWT_BLACKLIST_AFTER_ROTATION,
+        'UPDATE_LAST_LOGIN': True,
+        'AUTH_HEADER_TYPES': ('Bearer',),
+        'ALGORITHM': 'HS256',
+        'SIGNING_KEY': SECRET_KEY,
+    }
 
 # OpenAI Configuration
 OPENAI_API_KEY = config('OPENAI_API_KEY', default='')
