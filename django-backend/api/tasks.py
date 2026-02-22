@@ -4,10 +4,15 @@ from decimal import Decimal
 from typing import Optional
 import json
 import re
+import os
 from urllib import request as urlrequest
 
 from celery import shared_task
 from django.conf import settings
+from django.db import transaction
+from django.db.models import F, Sum
+from django.utils import timezone
+from django.template.loader import render_to_string
 
 from celery import shared_task
 from django.db import transaction
@@ -286,6 +291,83 @@ def evaluate_speaking(self, submission_id):
 
 
 @shared_task(bind=True, max_retries=3, autoretry_for=(Exception,), retry_backoff=False, default_retry_delay=30, acks_late=True, reject_on_worker_lost=True)
+def generate_report(self, submission_id):
+    submission = AssessmentSubmission.objects.select_related('assessment', 'user').get(id=submission_id)
+
+    if submission.report_url:
+        return {'status': 'skipped', 'task': 'generate_report', 'submission_id': submission_id, 'reason': 'report already exists'}
+
+    _transition_submission_status(
+        submission,
+        AssessmentSubmission.STATUS_REPORT_GENERATING,
+        expected_status=AssessmentSubmission.STATUS_LLM_COMPLETE,
+    )
+
+    scores = list(SubmissionScore.objects.filter(submission=submission).order_by('domain'))
+    if len(scores) < 5:
+        raise ValueError(f'Report generation requires 5 domain scores; found {len(scores)} for {submission_id}')
+
+    html = render_to_string('reports/submission_report.html', {
+        'submission': submission,
+        'scores': scores,
+        'generated_at': timezone.now().isoformat(),
+    })
+
+    timestamp = timezone.now().strftime('%Y%m%d%H%M%S')
+    report_relpath = f'reports/{submission.id}/{timestamp}.pdf'
+
+    pdf_bytes = None
+    try:
+        from weasyprint import HTML
+        pdf_bytes = HTML(string=html).write_pdf()
+    except Exception:
+        # Fallback when WeasyPrint is unavailable in runtime environment
+        pdf_bytes = html.encode('utf-8')
+
+    report_url = None
+    # Attempt S3 upload if configured and boto3 is available
+    try:
+        import boto3
+        if getattr(settings, 'S3_BUCKET_NAME', ''):
+            client = boto3.client(
+                's3',
+                endpoint_url=getattr(settings, 'S3_ENDPOINT_URL', None) or None,
+                region_name=getattr(settings, 'S3_REGION_NAME', None) or None,
+                aws_access_key_id=getattr(settings, 'S3_ACCESS_KEY_ID', None) or None,
+                aws_secret_access_key=getattr(settings, 'S3_SECRET_ACCESS_KEY', None) or None,
+            )
+            client.put_object(
+                Bucket=settings.S3_BUCKET_NAME,
+                Key=report_relpath,
+                Body=pdf_bytes,
+                ContentType='application/pdf',
+            )
+            report_url = f's3://{settings.S3_BUCKET_NAME}/{report_relpath}'
+    except Exception:
+        report_url = None
+
+    if not report_url:
+        from django.conf import settings as dj_settings
+        full_path = os.path.join(dj_settings.MEDIA_ROOT, report_relpath)
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        with open(full_path, 'wb') as f:
+            f.write(pdf_bytes)
+        report_url = f"{dj_settings.MEDIA_URL.rstrip('/')}/{report_relpath}"
+
+    AssessmentSubmission.objects.filter(id=submission.id).update(
+        report_url=report_url,
+        updated_at=timezone.now(),
+    )
+    _transition_submission_status(
+        submission,
+        AssessmentSubmission.STATUS_REPORT_READY,
+        expected_status=AssessmentSubmission.STATUS_REPORT_GENERATING,
+    )
+
+    return {'status': 'ok', 'task': 'generate_report', 'submission_id': submission_id, 'report_url': report_url}
+
+
+@shared_task(bind=True, max_retries=3, autoretry_for=(Exception,), retry_backoff=True, retry_backoff_max=900, retry_jitter=True, acks_late=True, reject_on_worker_lost=True)
 
             component_ids = ClapTestComponent.objects.filter(
                 clap_test=submission.assessment,
