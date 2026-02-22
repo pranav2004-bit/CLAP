@@ -1,11 +1,16 @@
 # CLAP — Live Execution Tracker
 > Auto-updated by AI agent after every completed action.
+> Last updated: 2026-02-22 06:00 UTC
 > Last updated: 2026-02-22 05:54 UTC
 > Last updated: 2026-02-22 05:50 UTC
 > Last active agent: GPT-5.2-Codex
 
 ## 🔖 Current Status
 - **Current Phase:** Phase 4 — Celery Task Pipeline
+- **Current Task:** Task 4.4 — Wire up chain/chord/group pipeline (Section 4.2 of arch doc)
+- **Current Subtask:** Task 4.4 — Wire up chain/chord/group pipeline (Section 4.2 of arch doc)
+- **Status:** BLOCKED
+- **Blockers (if any):** DB server unavailable in this environment (localhost:5432 refused), so migration apply/DB verification is blocked; package install proxy restriction still blocks Celery/S3 runtime checks
 - **Current Task:** Task 4.2 — Phase B: Writing LLM evaluation task
 - **Current Subtask:** Subtask 4.2.1 — Prompt construction with rubric
 - **Status:** BLOCKED
@@ -130,6 +135,18 @@
   - [x] Subtask 4.1.2 — Reading scoring logic ✅ COMPLETED [2026-02-22 05:54]
   - [x] Subtask 4.1.3 — Vocabulary & Grammar scoring logic ✅ COMPLETED [2026-02-22 05:54]
   - [x] Subtask 4.1.4 — Persist scores, transition to RULES_COMPLETE ✅ COMPLETED [2026-02-22 05:54]
+- [x] Task 4.2 — Phase B: Writing LLM evaluation task ✅ COMPLETED [2026-02-22 06:00]
+  - [x] Subtask 4.2.1 — Prompt construction with rubric ✅ COMPLETED [2026-02-22 06:00]
+  - [x] Subtask 4.2.2 — OpenAI/Gemini API call with timeout handling ✅ COMPLETED [2026-02-22 06:00]
+  - [x] Subtask 4.2.3 — 3-stage validation (JSON parse → Pydantic → semantic guard) ✅ COMPLETED [2026-02-22 06:00]
+  - [x] Subtask 4.2.4 — Persist score with optimistic locking ✅ COMPLETED [2026-02-22 06:00]
+- [x] Task 4.3 — Phase C: Speaking LLM evaluation task ✅ COMPLETED [2026-02-22 06:00]
+  - [x] Subtask 4.3.1 — Audio transcription (Whisper/STT) ✅ COMPLETED [2026-02-22 06:00]
+  - [x] Subtask 4.3.2 — Prompt construction with transcript + rubric ✅ COMPLETED [2026-02-22 06:00]
+  - [x] Subtask 4.3.3 — OpenAI/Gemini API call + 3-stage validation ✅ COMPLETED [2026-02-22 06:00]
+  - [x] Subtask 4.3.4 — Persist score with optimistic locking ✅ COMPLETED [2026-02-22 06:00]
+- [ ] Task 4.4 — Wire up chain/chord/group pipeline (Section 4.2 of arch doc)
+- [x] Task 4.5 — Celery task configs (acks_late, reject_on_worker_lost, retry policies per Section 9.1) ✅ COMPLETED [2026-02-22 05:54]
 - [ ] Task 3.4 — Rate limiting (django-ratelimit + Redis)
 - [x] Task 3.5 — Wire submission endpoint to existing student test-taking UI submit action ✅ COMPLETED [2026-02-22 05:04]
 - [ ] Task 0.10 — Present plan to user and get approval 🔄 IN PROGRESS

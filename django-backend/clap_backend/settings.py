@@ -305,3 +305,9 @@ else:
 # Submission rate limits (architecture defaults)
 SUBMISSION_RATE_LIMIT_PER_USER_PER_HOUR = config('SUBMISSION_RATE_LIMIT_PER_USER_PER_HOUR', default=10, cast=int)
 SUBMISSION_RATE_LIMIT_GLOBAL_PER_INSTITUTION_PER_HOUR = config('SUBMISSION_RATE_LIMIT_GLOBAL_PER_INSTITUTION_PER_HOUR', default=100, cast=int)
+
+# LLM Provider Configuration (OpenAI / Gemini)
+LLM_PROVIDER = config('LLM_PROVIDER', default='openai')
+OPENAI_MODEL = config('OPENAI_MODEL', default='gpt-4-turbo')
+GEMINI_API_KEY = config('GEMINI_API_KEY', default='')
+GEMINI_MODEL = config('GEMINI_MODEL', default='gemini-1.5-pro')
