@@ -21,7 +21,7 @@ from api.views.admin import (
     clap_test_results
 )
 from api.views.student import profile, clap_attempt, audio_upload, audio_playback
-from api.views import evaluate, legacy_tests, legacy_attempts
+from api.views import evaluate, legacy_tests, legacy_attempts, submissions
 
 app_name = 'api'
 
@@ -80,6 +80,14 @@ urlpatterns = [
     path('student/clap-items/<uuid:item_id>/audio', audio_playback.retrieve_audio_file, name='student_retrieve_audio'),
     path('student/clap-items/<uuid:item_id>/track-playback', audio_playback.track_playback, name='student_track_playback'),
     path('student/clap-items/<uuid:item_id>/playback-status', audio_playback.get_playback_status, name='student_playback_status'),
+
+
+    # ============================================
+    # SUBMISSION PIPELINE (3 endpoints)
+    # ============================================
+    path('submissions', submissions.create_submission, name='submissions_create'),
+    path('submissions/<uuid:submission_id>/status', submissions.submission_status, name='submissions_status'),
+    path('submissions/<uuid:submission_id>/results', submissions.submission_results, name='submissions_results'),
 
     # ============================================
     # LEGACY / SHARED TESTS (For Dashboard Compatibility)
