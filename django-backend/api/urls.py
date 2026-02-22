@@ -20,6 +20,11 @@ from api.views.admin import (
     audio_upload as admin_audio_upload,
     clap_test_results,
     dlq,
+    submissions_monitor,
+    score_management
+)
+from api.views.student import profile, clap_attempt, audio_upload, audio_playback
+from api.views import evaluate, legacy_tests, legacy_attempts, submissions, email_webhooks
     submissions_monitor
 )
 from api.views.student import profile, clap_attempt, audio_upload, audio_playback
@@ -74,6 +79,14 @@ urlpatterns = [
     path('admin/submissions', submissions_monitor.submission_list, name='admin_submissions_list'),
     path('admin/submissions/health', submissions_monitor.pipeline_health, name='admin_submissions_health'),
     path('admin/submissions/<uuid:submission_id>', submissions_monitor.submission_detail, name='admin_submissions_detail'),
+
+
+    # Score Management
+    path('admin/scores/submissions/<uuid:submission_id>', score_management.scores_by_submission, name='admin_scores_submission'),
+    path('admin/scores/submissions/<uuid:submission_id>/override', score_management.override_score, name='admin_scores_override'),
+    path('admin/scores/batches/<uuid:batch_id>', score_management.scores_by_batch, name='admin_scores_batch'),
+    path('admin/scores/assessments/<uuid:assessment_id>', score_management.scores_by_assessment, name='admin_scores_assessment'),
+    path('admin/scores/export', score_management.export_scores, name='admin_scores_export'),
 
     # DLQ Management
     path('admin/dlq', dlq.dlq_list, name='admin_dlq_list'),

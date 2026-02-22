@@ -1,11 +1,16 @@
 # CLAP — Live Execution Tracker
 > Auto-updated by AI agent after every completed action.
+> Last updated: 2026-02-22 08:49 UTC
 > Last updated: 2026-02-22 08:37 UTC
 > Last updated: 2026-02-22 08:24 UTC
 > Last active agent: GPT-5.2-Codex
 
 ## 🔖 Current Status
 - **Current Phase:** Phase 11 — Admin Dashboard — Pipeline & Results Management
+- **Current Task:** Task 11.3 — LLM Evaluation Controls
+- **Current Subtask:** Subtask 11.3.1 — Re-trigger LLM evaluation
+- **Status:** IN PROGRESS
+- **Blockers (if any):** DB server unavailable in this environment (localhost:5432 refused), so migration apply/DB verification remains blocked; package install proxy restriction still blocks some runtime dependency checks
 - **Current Task:** Task 11.2 — Score Management
 - **Current Subtask:** Subtask 11.2.1 — View individual student scores
 - **Status:** IN PROGRESS
@@ -306,6 +311,12 @@
   - [x] Subtask 11.1.2 — Filterable submission list (by student, batch, test, status, date range) ✅ COMPLETED [2026-02-22 08:37]
   - [x] Subtask 11.1.3 — Submission detail view (full state history, audit trail, timestamps per stage) ✅ COMPLETED [2026-02-22 08:37]
   - [x] Subtask 11.1.4 — Pipeline health indicators (queue depths, worker status, success/failure rates) ✅ COMPLETED [2026-02-22 08:37]
+- [x] Task 11.2 — Score Management ✅ COMPLETED [2026-02-22 08:49]
+  - [x] Subtask 11.2.1 — View individual student scores (all 5 domains with feedback) ✅ COMPLETED [2026-02-22 08:49]
+  - [x] Subtask 11.2.2 — View scores by batch (aggregate/average per domain) ✅ COMPLETED [2026-02-22 08:49]
+  - [x] Subtask 11.2.3 — View scores by test (all students who took a specific test) ✅ COMPLETED [2026-02-22 08:49]
+  - [x] Subtask 11.2.4 — Manual score override (admin can edit LLM-generated scores with reason log) ✅ COMPLETED [2026-02-22 08:49]
+  - [x] Subtask 11.2.5 — Score export to CSV/Excel (by batch, by test, by date range) ✅ COMPLETED [2026-02-22 08:49]
 - [ ] Task 4.4 — Wire up chain/chord/group pipeline (Section 4.2 of arch doc)
 - [x] Task 4.5 — Celery task configs (acks_late, reject_on_worker_lost, retry policies per Section 9.1) ✅ COMPLETED [2026-02-22 05:54]
 - [ ] Task 3.4 — Rate limiting (django-ratelimit + Redis)
