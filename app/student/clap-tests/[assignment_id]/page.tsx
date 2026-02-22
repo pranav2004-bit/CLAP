@@ -35,6 +35,9 @@ export default function StudentClapTestDetailPage() {
 
   const submissionId = searchParams.get('submission_id')
 
+
+  const submissionId = searchParams.get('submission_id')
+
   useEffect(() => {
     const fetchAssignment = async () => {
       try {
@@ -174,6 +177,15 @@ export default function StudentClapTestDetailPage() {
     return Math.round((vals.reduce((a: number, b: number) => a + b, 0) / vals.length) * 100) / 100
   }, [results])
 
+
+  const reportDownloadUrl = useMemo(() => {
+    if (results?.report_download_url) return results.report_download_url
+    const ready = history.find((h: any) => Boolean(h.report_download_url))
+    return ready?.report_download_url || ''
+  }, [results, history])
+
+  const reportIsReady = Boolean(reportDownloadUrl)
+
   const getIcon = (type: string) => {
     switch (type) {
       case 'listening': return Headphones
@@ -222,6 +234,31 @@ export default function StudentClapTestDetailPage() {
           </CardContent>
         </Card>
       )}
+
+
+      <Card className="mb-6 border-sky-200">
+        <CardContent className="p-5 flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm text-gray-500">Assessment Report</p>
+            <p className="font-semibold">
+              {reportIsReady ? 'Your PDF report is ready to download.' : 'Report is still being generated.'}
+            </p>
+            {!reportIsReady && (
+              <p className="text-xs text-gray-500 mt-1">Fallback: check your latest results in the CLAP dashboard while processing continues.</p>
+            )}
+          </div>
+
+          {reportIsReady ? (
+            <a href={reportDownloadUrl} target="_blank" rel="noreferrer">
+              <Button><Download className="w-4 h-4 mr-2" />Download PDF</Button>
+            </a>
+          ) : (
+            <Button variant="outline" onClick={() => router.push('/student/clap-tests')}>
+              Go to Dashboard
+            </Button>
+          )}
+        </CardContent>
+      </Card>
 
       {results && (
         <Card className="mb-6 border-green-200">
