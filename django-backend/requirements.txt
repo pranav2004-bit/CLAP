@@ -27,3 +27,9 @@ ipython==8.20.0
 # Production
 gunicorn==21.2.0
 whitenoise==6.6.0
+
+# Async Processing & Infra
+celery==5.4.0
+redis==5.0.8
+boto3==1.35.24
+django-storages==1.14.4

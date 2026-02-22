@@ -36,7 +36,7 @@ def with_retry(func, retries=MAX_RETRIES):
 
 def evaluate_speaking(transcript: str, prompt: str) -> Dict[str, Any]:
     """
-    Evaluate speaking test using GPT-4
+    Evaluate speaking test using configured OpenAI model
     Matches Next.js evaluateSpeaking function
     """
     from .prompts import SPEAKING_EVALUATION_PROMPT, SPEAKING_USER_PROMPT_TEMPLATE
@@ -45,7 +45,7 @@ def evaluate_speaking(transcript: str, prompt: str) -> Dict[str, Any]:
     
     def make_request():
         response = openai.ChatCompletion.create(
-            model='gpt-4-turbo',
+            model=getattr(settings, 'OPENAI_MODEL', 'gpt-4-turbo'),
             messages=[
                 {'role': 'system', 'content': SPEAKING_EVALUATION_PROMPT},
                 {'role': 'user', 'content': user_prompt}
@@ -75,7 +75,7 @@ def evaluate_speaking(transcript: str, prompt: str) -> Dict[str, Any]:
 
 def evaluate_writing(essay: str, prompt: str) -> Dict[str, Any]:
     """
-    Evaluate writing test using GPT-4
+    Evaluate writing test using configured OpenAI model
     Matches Next.js evaluateWriting function
     """
     from .prompts import WRITING_EVALUATION_PROMPT, WRITING_USER_PROMPT_TEMPLATE
@@ -84,7 +84,7 @@ def evaluate_writing(essay: str, prompt: str) -> Dict[str, Any]:
     
     def make_request():
         response = openai.ChatCompletion.create(
-            model='gpt-4-turbo',
+            model=getattr(settings, 'OPENAI_MODEL', 'gpt-4-turbo'),
             messages=[
                 {'role': 'system', 'content': WRITING_EVALUATION_PROMPT},
                 {'role': 'user', 'content': user_prompt}
