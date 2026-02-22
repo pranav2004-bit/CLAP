@@ -2,6 +2,23 @@
 > Auto-updated by AI agent after every completed action.
 > Last updated: 2026-02-22 15:08 UTC
 > Last updated: 2026-02-22 11:26 UTC
+> Last updated: 2026-02-22 14:44 UTC
+> Last updated: 2026-02-22 11:26 UTC
+> Last updated: 2026-02-22 14:18 UTC
+> Last updated: 2026-02-22 11:26 UTC
+> Last updated: 2026-02-22 13:46 UTC
+> Last updated: 2026-02-22 11:26 UTC
+> Last updated: 2026-02-22 13:28 UTC
+> Last updated: 2026-02-22 11:26 UTC
+> Last updated: 2026-02-22 13:05 UTC
+> Last updated: 2026-02-22 11:26 UTC
+> Last updated: 2026-02-22 12:42 UTC
+> Last updated: 2026-02-22 11:26 UTC
+> Last updated: 2026-02-22 12:10 UTC
+> Last updated: 2026-02-22 11:26 UTC
+> Last updated: 2026-02-22 11:14 UTC
+> Last updated: 2026-02-22 11:26 UTC
+> Last updated: 2026-02-22 11:01 UTC
 > Last updated: 2026-02-22 08:49 UTC
 > Last updated: 2026-02-22 08:37 UTC
 > Last updated: 2026-02-22 08:24 UTC
@@ -11,6 +28,24 @@
 - **Current Phase:** Phase 11 — Admin Dashboard — Pipeline & Results Management
 - **Current Task:** Task 12.5 — Report download
 - **Current Subtask:** Subtask 12.5.1 — Download PDF report button (presigned S3 URL)
+- **Current Task:** Task 12.4 — Results display page
+- **Current Subtask:** Subtask 12.4.1 — Overall score summary (all 5 domains)
+- **Current Task:** Task 12.3 — Submission progress indicator
+- **Current Subtask:** Subtask 12.3.1 — Status polling / SSE after submission
+- **Current Task:** Task 12.2 — Add presigned S3 upload for speaking audio (if not already done)
+- **Current Subtask:** Task 12.2 — Add presigned S3 upload for speaking audio (if not already done)
+- **Current Task:** Task 12.1 — Wire existing test submit button to new submission API endpoint
+- **Current Subtask:** Task 12.1 — Wire existing test submit button to new submission API endpoint
+- **Current Task:** Task 11.7 — Admin Notifications
+- **Current Subtask:** Subtask 11.7.1 — In-app alerts for pipeline failures (P1/P2 events)
+- **Current Task:** Task 11.6 — DLQ Management
+- **Current Subtask:** Subtask 11.6.1 — DLQ dashboard widget (unresolved count, oldest entry age)
+- **Current Task:** Task 11.5 — Email Management
+- **Current Subtask:** Subtask 11.5.1 — Email delivery status per student (sent, bounced, pending)
+- **Current Task:** Task 11.4 — Report Management
+- **Current Subtask:** Subtask 11.4.1 — View/download any student's PDF report
+- **Current Task:** Task 11.3 — LLM Evaluation Controls
+- **Current Subtask:** Subtask 11.3.2 — View LLM prompt and raw response for any submission (for debugging/QA)
 - **Status:** IN PROGRESS
 - **Blockers (if any):** DB server unavailable in this environment (localhost:5432 refused), so migration apply/DB verification remains blocked; package install proxy restriction still blocks some runtime dependency checks
 - **Current Task:** Task 11.2 — Score Management
@@ -488,6 +523,49 @@
   - [x] Subtask 12.4.1 — Overall score summary (all 5 domains) ✅ COMPLETED [2026-02-22 15:08]
   - [x] Subtask 12.4.2 — Per-domain score with LLM feedback (writing, speaking) ✅ COMPLETED [2026-02-22 15:08]
   - [x] Subtask 12.4.3 — Score history (if student has taken multiple tests) ✅ COMPLETED [2026-02-22 15:08]
+
+### Phase 12 — Student Dashboard — Results & Reports (EXISTING student UI)
+- [x] Task 12.1 — Wire existing test submit button to new submission API endpoint ✅ COMPLETED [2026-02-22 13:46]
+- [x] Task 12.2 — Add presigned S3 upload for speaking audio (if not already done) ✅ COMPLETED [2026-02-22 14:18]
+- [x] Task 12.3 — Submission progress indicator ✅ COMPLETED [2026-02-22 14:44]
+  - [x] Subtask 12.3.1 — Status polling / SSE after submission ✅ COMPLETED [2026-02-22 14:44]
+  - [x] Subtask 12.3.2 — Progress UI (e.g., "Scoring your answers..." → "Evaluating writing..." → "Generating report...") ✅ COMPLETED [2026-02-22 14:44]
+
+### Phase 12 — Student Dashboard — Results & Reports (EXISTING student UI)
+- [x] Task 12.1 — Wire existing test submit button to new submission API endpoint ✅ COMPLETED [2026-02-22 13:46]
+- [x] Task 12.2 — Add presigned S3 upload for speaking audio (if not already done) ✅ COMPLETED [2026-02-22 14:18]
+- [ ] Task 11.3 — LLM Evaluation Controls
+  - [x] Subtask 11.3.1 — Re-trigger LLM evaluation for a specific submission (writing/speaking/both) ✅ COMPLETED [2026-02-22 11:01]
+  - [ ] Subtask 11.3.2 — View LLM prompt and raw response for any submission (for debugging/QA)
+  - [ ] Subtask 11.3.3 — LLM evaluation analytics (avg response time, validation failure rate, token usage)
+  - [ ] Subtask 11.3.4 — Manual score entry for submissions stuck in DLQ (bypass LLM)
+- [ ] Task 11.4 — Report Management
+  - [ ] Subtask 11.4.1 — View/download any student's PDF report
+  - [ ] Subtask 11.4.2 — Re-generate report for a specific submission
+  - [ ] Subtask 11.4.3 — Bulk report download (by batch or test)
+  - [ ] Subtask 11.4.4 — Report template preview/config (branding, layout)
+- [ ] Task 11.5 — Email Management
+  - [ ] Subtask 11.5.1 — Email delivery status per student (sent, bounced, pending)
+  - [ ] Subtask 11.5.2 — Re-send email for specific submission
+  - [ ] Subtask 11.5.3 — Bulk email resend (by batch or test)
+  - [ ] Subtask 11.5.4 — Bounce/complaint log view
+- [ ] Task 11.6 — DLQ Management (if not already covered by Phase 7.4, wire UI here)
+  - [ ] Subtask 11.6.1 — DLQ dashboard widget (unresolved count, oldest entry age)
+  - [ ] Subtask 11.6.2 — One-click retry and resolve actions from admin dashboard
+- [ ] Task 11.7 — Admin Notifications
+  - [ ] Subtask 11.7.1 — In-app alerts for pipeline failures (P1/P2 events)
+  - [ ] Subtask 11.7.2 — Daily summary email to admin (submissions processed, failures, DLQ count)
+
+### Phase 12 — Student Dashboard — Results & Reports (EXISTING student UI)
+- [x] Task 12.1 — Wire existing test submit button to new submission API endpoint ✅ COMPLETED [2026-02-22 13:46]
+- [ ] Task 12.2 — Add presigned S3 upload for speaking audio (if not already done)
+- [ ] Task 12.3 — Submission progress indicator
+  - [ ] Subtask 12.3.1 — Status polling / SSE after submission
+  - [ ] Subtask 12.3.2 — Progress UI (e.g., "Scoring your answers..." → "Evaluating writing..." → "Generating report...")
+- [ ] Task 12.4 — Results display page
+  - [ ] Subtask 12.4.1 — Overall score summary (all 5 domains)
+  - [ ] Subtask 12.4.2 — Per-domain score with LLM feedback (writing, speaking)
+  - [ ] Subtask 12.4.3 — Score history (if student has taken multiple tests)
 - [ ] Task 12.5 — Report download
   - [ ] Subtask 12.5.1 — Download PDF report button (presigned S3 URL)
   - [ ] Subtask 12.5.2 — Fallback link if report not yet ready
