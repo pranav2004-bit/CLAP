@@ -1,0 +1,44 @@
+{
+  "title": "CLAP LLM Health",
+  "uid": "clap-llm-health",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-24h", "to": "now" },
+  "tags": ["clap", "llm"],
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "LLM Request Duration p95",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, domain, model) (rate(clap_llm_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{domain}}/{{model}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "LLM Validation Failures",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum by (domain, failure_type) (rate(clap_llm_validation_failures_total[5m]))",
+          "legendFormat": "{{domain}}/{{failure_type}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "LLM Retry Volume",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum by (task_name) (rate(celery_task_retry_total[5m]))",
+          "legendFormat": "{{task_name}}"
+        }
+      ]
+    }
+  ]
+}

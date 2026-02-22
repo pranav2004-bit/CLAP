@@ -4,8 +4,12 @@ Maintains behavioral parity with Next.js backend.
 """
 
 import os
+import json
 from pathlib import Path
 from decouple import config
+
+from datetime import timedelta
+import importlib.util
 
 # Build paths inside the project
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -65,13 +69,22 @@ WSGI_APPLICATION = 'clap_backend.wsgi.application'
 
 # Database - Using Supabase PostgreSQL
 # Same database as Next.js frontend
+DB_APP_USER = config('DB_APP_USER', default=config('DB_USER', default='postgres'))
+DB_APP_PASSWORD = config('DB_APP_PASSWORD', default=config('DB_PASSWORD', default=''))
+
+# Database - Using Supabase PostgreSQL
+# Same database as Next.js frontend
+# Least-privilege note:
+# - API deployments should run with DB_APP_USER/DB_APP_PASSWORD (no schema modification privileges).
+# - Worker deployments can run with separate credentials via the same settings module by setting
+#   DB_APP_USER/DB_APP_PASSWORD differently in worker environment.
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': config('DB_NAME', default='postgres'),
-        'USER': config('DB_USER', default='postgres'),
-        'PASSWORD': config('DB_PASSWORD'),
-        'HOST': config('DB_HOST'),
+        'USER': DB_APP_USER,
+        'PASSWORD': DB_APP_PASSWORD,
+        'HOST': config('DB_HOST', default='localhost'),
         'PORT': config('DB_PORT', default='5432'),
         'OPTIONS': {
             'sslmode': 'require',
@@ -152,6 +165,47 @@ CORS_ALLOW_HEADERS = [
 ]
 
 
+
+
+# Secrets Manager integration (optional)
+SECRETS_MANAGER_PROVIDER = config('SECRETS_MANAGER_PROVIDER', default='env')
+SECRETS_MANAGER_REGION = config('SECRETS_MANAGER_REGION', default='')
+SECRETS_MANAGER_PREFIX = config('SECRETS_MANAGER_PREFIX', default='clap/')
+
+
+def _resolve_secret(name: str, default: str = ''):
+    env_value = config(name, default='')
+    if env_value:
+        return env_value
+
+    if SECRETS_MANAGER_PROVIDER != 'aws':
+        return default
+
+    if importlib.util.find_spec('boto3') is None:
+        return default
+
+    import boto3
+
+    secret_id = f"{SECRETS_MANAGER_PREFIX}{name}"
+    client = boto3.client('secretsmanager', region_name=SECRETS_MANAGER_REGION or None)
+    try:
+        response = client.get_secret_value(SecretId=secret_id)
+    except Exception:
+        return default
+
+    secret_string = response.get('SecretString')
+    if not secret_string:
+        return default
+
+    try:
+        payload = json.loads(secret_string)
+        if isinstance(payload, dict):
+            return str(payload.get(name, default))
+    except Exception:
+        return secret_string
+
+    return default
+
 # REST Framework Settings
 REST_FRAMEWORK = {
     'DEFAULT_RENDERER_CLASSES': [
@@ -165,11 +219,33 @@ REST_FRAMEWORK = {
     'EXCEPTION_HANDLER': 'api.utils.custom_exception_handler',
 }
 
+# JWT settings (architecture target: 15 minute access, 7 day refresh)
+JWT_ACCESS_TOKEN_MINUTES = config('JWT_ACCESS_TOKEN_MINUTES', default=15, cast=int)
+JWT_REFRESH_TOKEN_DAYS = config('JWT_REFRESH_TOKEN_DAYS', default=7, cast=int)
+JWT_ROTATE_REFRESH_TOKENS = config('JWT_ROTATE_REFRESH_TOKENS', default=True, cast=bool)
+JWT_BLACKLIST_AFTER_ROTATION = config('JWT_BLACKLIST_AFTER_ROTATION', default=True, cast=bool)
+
+if importlib.util.find_spec('rest_framework_simplejwt'):
+    INSTALLED_APPS.append('rest_framework_simplejwt.token_blacklist')
+    REST_FRAMEWORK['DEFAULT_AUTHENTICATION_CLASSES'] = (
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    )
+    SIMPLE_JWT = {
+        'ACCESS_TOKEN_LIFETIME': timedelta(minutes=JWT_ACCESS_TOKEN_MINUTES),
+        'REFRESH_TOKEN_LIFETIME': timedelta(days=JWT_REFRESH_TOKEN_DAYS),
+        'ROTATE_REFRESH_TOKENS': JWT_ROTATE_REFRESH_TOKENS,
+        'BLACKLIST_AFTER_ROTATION': JWT_BLACKLIST_AFTER_ROTATION,
+        'UPDATE_LAST_LOGIN': True,
+        'AUTH_HEADER_TYPES': ('Bearer',),
+        'ALGORITHM': 'HS256',
+        'SIGNING_KEY': SECRET_KEY,
+    }
+
 # OpenAI Configuration
-OPENAI_API_KEY = config('OPENAI_API_KEY', default='')
+OPENAI_API_KEY = _resolve_secret('OPENAI_API_KEY', default='')
 
 # Email Configuration (Resend)
-RESEND_API_KEY = config('RESEND_API_KEY', default='')
+RESEND_API_KEY = _resolve_secret('RESEND_API_KEY', default='')
 FROM_EMAIL = config('FROM_EMAIL', default='noreply@clap-test.com')
 
 # Logging Configuration - Match Next.js console logging behavior
@@ -211,10 +287,126 @@ LOGGING = {
 }
 
 # CSRF Settings - Disable for API (using header-based auth like Next.js)
-CSRF_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_HTTPONLY = True
-SESSION_COOKIE_SECURE = not DEBUG
+
+
+# TLS enforcement
+ENFORCE_TLS = config('ENFORCE_TLS', default=not DEBUG, cast=bool)
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+SECURE_SSL_REDIRECT = ENFORCE_TLS
+SESSION_COOKIE_SECURE = ENFORCE_TLS
+CSRF_COOKIE_SECURE = ENFORCE_TLS
+SECURE_HSTS_SECONDS = config('SECURE_HSTS_SECONDS', default=31536000 if ENFORCE_TLS else 0, cast=int)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = config('SECURE_HSTS_INCLUDE_SUBDOMAINS', default=ENFORCE_TLS, cast=bool)
+SECURE_HSTS_PRELOAD = config('SECURE_HSTS_PRELOAD', default=False, cast=bool)
+SECURE_REFERRER_POLICY = config('SECURE_REFERRER_POLICY', default='strict-origin-when-cross-origin')
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_CROSS_ORIGIN_OPENER_POLICY = 'same-origin'
 
 # Custom settings matching Next.js behavior
 DEFAULT_PASSWORD = 'CLAP@123'  # Default password for new students
 BCRYPT_ROUNDS = 10  # Match Next.js bcrypt rounds
+
+
+# Celery Configuration
+CELERY_BROKER_URL = config('CELERY_BROKER_URL', default='redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = config('CELERY_RESULT_BACKEND', default='redis://localhost:6379/1')
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_TASK_ACKS_LATE = True
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
+CELERY_TASK_TRACK_STARTED = True
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+
+CELERY_TASK_ROUTES = {
+    'api.tasks.score_rule_based': {'queue': 'rule_scoring'},
+    'api.tasks.evaluate_writing': {'queue': 'llm_evaluation'},
+    'api.tasks.evaluate_speaking': {'queue': 'llm_evaluation'},
+    'api.tasks.generate_report': {'queue': 'report_gen'},
+    'api.tasks.send_email_report': {'queue': 'email'},
+}
+
+CELERY_TASK_DEFAULT_QUEUE = 'default'
+CLAP_CELERY_QUEUES = ('rule_scoring', 'llm_evaluation', 'report_gen', 'email')
+
+# Redis Configuration (cache/idempotency/rate limit fast-path)
+REDIS_URL = config('REDIS_URL', default='redis://localhost:6379/2')
+
+# S3 Configuration (used for speaking uploads and generated reports)
+S3_BUCKET_NAME = config('S3_BUCKET_NAME', default='')
+S3_REGION_NAME = config('S3_REGION_NAME', default='')
+S3_ENDPOINT_URL = config('S3_ENDPOINT_URL', default='')
+S3_REPORT_PREFIX = config('S3_REPORT_PREFIX', default='reports')
+S3_PRESIGNED_URL_EXPIRY_SECONDS = config('S3_PRESIGNED_URL_EXPIRY_SECONDS', default=604800, cast=int)
+
+# Email Provider Configuration (SES/SendGrid)
+EMAIL_PROVIDER = config('EMAIL_PROVIDER', default='ses')
+AWS_SES_REGION = config('AWS_SES_REGION', default='')
+SENDGRID_API_KEY = _resolve_secret('SENDGRID_API_KEY', default='')
+SENDGRID_API_KEY = config('SENDGRID_API_KEY', default='')
+
+S3_ACCESS_KEY_ID = config('S3_ACCESS_KEY_ID', default='')
+S3_SECRET_ACCESS_KEY = config('S3_SECRET_ACCESS_KEY', default='')
+S3_SIGNATURE_VERSION = config('S3_SIGNATURE_VERSION', default='s3v4')
+S3_ADDRESSING_STYLE = config('S3_ADDRESSING_STYLE', default='virtual')
+
+# django-storages settings (activated when S3 bucket is configured)
+AWS_ACCESS_KEY_ID = S3_ACCESS_KEY_ID or None
+AWS_SECRET_ACCESS_KEY = S3_SECRET_ACCESS_KEY or None
+AWS_STORAGE_BUCKET_NAME = S3_BUCKET_NAME or None
+AWS_S3_REGION_NAME = S3_REGION_NAME or None
+AWS_S3_ENDPOINT_URL = S3_ENDPOINT_URL or None
+AWS_S3_SIGNATURE_VERSION = S3_SIGNATURE_VERSION
+AWS_S3_ADDRESSING_STYLE = S3_ADDRESSING_STYLE
+AWS_QUERYSTRING_EXPIRE = S3_PRESIGNED_URL_EXPIRY_SECONDS
+AWS_DEFAULT_ACL = None
+AWS_S3_FILE_OVERWRITE = False
+
+if S3_BUCKET_NAME:
+    STORAGES = {
+        'default': {
+            'BACKEND': 'storages.backends.s3.S3Storage',
+        },
+        'staticfiles': {
+            'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
+        },
+    }
+
+# Email backend/provider defaults
+EMAIL_HOST = config('EMAIL_HOST', default='smtp.sendgrid.net')
+EMAIL_PORT = config('EMAIL_PORT', default=587, cast=int)
+EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
+EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='apikey')
+EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default=SENDGRID_API_KEY)
+AWS_SES_ACCESS_KEY_ID = _resolve_secret('AWS_SES_ACCESS_KEY_ID', default='')
+AWS_SES_SECRET_ACCESS_KEY = _resolve_secret('AWS_SES_SECRET_ACCESS_KEY', default='')
+AWS_SES_ACCESS_KEY_ID = config('AWS_SES_ACCESS_KEY_ID', default='')
+AWS_SES_SECRET_ACCESS_KEY = config('AWS_SES_SECRET_ACCESS_KEY', default='')
+
+if EMAIL_PROVIDER == 'ses':
+    EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+    EMAIL_HOST = f'email-smtp.{AWS_SES_REGION}.amazonaws.com' if AWS_SES_REGION else EMAIL_HOST
+elif EMAIL_PROVIDER == 'sendgrid':
+    EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+else:
+    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+
+# Submission rate limits (architecture defaults)
+SUBMISSION_RATE_LIMIT_PER_USER_PER_HOUR = config('SUBMISSION_RATE_LIMIT_PER_USER_PER_HOUR', default=10, cast=int)
+SUBMISSION_RATE_LIMIT_GLOBAL_PER_INSTITUTION_PER_HOUR = config('SUBMISSION_RATE_LIMIT_GLOBAL_PER_INSTITUTION_PER_HOUR', default=100, cast=int)
+
+# LLM Provider Configuration (OpenAI / Gemini)
+LLM_PROVIDER = config('LLM_PROVIDER', default='openai')
+OPENAI_MODEL = config('OPENAI_MODEL', default='gpt-4-turbo')
+GEMINI_API_KEY = _resolve_secret('GEMINI_API_KEY', default='')
+GEMINI_API_KEY = config('GEMINI_API_KEY', default='')
+GEMINI_MODEL = config('GEMINI_MODEL', default='gemini-1.5-pro')
+
+CELERY_BEAT_SCHEDULE = {
+    'clap-dlq-sweeper-every-15-min': {
+        'task': 'api.tasks.dlq_sweeper',
+        'schedule': 900.0,
+    },
+}
