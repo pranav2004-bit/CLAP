@@ -47,7 +47,7 @@ export default function StudentClapTestsPage() {
                 <div className="text-center py-12 bg-gray-50 rounded-lg border border-dashed border-gray-300">
                     <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
                     <h3 className="text-lg font-medium text-gray-900 mb-2">No Tests Assigned</h3>
-                    <p className="text-gray-500">You don't have any pending CLAP tests at the moment.</p>
+                    <p className="text-gray-500">You don&apos;t have any pending CLAP tests at the moment.</p>
                 </div>
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

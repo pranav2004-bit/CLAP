@@ -67,6 +67,7 @@ export function BatchStudentsModal({ batch, onClose }: BatchStudentsModalProps) 
 
     useEffect(() => {
         fetchBatchStudents()
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [batch.id])
 
     useEffect(() => {

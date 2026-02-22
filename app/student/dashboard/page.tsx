@@ -130,6 +130,7 @@ export default function StudentDashboard() {
       }
     }
     fetchProfile()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Fetch real dashboard data
