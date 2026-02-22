@@ -1,5 +1,7 @@
 # CLAP — Live Execution Tracker
 > Auto-updated by AI agent after every completed action.
+> Last updated: 2026-02-22 11:14 UTC
+> Last updated: 2026-02-22 11:26 UTC
 > Last updated: 2026-02-22 08:49 UTC
 > Last updated: 2026-02-22 08:37 UTC
 > Last updated: 2026-02-22 08:24 UTC
@@ -7,8 +9,8 @@
 
 ## 🔖 Current Status
 - **Current Phase:** Phase 11 — Admin Dashboard — Pipeline & Results Management
-- **Current Task:** Task 11.3 — LLM Evaluation Controls
-- **Current Subtask:** Subtask 11.3.1 — Re-trigger LLM evaluation
+- **Current Task:** Task 11.4 — Report Management
+- **Current Subtask:** Subtask 11.4.1 — View/download any student's PDF report
 - **Status:** IN PROGRESS
 - **Blockers (if any):** DB server unavailable in this environment (localhost:5432 refused), so migration apply/DB verification remains blocked; package install proxy restriction still blocks some runtime dependency checks
 - **Current Task:** Task 11.2 — Score Management
@@ -167,6 +169,15 @@
 - **Current Subtask:** Subtask 0.10.4 — WAIT for user approval before proceeding
 - **Status:** PAUSED
 - **Blockers (if any):** None
+
+
+## 🧭 Tracker Navigation (to avoid missing previous updates)
+- **Latest active work** is always in the first `Current Status` block above.
+- **Previous update snapshots** are preserved below as additional `Current Status` blocks (older timestamps).
+- **Full historical task-by-task progress** is preserved in `Execution Plan` (all ✅/⛔ entries by phase).
+- Quick jump:
+  - Existing system baseline: `Existing System Summary`
+  - Full history of completions/blockers: `Execution Plan`
 
 ## 📌 Existing System Summary
 - **User Model:** User (api.User, db_table=users): id(UUID PK), email(unique), role(student|admin), student_id(unique nullable), batch(FK→api.Batch via batch_id), is_active
@@ -445,11 +456,11 @@
   - [ ] Subtask 11.2.3 — View scores by test (all students who took a specific test)
   - [ ] Subtask 11.2.4 — Manual score override (admin can edit LLM-generated scores with reason log)
   - [ ] Subtask 11.2.5 — Score export to CSV/Excel (by batch, by test, by date range)
-- [ ] Task 11.3 — LLM Evaluation Controls
-  - [ ] Subtask 11.3.1 — Re-trigger LLM evaluation for a specific submission (writing/speaking/both)
-  - [ ] Subtask 11.3.2 — View LLM prompt and raw response for any submission (for debugging/QA)
-  - [ ] Subtask 11.3.3 — LLM evaluation analytics (avg response time, validation failure rate, token usage)
-  - [ ] Subtask 11.3.4 — Manual score entry for submissions stuck in DLQ (bypass LLM)
+- [x] Task 11.3 — LLM Evaluation Controls ✅ COMPLETED [2026-02-22 11:26]
+  - [x] Subtask 11.3.1 — Re-trigger LLM evaluation for a specific submission (writing/speaking/both) ✅ COMPLETED [2026-02-22 11:01]
+  - [x] Subtask 11.3.2 — View LLM prompt and raw response for any submission (for debugging/QA) ✅ COMPLETED [2026-02-22 11:26]
+  - [x] Subtask 11.3.3 — LLM evaluation analytics (avg response time, validation failure rate, token usage) ✅ COMPLETED [2026-02-22 11:26]
+  - [x] Subtask 11.3.4 — Manual score entry for submissions stuck in DLQ (bypass LLM) ✅ COMPLETED [2026-02-22 11:26]
 - [ ] Task 11.4 — Report Management
   - [ ] Subtask 11.4.1 — View/download any student's PDF report
   - [ ] Subtask 11.4.2 — Re-generate report for a specific submission

@@ -21,19 +21,11 @@ from api.views.admin import (
     clap_test_results,
     dlq,
     submissions_monitor,
-    score_management
+    score_management,
+    llm_controls,
 )
 from api.views.student import profile, clap_attempt, audio_upload, audio_playback
 from api.views import evaluate, legacy_tests, legacy_attempts, submissions, email_webhooks
-    submissions_monitor
-)
-from api.views.student import profile, clap_attempt, audio_upload, audio_playback
-from api.views import evaluate, legacy_tests, legacy_attempts, submissions, email_webhooks
-    dlq
-)
-from api.views.student import profile, clap_attempt, audio_upload, audio_playback
-from api.views import evaluate, legacy_tests, legacy_attempts, submissions, email_webhooks
-from api.views import evaluate, legacy_tests, legacy_attempts, submissions
 
 app_name = 'api'
 
@@ -44,7 +36,7 @@ urlpatterns = [
     path('admin/batches', batches.batches_handler, name='admin_batches'),
     path('admin/batches/<uuid:batch_id>', batch_detail.batch_detail_handler, name='admin_batch_detail'),
     path('admin/batches/<uuid:batch_id>/students', batch_detail.get_batch_students, name='admin_batch_students'),
-    
+
     # ============================================
     # ADMIN - STUDENT MANAGEMENT (7 endpoints)
     # ============================================
@@ -52,7 +44,7 @@ urlpatterns = [
     path('admin/students/<uuid:student_id>', student_detail.student_detail_handler, name='admin_student_detail'),
     path('admin/students/<uuid:student_id>/toggle-active', student_toggle_active.toggle_student_active, name='admin_student_toggle_active'),
     path('admin/students/<uuid:student_id>/reset-password', student_password.reset_student_password, name='admin_student_reset_password'),
-    
+
     # ============================================
     # ADMIN - CLAP TEST MANAGEMENT (10 endpoints)
     # ============================================
@@ -61,7 +53,7 @@ urlpatterns = [
     path('admin/clap-tests/<uuid:test_id>/assign', clap_test_assignment.assign_clap_test, name='admin_clap_test_assign'),
     path('admin/clap-tests/<uuid:test_id>/unassign', clap_test_assignment.unassign_clap_test, name='admin_clap_test_unassign'),
     path('admin/clap-tests/<uuid:test_id>/results', clap_test_results.clap_test_results_handler, name='admin_clap_test_results'),
-    
+
     # CLAP Test Items (Content)
     path('admin/clap-components/<uuid:component_id>', clap_components.clap_component_detail_handler, name='admin_clap_component_detail'),
     path('admin/clap-components/<uuid:component_id>/items', clap_test_items.clap_test_items_handler, name='admin_clap_test_items'),
@@ -71,8 +63,6 @@ urlpatterns = [
     # Audio Block File Upload
     path('admin/clap-items/<uuid:item_id>/upload-audio', admin_audio_upload.upload_audio_file, name='admin_upload_audio'),
     path('admin/clap-items/<uuid:item_id>/audio', admin_audio_upload.delete_audio_file, name='admin_delete_audio'),
-    
-
 
     # Submission Pipeline Monitor
     path('admin/submissions/overview', submissions_monitor.submission_status_overview, name='admin_submissions_overview'),
@@ -80,6 +70,11 @@ urlpatterns = [
     path('admin/submissions/health', submissions_monitor.pipeline_health, name='admin_submissions_health'),
     path('admin/submissions/<uuid:submission_id>', submissions_monitor.submission_detail, name='admin_submissions_detail'),
 
+    path('admin/llm/submissions/<uuid:submission_id>/retrigger', llm_controls.retrigger_llm_evaluation, name='admin_llm_retrigger'),
+
+    path('admin/llm/submissions/<uuid:submission_id>/trace', llm_controls.llm_trace_by_submission, name='admin_llm_trace'),
+    path('admin/llm/analytics', llm_controls.llm_analytics, name='admin_llm_analytics'),
+    path('admin/llm/dlq/<int:dlq_id>/manual-score', llm_controls.manual_score_from_dlq, name='admin_llm_manual_score_from_dlq'),
 
     # Score Management
     path('admin/scores/submissions/<uuid:submission_id>', score_management.scores_by_submission, name='admin_scores_submission'),
@@ -100,7 +95,7 @@ urlpatterns = [
     # ============================================
     path('student/profile', profile.student_profile_handler, name='student_profile'),
     path('student/change-password', profile.change_student_password, name='student_change_password'),
-    
+
     # CLAP Test Taking
     path('student/clap-assignments', clap_attempt.list_assigned_tests, name='student_list_assignments'),
     path('student/clap-assignments/<uuid:assignment_id>/components/<uuid:component_id>/items', clap_attempt.student_test_items, name='student_test_items'),
@@ -115,7 +110,6 @@ urlpatterns = [
     path('student/clap-items/<uuid:item_id>/audio', audio_playback.retrieve_audio_file, name='student_retrieve_audio'),
     path('student/clap-items/<uuid:item_id>/track-playback', audio_playback.track_playback, name='student_track_playback'),
     path('student/clap-items/<uuid:item_id>/playback-status', audio_playback.get_playback_status, name='student_playback_status'),
-
 
     # ============================================
     # SUBMISSION PIPELINE (3 endpoints)
@@ -133,7 +127,7 @@ urlpatterns = [
     path('tests', legacy_tests.tests_handler, name='legacy_tests_list'),
     path('tests/<uuid:test_id>', legacy_tests.test_detail_handler, name='legacy_test_detail'),
     path('attempts', legacy_attempts.attempts_handler, name='legacy_attempts_list'),
-    
+
     # ============================================
     # AI EVALUATION (2 endpoints)
     # ============================================
