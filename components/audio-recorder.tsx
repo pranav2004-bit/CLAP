@@ -177,14 +177,76 @@ export default function AudioRecorderItem({
     setUploadProgress(0)
 
     try {
+      const user_id = localStorage.getItem('user_id')
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api'
+
+      // Preferred path: request presigned URL and upload directly to S3.
+      const presignResponse = await fetch(
+        `${apiUrl}/student/clap-assignments/${assignmentId}/audio-upload-url`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(user_id ? { 'x-user-id': user_id } : {})
+          },
+          body: JSON.stringify({
+            item_id: itemId,
+            mime_type: audioBlob.type,
+            extension: selectedFormat.extension,
+            file_size: audioBlob.size,
+          })
+        }
+      )
+
+      if (presignResponse.ok) {
+        const presignData = await presignResponse.json()
+
+        const uploadResp = await fetch(presignData.upload_url, {
+          method: 'PUT',
+          headers: presignData.headers || { 'Content-Type': audioBlob.type },
+          body: audioBlob,
+        })
+        if (!uploadResp.ok) {
+          throw new Error('Failed direct upload to object storage')
+        }
+
+        const finalizeResp = await fetch(
+          `${apiUrl}/student/clap-assignments/${assignmentId}/submit-audio`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(user_id ? { 'x-user-id': user_id } : {})
+            },
+            body: JSON.stringify({
+              item_id: itemId,
+              duration,
+              mime_type: audioBlob.type,
+              s3_object_key: presignData.object_key,
+              file_size: audioBlob.size,
+            })
+          }
+        )
+
+        if (!finalizeResp.ok) {
+          const errData = await finalizeResp.json()
+          throw new Error(errData.error || 'Failed to finalize audio upload')
+        }
+
+        const data = await finalizeResp.json()
+        setUploadProgress(100)
+        setStatus('uploaded')
+        toast.success('Audio submitted successfully')
+        onSave(data)
+        return
+      }
+
+      // Fallback path: legacy multipart upload through Django.
       const formData = new FormData()
       formData.append('audio', audioBlob, `recording.${selectedFormat.extension}`)
       formData.append('item_id', itemId)
       formData.append('duration', duration.toString())
       formData.append('mime_type', audioBlob.type)
-
-      const user_id = localStorage.getItem('user_id')
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api'
 
       const response = await fetch(
         `${apiUrl}/student/clap-assignments/${assignmentId}/submit-audio`,
@@ -197,6 +259,7 @@ export default function AudioRecorderItem({
 
       if (response.ok) {
         const data = await response.json()
+        setUploadProgress(100)
         setStatus('uploaded')
         toast.success('Audio submitted successfully')
         onSave(data)

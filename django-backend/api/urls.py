@@ -126,6 +126,7 @@ urlpatterns = [
     path('student/clap-assignments/<uuid:assignment_id>/components/<uuid:component_id>/finish', clap_attempt.finish_component, name='student_finish_component'),
 
     # Audio Recording
+    path('student/clap-assignments/<uuid:assignment_id>/audio-upload-url', audio_upload.get_audio_upload_url, name='student_audio_upload_url'),
     path('student/clap-assignments/<uuid:assignment_id>/submit-audio', audio_upload.submit_audio_response, name='student_submit_audio'),
     path('student/audio-responses/<uuid:audio_response_id>/file', audio_upload.retrieve_audio_file, name='student_audio_file'),
 
@@ -140,6 +141,7 @@ urlpatterns = [
     path('submissions', submissions.create_submission, name='submissions_create'),
     path('submissions/<uuid:submission_id>/status', submissions.submission_status, name='submissions_status'),
     path('submissions/<uuid:submission_id>/results', submissions.submission_results, name='submissions_results'),
+    path('submissions/history', submissions.submission_history, name='submissions_history'),
 
     # Email webhook events (SES/SendGrid)
     path('email/webhook', email_webhooks.email_event_webhook, name='email_webhook'),
