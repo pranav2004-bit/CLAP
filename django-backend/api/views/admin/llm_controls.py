@@ -2,6 +2,9 @@ import json
 
 from django.db import transaction
 from django.db.models import Avg, Count, Q
+from importlib.util import find_spec
+
+from django.db import transaction
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -11,6 +14,9 @@ from api.models import AssessmentSubmission, AuditLog, DeadLetterQueue, Submissi
 from api.utils.jwt_utils import get_user_from_request
 
 from importlib.util import find_spec
+
+from api.models import AssessmentSubmission, AuditLog, SubmissionScore
+from api.utils.jwt_utils import get_user_from_request
 
 if find_spec('celery') is not None:
     from celery import group
@@ -45,6 +51,9 @@ def retrigger_llm_evaluation(request, submission_id):
     admin_user, err = _require_admin(request)
     if err:
         return err
+    admin_user = get_user_from_request(request)
+    if not admin_user or admin_user.role != 'admin':
+        return JsonResponse({'error': 'Unauthorized'}, status=401)
 
     if evaluate_writing is None or evaluate_speaking is None:
         return JsonResponse({'error': 'Celery is not available in this environment'}, status=503)
