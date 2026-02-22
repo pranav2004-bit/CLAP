@@ -1,5 +1,14 @@
 # CLAP — Live Execution Tracker
 > Auto-updated by AI agent after every completed action.
+> Last updated: 2026-02-22 06:34 UTC
+> Last active agent: GPT-5.2-Codex
+
+## 🔖 Current Status
+- **Current Phase:** Phase 9 — Observability & Monitoring
+- **Current Task:** Task 9.1 — Structured JSON logging across all services
+- **Current Subtask:** Task 9.1 — Structured JSON logging across all services
+- **Status:** BLOCKED
+- **Blockers (if any):** DB server unavailable in this environment (localhost:5432 refused), so migration apply/DB verification is blocked; package install proxy restriction still blocks Celery/S3 runtime checks
 > Last updated: 2026-02-22 06:32 UTC
 > Last active agent: GPT-5.2-Codex
 
@@ -216,6 +225,12 @@
   - [x] Subtask 7.4.3 — Bulk retry action for multiple DLQ entries ✅ COMPLETED [2026-02-22 06:28]
   - [x] Subtask 7.4.4 — Mark as resolved / dismiss action ✅ COMPLETED [2026-02-22 06:28]
   - [x] Subtask 7.4.5 — DLQ entry detail view (full payload, error trace, retry history) ✅ COMPLETED [2026-02-22 06:28]
+
+### Phase 8 — Concurrency & Idempotency Controls
+- [x] Task 8.1 — Optimistic locking on all status transitions ✅ COMPLETED [2026-02-22 06:34]
+- [x] Task 8.2 — SELECT FOR UPDATE on report generation trigger ✅ COMPLETED [2026-02-22 06:34]
+- [x] Task 8.3 — Database advisory locks on DLQ sweeper ✅ COMPLETED [2026-02-22 06:34]
+- [x] Task 8.4 — Celery task_id deduplication via Redis ✅ COMPLETED [2026-02-22 06:34]
 - [ ] Task 4.4 — Wire up chain/chord/group pipeline (Section 4.2 of arch doc)
 - [x] Task 4.5 — Celery task configs (acks_late, reject_on_worker_lost, retry policies per Section 9.1) ✅ COMPLETED [2026-02-22 05:54]
 - [ ] Task 3.4 — Rate limiting (django-ratelimit + Redis)

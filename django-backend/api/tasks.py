@@ -5,10 +5,12 @@ from typing import Optional
 import json
 import re
 import os
+from importlib.util import find_spec
 from urllib import request as urlrequest
 
 from celery import shared_task
 from django.conf import settings
+from django.db import transaction, connection
 from django.db import transaction
 from django.db.models import F, Sum
 from django.utils import timezone
@@ -32,6 +34,31 @@ from api.models import (
 )
 from api.utils.openai_client import evaluate_speaking as openai_evaluate_speaking
 from api.utils.openai_client import evaluate_writing as openai_evaluate_writing
+
+if find_spec('redis') is not None:
+    import redis
+else:
+    redis = None
+
+
+def _redis_client():
+    if redis is None:
+        return None
+    redis_url = getattr(settings, 'REDIS_URL', None)
+    if not redis_url:
+        return None
+    return redis.Redis.from_url(redis_url, decode_responses=True)
+
+
+def _task_already_processed(task_id: str):
+    client = _redis_client()
+    if client is None:
+        return False
+    key = f'task:processed:{task_id}'
+    if client.exists(key):
+        return True
+    client.setex(key, 86400, '1')
+    return False
 
 
 def _record_dlq(task_name: str, submission_id, payload: dict, error: Exception, retry_count: int):
@@ -215,6 +242,9 @@ def _persist_llm_score(submission: AssessmentSubmission, domain: str, payload: d
 
 @shared_task(bind=True, max_retries=3, autoretry_for=(Exception,), retry_backoff=False, default_retry_delay=5, acks_late=True, reject_on_worker_lost=True)
 def score_rule_based(self, submission_id):
+    if _task_already_processed(self.request.id):
+        return {'status': 'skipped', 'reason': 'task already processed', 'task_id': self.request.id}
+
     try:
         submission = AssessmentSubmission.objects.select_related('user', 'assessment').get(id=submission_id)
 
@@ -314,6 +344,9 @@ def score_rule_based(self, submission_id):
 
 @shared_task(bind=True, max_retries=3, autoretry_for=(TimeoutError, ConnectionError, ValueError), retry_backoff=True, retry_backoff_max=300, retry_jitter=True, acks_late=True, reject_on_worker_lost=True)
 def evaluate_writing(self, submission_id):
+    if _task_already_processed(self.request.id):
+        return {'status': 'skipped', 'reason': 'task already processed', 'task_id': self.request.id}
+
     try:
         submission = AssessmentSubmission.objects.select_related('user', 'assessment').get(id=submission_id)
 
@@ -355,6 +388,9 @@ def evaluate_writing(self, submission_id):
 
 @shared_task(bind=True, max_retries=3, autoretry_for=(TimeoutError, ConnectionError, ValueError), retry_backoff=True, retry_backoff_max=300, retry_jitter=True, acks_late=True, reject_on_worker_lost=True)
 def evaluate_speaking(self, submission_id):
+    if _task_already_processed(self.request.id):
+        return {'status': 'skipped', 'reason': 'task already processed', 'task_id': self.request.id}
+
     try:
         submission = AssessmentSubmission.objects.select_related('user', 'assessment').get(id=submission_id)
 
@@ -396,6 +432,12 @@ def evaluate_speaking(self, submission_id):
 
 @shared_task(bind=True, max_retries=3, autoretry_for=(Exception,), retry_backoff=False, default_retry_delay=30, acks_late=True, reject_on_worker_lost=True)
 def generate_report(self, submission_id):
+    if _task_already_processed(self.request.id):
+        return {'status': 'skipped', 'reason': 'task already processed', 'task_id': self.request.id}
+
+    try:
+        with transaction.atomic():
+            submission = AssessmentSubmission.objects.select_for_update().select_related('assessment', 'user').get(id=submission_id)
     try:
         submission = AssessmentSubmission.objects.select_related('assessment', 'user').get(id=submission_id)
 
@@ -548,6 +590,9 @@ def generate_report(self, submission_id):
 
 @shared_task(bind=True, max_retries=3, autoretry_for=(Exception,), retry_backoff=True, retry_backoff_max=900, retry_jitter=True, acks_late=True, reject_on_worker_lost=True)
 def send_email_report(self, submission_id):
+    if _task_already_processed(self.request.id):
+        return {'status': 'skipped', 'reason': 'task already processed', 'task_id': self.request.id}
+
     try:
         submission = AssessmentSubmission.objects.select_related('user', 'assessment').get(id=submission_id)
 
@@ -647,6 +692,9 @@ def send_email_report(self, submission_id):
 
 @shared_task(bind=True, max_retries=0, acks_late=True, reject_on_worker_lost=True)
 def retry_dlq_entry(self, dlq_entry_id):
+    if _task_already_processed(self.request.id):
+        return {'status': 'skipped', 'reason': 'task already processed', 'task_id': self.request.id}
+
     entry = DeadLetterQueue.objects.select_related('submission').get(id=dlq_entry_id)
     task_name = entry.task_name
 
@@ -669,6 +717,30 @@ def retry_dlq_entry(self, dlq_entry_id):
 
 @shared_task(bind=True, max_retries=0, acks_late=True, reject_on_worker_lost=True)
 def dlq_sweeper(self):
+    if _task_already_processed(self.request.id):
+        return {'status': 'skipped', 'reason': 'task already processed', 'task_id': self.request.id}
+
+    lock_key = 842001
+    with connection.cursor() as cursor:
+        cursor.execute('SELECT pg_try_advisory_lock(%s);', [lock_key])
+        acquired = cursor.fetchone()[0]
+
+    if not acquired:
+        return {'status': 'skipped', 'reason': 'advisory lock not acquired'}
+
+    try:
+        threshold = timezone.now() - timezone.timedelta(minutes=5)
+        entries = DeadLetterQueue.objects.filter(resolved=False, created_at__lte=threshold).order_by('created_at')[:100]
+
+        processed = 0
+        for entry in entries:
+            retry_dlq_entry.delay(entry.id)
+            processed += 1
+
+        return {'status': 'ok', 'processed': processed}
+    finally:
+        with connection.cursor() as cursor:
+            cursor.execute('SELECT pg_advisory_unlock(%s);', [lock_key])
     threshold = timezone.now() - timezone.timedelta(minutes=5)
     entries = DeadLetterQueue.objects.filter(resolved=False, created_at__lte=threshold).order_by('created_at')[:100]
 
