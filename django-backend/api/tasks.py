@@ -28,6 +28,7 @@ from api.models import (
     StudentClapAssignment,
     StudentClapResponse,
     SubmissionScore,
+    DeadLetterQueue,
 )
 from api.utils.openai_client import evaluate_speaking as openai_evaluate_speaking
 from api.utils.openai_client import evaluate_writing as openai_evaluate_writing
@@ -416,6 +417,40 @@ def send_email_report(self, submission_id):
 
     return {'status': 'ok', 'task': 'send_email_report', 'submission_id': submission_id}
 
+
+@shared_task(bind=True, max_retries=0, acks_late=True, reject_on_worker_lost=True)
+def retry_dlq_entry(self, dlq_entry_id):
+    entry = DeadLetterQueue.objects.select_related('submission').get(id=dlq_entry_id)
+    task_name = entry.task_name
+
+    task_map = {
+        'evaluate_writing': evaluate_writing,
+        'evaluate_speaking': evaluate_speaking,
+        'generate_report': generate_report,
+        'send_email_report': send_email_report,
+        'score_rule_based': score_rule_based,
+    }
+    task = task_map.get(task_name)
+    if not task:
+        return {'status': 'skipped', 'reason': f'No task mapping for {task_name}', 'dlq_entry_id': dlq_entry_id}
+
+    task.delay(str(entry.submission_id))
+    entry.resolved = True
+    entry.save(update_fields=['resolved'])
+    return {'status': 'ok', 'dlq_entry_id': dlq_entry_id, 'task_name': task_name}
+
+
+@shared_task(bind=True, max_retries=0, acks_late=True, reject_on_worker_lost=True)
+def dlq_sweeper(self):
+    threshold = timezone.now() - timezone.timedelta(minutes=5)
+    entries = DeadLetterQueue.objects.filter(resolved=False, created_at__lte=threshold).order_by('created_at')[:100]
+
+    processed = 0
+    for entry in entries:
+        retry_dlq_entry.delay(entry.id)
+        processed += 1
+
+    return {'status': 'ok', 'processed': processed}
             component_ids = ClapTestComponent.objects.filter(
                 clap_test=submission.assessment,
                 test_type=component_type,

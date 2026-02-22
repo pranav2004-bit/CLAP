@@ -311,3 +311,10 @@ LLM_PROVIDER = config('LLM_PROVIDER', default='openai')
 OPENAI_MODEL = config('OPENAI_MODEL', default='gpt-4-turbo')
 GEMINI_API_KEY = config('GEMINI_API_KEY', default='')
 GEMINI_MODEL = config('GEMINI_MODEL', default='gemini-1.5-pro')
+
+CELERY_BEAT_SCHEDULE = {
+    'clap-dlq-sweeper-every-15-min': {
+        'task': 'api.tasks.dlq_sweeper',
+        'schedule': 900.0,
+    },
+}

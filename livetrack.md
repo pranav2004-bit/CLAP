@@ -1,10 +1,15 @@
 # CLAP — Live Execution Tracker
 > Auto-updated by AI agent after every completed action.
+> Last updated: 2026-02-22 06:28 UTC
 > Last updated: 2026-02-22 06:24 UTC
 > Last active agent: GPT-5.2-Codex
 
 ## 🔖 Current Status
 - **Current Phase:** Phase 7 — Failure Handling & DLQ
+- **Current Task:** Task 7.4 — Admin DLQ management interface (add to EXISTING admin dashboard)
+- **Current Subtask:** Subtask 7.4.5 — DLQ entry detail view (full payload, error trace, retry history)
+- **Status:** BLOCKED
+- **Blockers (if any):** DB server unavailable in this environment (localhost:5432 refused), so migration apply/DB verification is blocked; package install proxy restriction still blocks Celery/S3 runtime checks
 - **Current Task:** Task 7.1 — Per-stage retry policies (as per Section 9.1 of arch doc)
 - **Current Subtask:** Task 7.1 — Per-stage retry policies (as per Section 9.1 of arch doc)
 - **Status:** BLOCKED
@@ -188,6 +193,17 @@
 - [x] Task 6.4 — Bounce/complaint webhook endpoint ✅ COMPLETED [2026-02-22 06:24]
 - [x] Task 6.5 — Deduplication (email_sent_at check) ✅ COMPLETED [2026-02-22 06:24]
 - [x] Task 6.6 — Status transition to COMPLETE ✅ COMPLETED [2026-02-22 06:24]
+
+### Phase 7 — Failure Handling & DLQ
+- [x] Task 7.1 — Per-stage retry policies (as per Section 9.1 of arch doc) ✅ COMPLETED [2026-02-22 06:28]
+- [ ] Task 7.2 — DLQ recording on retry exhaustion
+- [x] Task 7.3 — Celery beat periodic DLQ sweeper (every 15 min) ✅ COMPLETED [2026-02-22 06:28]
+- [ ] Task 7.4 — Admin DLQ management interface (add to EXISTING admin dashboard) 🔄 IN PROGRESS
+  - [x] Subtask 7.4.1 — DLQ list view with filters (by task type, date, status) ✅ COMPLETED [2026-02-22 06:28]
+  - [x] Subtask 7.4.2 — Manual retry button per DLQ entry ✅ COMPLETED [2026-02-22 06:28]
+  - [x] Subtask 7.4.3 — Bulk retry action for multiple DLQ entries ✅ COMPLETED [2026-02-22 06:28]
+  - [x] Subtask 7.4.4 — Mark as resolved / dismiss action ✅ COMPLETED [2026-02-22 06:28]
+  - [x] Subtask 7.4.5 — DLQ entry detail view (full payload, error trace, retry history) ✅ COMPLETED [2026-02-22 06:28]
 - [ ] Task 4.4 — Wire up chain/chord/group pipeline (Section 4.2 of arch doc)
 - [x] Task 4.5 — Celery task configs (acks_late, reject_on_worker_lost, retry policies per Section 9.1) ✅ COMPLETED [2026-02-22 05:54]
 - [ ] Task 3.4 — Rate limiting (django-ratelimit + Redis)

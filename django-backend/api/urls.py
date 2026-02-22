@@ -18,7 +18,8 @@ from api.views.admin import (
     clap_test_items,
     clap_components,
     audio_upload as admin_audio_upload,
-    clap_test_results
+    clap_test_results,
+    dlq
 )
 from api.views.student import profile, clap_attempt, audio_upload, audio_playback
 from api.views import evaluate, legacy_tests, legacy_attempts, submissions, email_webhooks
@@ -61,6 +62,14 @@ urlpatterns = [
     path('admin/clap-items/<uuid:item_id>/upload-audio', admin_audio_upload.upload_audio_file, name='admin_upload_audio'),
     path('admin/clap-items/<uuid:item_id>/audio', admin_audio_upload.delete_audio_file, name='admin_delete_audio'),
     
+
+    # DLQ Management
+    path('admin/dlq', dlq.dlq_list, name='admin_dlq_list'),
+    path('admin/dlq/bulk-retry', dlq.dlq_bulk_retry, name='admin_dlq_bulk_retry'),
+    path('admin/dlq/<int:dlq_id>', dlq.dlq_detail, name='admin_dlq_detail'),
+    path('admin/dlq/<int:dlq_id>/retry', dlq.dlq_retry, name='admin_dlq_retry'),
+    path('admin/dlq/<int:dlq_id>/resolve', dlq.dlq_resolve, name='admin_dlq_resolve'),
+
     # ============================================
     # STUDENT PORTAL (6 endpoints)
     # ============================================
