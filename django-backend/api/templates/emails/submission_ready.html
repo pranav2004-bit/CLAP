@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+  <body style="font-family: Arial, sans-serif; color: #222;">
+    <h2>Your CLAP Assessment Results Are Ready</h2>
+    <p>Hello {{ student_name }},</p>
+    <p>Your assessment report has been generated successfully.</p>
+    <table style="border-collapse: collapse; width: 100%; max-width: 520px;">
+      <thead>
+        <tr>
+          <th style="border:1px solid #ccc;padding:8px;text-align:left;">Domain</th>
+          <th style="border:1px solid #ccc;padding:8px;text-align:left;">Score</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in scores %}
+        <tr>
+          <td style="border:1px solid #ccc;padding:8px;">{{ s.domain }}</td>
+          <td style="border:1px solid #ccc;padding:8px;">{{ s.score }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p style="margin-top: 16px;">
+      Download your report: <a href="{{ report_url }}">{{ report_url }}</a>
+    </p>
+    <p>You can also view results in your CLAP dashboard.</p>
+  </body>
+</html>

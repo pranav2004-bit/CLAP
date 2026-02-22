@@ -18,10 +18,13 @@ from api.views.admin import (
     clap_test_items,
     clap_components,
     audio_upload as admin_audio_upload,
-    clap_test_results
+    clap_test_results,
+    dlq,
+    submissions_monitor,
+    score_management
 )
 from api.views.student import profile, clap_attempt, audio_upload, audio_playback
-from api.views import evaluate, legacy_tests, legacy_attempts
+from api.views import evaluate, legacy_tests, legacy_attempts, submissions, email_webhooks
 
 app_name = 'api'
 
@@ -60,6 +63,29 @@ urlpatterns = [
     path('admin/clap-items/<uuid:item_id>/upload-audio', admin_audio_upload.upload_audio_file, name='admin_upload_audio'),
     path('admin/clap-items/<uuid:item_id>/audio', admin_audio_upload.delete_audio_file, name='admin_delete_audio'),
     
+
+
+    # Submission Pipeline Monitor
+    path('admin/submissions/overview', submissions_monitor.submission_status_overview, name='admin_submissions_overview'),
+    path('admin/submissions', submissions_monitor.submission_list, name='admin_submissions_list'),
+    path('admin/submissions/health', submissions_monitor.pipeline_health, name='admin_submissions_health'),
+    path('admin/submissions/<uuid:submission_id>', submissions_monitor.submission_detail, name='admin_submissions_detail'),
+
+
+    # Score Management
+    path('admin/scores/submissions/<uuid:submission_id>', score_management.scores_by_submission, name='admin_scores_submission'),
+    path('admin/scores/submissions/<uuid:submission_id>/override', score_management.override_score, name='admin_scores_override'),
+    path('admin/scores/batches/<uuid:batch_id>', score_management.scores_by_batch, name='admin_scores_batch'),
+    path('admin/scores/assessments/<uuid:assessment_id>', score_management.scores_by_assessment, name='admin_scores_assessment'),
+    path('admin/scores/export', score_management.export_scores, name='admin_scores_export'),
+
+    # DLQ Management
+    path('admin/dlq', dlq.dlq_list, name='admin_dlq_list'),
+    path('admin/dlq/bulk-retry', dlq.dlq_bulk_retry, name='admin_dlq_bulk_retry'),
+    path('admin/dlq/<int:dlq_id>', dlq.dlq_detail, name='admin_dlq_detail'),
+    path('admin/dlq/<int:dlq_id>/retry', dlq.dlq_retry, name='admin_dlq_retry'),
+    path('admin/dlq/<int:dlq_id>/resolve', dlq.dlq_resolve, name='admin_dlq_resolve'),
+
     # ============================================
     # STUDENT PORTAL (6 endpoints)
     # ============================================
@@ -80,6 +106,17 @@ urlpatterns = [
     path('student/clap-items/<uuid:item_id>/audio', audio_playback.retrieve_audio_file, name='student_retrieve_audio'),
     path('student/clap-items/<uuid:item_id>/track-playback', audio_playback.track_playback, name='student_track_playback'),
     path('student/clap-items/<uuid:item_id>/playback-status', audio_playback.get_playback_status, name='student_playback_status'),
+
+
+    # ============================================
+    # SUBMISSION PIPELINE (3 endpoints)
+    # ============================================
+    path('submissions', submissions.create_submission, name='submissions_create'),
+    path('submissions/<uuid:submission_id>/status', submissions.submission_status, name='submissions_status'),
+    path('submissions/<uuid:submission_id>/results', submissions.submission_results, name='submissions_results'),
+
+    # Email webhook events (SES/SendGrid)
+    path('email/webhook', email_webhooks.email_event_webhook, name='email_webhook'),
 
     # ============================================
     # LEGACY / SHARED TESTS (For Dashboard Compatibility)
