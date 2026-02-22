@@ -1,5 +1,14 @@
 # CLAP — Live Execution Tracker
 > Auto-updated by AI agent after every completed action.
+> Last updated: 2026-02-22 05:50 UTC
+> Last active agent: GPT-5.2-Codex
+
+## 🔖 Current Status
+- **Current Phase:** Phase 4 — Celery Task Pipeline
+- **Current Task:** Task 4.1 — Phase A: Rule-based scoring task
+- **Current Subtask:** Subtask 4.1.1 — Listening scoring logic
+- **Status:** BLOCKED
+- **Blockers (if any):** DB server unavailable in this environment (localhost:5432 refused), so migration apply/DB verification is blocked; package install proxy restriction still blocks Celery/S3 runtime checks
 > Last updated: 2026-02-22 05:04 UTC
 > Last active agent: GPT-5.2-Codex
 
@@ -107,6 +116,8 @@
   - [x] Subtask 3.1.6 — Return 202 Accepted with submission_id ✅ COMPLETED [2026-02-22 05:04]
 - [x] Task 3.2 — Status polling endpoint (GET /api/submissions/{id}/status/) ✅ COMPLETED [2026-02-22 05:04]
 - [x] Task 3.3 — Results retrieval endpoint (GET /api/submissions/{id}/results/) ✅ COMPLETED [2026-02-22 05:04]
+- [x] Task 3.4 — Rate limiting (django-ratelimit + Redis) ✅ COMPLETED [2026-02-22 05:50]
+- [x] Task 3.5 — Wire submission endpoint to existing student test-taking UI submit action ✅ COMPLETED [2026-02-22 05:04]
 - [ ] Task 3.4 — Rate limiting (django-ratelimit + Redis)
 - [x] Task 3.5 — Wire submission endpoint to existing student test-taking UI submit action ✅ COMPLETED [2026-02-22 05:04]
 - [ ] Task 0.10 — Present plan to user and get approval 🔄 IN PROGRESS

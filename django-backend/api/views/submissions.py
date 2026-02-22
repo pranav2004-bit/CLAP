@@ -49,6 +49,41 @@ def _idempotency_cache_key(user_id, idempotency_key):
     return f'submission:idempotency:{user_id}:{idempotency_key}'
 
 
+
+
+def _rate_limit_keys(user):
+    ts_bucket = timezone.now().strftime('%Y%m%d%H')
+    user_key = f'submission:ratelimit:user:{user.id}:{ts_bucket}'
+    inst_scope = getattr(user, 'batch_id', None) or 'global'
+    global_key = f'submission:ratelimit:institution:{inst_scope}:{ts_bucket}'
+    return user_key, global_key
+
+
+def _check_rate_limit(user, redis_client):
+    from django.conf import settings
+
+    if redis_client is None:
+        return True, None
+
+    user_limit = getattr(settings, 'SUBMISSION_RATE_LIMIT_PER_USER_PER_HOUR', 10)
+    global_limit = getattr(settings, 'SUBMISSION_RATE_LIMIT_GLOBAL_PER_INSTITUTION_PER_HOUR', 100)
+
+    user_key, global_key = _rate_limit_keys(user)
+
+    pipe = redis_client.pipeline()
+    pipe.incr(user_key)
+    pipe.expire(user_key, 3600)
+    pipe.incr(global_key)
+    pipe.expire(global_key, 3600)
+    user_count, _, global_count, _ = pipe.execute()
+
+    if user_count > user_limit:
+        return False, {'error': 'Rate limit exceeded for user submissions', 'scope': 'user', 'limit': user_limit}
+    if global_count > global_limit:
+        return False, {'error': 'Rate limit exceeded for institution submissions', 'scope': 'institution', 'limit': global_limit}
+    return True, None
+
+
 def _dispatch_pipeline(submission_id):
     if chain is None:
         logger.warning('Celery is unavailable; skipping pipeline dispatch for %s', submission_id)
@@ -88,6 +123,10 @@ def create_submission(request):
     idempotency_key = serializer.validated_data['idempotency_key']
     redis_client = _redis_client()
     cache_key = _idempotency_cache_key(user.id, idempotency_key)
+
+    allowed, error_payload = _check_rate_limit(user, redis_client)
+    if not allowed:
+        return JsonResponse(error_payload, status=429)
 
     if redis_client:
         cached = redis_client.get(cache_key)
