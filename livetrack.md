@@ -1,5 +1,7 @@
 # CLAP — Live Execution Tracker
 > Auto-updated by AI agent after every completed action.
+> Last updated: 2026-02-22 15:40 UTC
+> Last updated: 2026-02-22 11:26 UTC
 > Last updated: 2026-02-22 08:49 UTC
 > Last updated: 2026-02-22 08:37 UTC
 > Last updated: 2026-02-22 08:24 UTC
@@ -7,8 +9,8 @@
 
 ## 🔖 Current Status
 - **Current Phase:** Phase 11 — Admin Dashboard — Pipeline & Results Management
-- **Current Task:** Task 11.3 — LLM Evaluation Controls
-- **Current Subtask:** Subtask 11.3.1 — Re-trigger LLM evaluation
+- **Current Task:** Task 13.1 — Unit tests for all Celery tasks
+- **Current Subtask:** Task 13.1 — Unit tests for all Celery tasks
 - **Status:** IN PROGRESS
 - **Blockers (if any):** DB server unavailable in this environment (localhost:5432 refused), so migration apply/DB verification remains blocked; package install proxy restriction still blocks some runtime dependency checks
 - **Current Task:** Task 11.2 — Score Management
@@ -168,6 +170,15 @@
 - **Status:** PAUSED
 - **Blockers (if any):** None
 
+
+## 🧭 Tracker Navigation (to avoid missing previous updates)
+- **Latest active work** is always in the first `Current Status` block above.
+- **Previous update snapshots** are preserved below as additional `Current Status` blocks (older timestamps).
+- **Full historical task-by-task progress** is preserved in `Execution Plan` (all ✅/⛔ entries by phase).
+- Quick jump:
+  - Existing system baseline: `Existing System Summary`
+  - Full history of completions/blockers: `Execution Plan`
+
 ## 📌 Existing System Summary
 - **User Model:** User (api.User, db_table=users): id(UUID PK), email(unique), role(student|admin), student_id(unique nullable), batch(FK→api.Batch via batch_id), is_active
 - **Test/Assessment Model:** ClapTest (api.ClapTest, db_table=clap_tests) with related ClapTestComponent (5 domains) and ClapTestItem; assignment anchored by StudentClapAssignment(student FK, clap_test FK)
@@ -275,9 +286,6 @@
 - [x] Task 7.2 — DLQ recording on retry exhaustion ✅ COMPLETED [2026-02-22 06:32]
 - [x] Task 7.3 — Celery beat periodic DLQ sweeper (every 15 min) ✅ COMPLETED [2026-02-22 06:28]
 - [x] Task 7.4 — Admin DLQ management interface (add to EXISTING admin dashboard) ✅ COMPLETED [2026-02-22 06:32]
-- [ ] Task 7.2 — DLQ recording on retry exhaustion
-- [x] Task 7.3 — Celery beat periodic DLQ sweeper (every 15 min) ✅ COMPLETED [2026-02-22 06:28]
-- [ ] Task 7.4 — Admin DLQ management interface (add to EXISTING admin dashboard) 🔄 IN PROGRESS
   - [x] Subtask 7.4.1 — DLQ list view with filters (by task type, date, status) ✅ COMPLETED [2026-02-22 06:28]
   - [x] Subtask 7.4.2 — Manual retry button per DLQ entry ✅ COMPLETED [2026-02-22 06:28]
   - [x] Subtask 7.4.3 — Bulk retry action for multiple DLQ entries ✅ COMPLETED [2026-02-22 06:28]
@@ -317,169 +325,41 @@
   - [x] Subtask 11.2.3 — View scores by test (all students who took a specific test) ✅ COMPLETED [2026-02-22 08:49]
   - [x] Subtask 11.2.4 — Manual score override (admin can edit LLM-generated scores with reason log) ✅ COMPLETED [2026-02-22 08:49]
   - [x] Subtask 11.2.5 — Score export to CSV/Excel (by batch, by test, by date range) ✅ COMPLETED [2026-02-22 08:49]
-- [ ] Task 4.4 — Wire up chain/chord/group pipeline (Section 4.2 of arch doc)
-- [x] Task 4.5 — Celery task configs (acks_late, reject_on_worker_lost, retry policies per Section 9.1) ✅ COMPLETED [2026-02-22 05:54]
-- [ ] Task 3.4 — Rate limiting (django-ratelimit + Redis)
-- [x] Task 3.5 — Wire submission endpoint to existing student test-taking UI submit action ✅ COMPLETED [2026-02-22 05:04]
-- [ ] Task 0.10 — Present plan to user and get approval 🔄 IN PROGRESS
-  - [x] Subtask 0.10.1 — Show summary of existing system ✅ COMPLETED [2026-02-22 04:39]
-  - [x] Subtask 0.10.2 — Show proposed integration approach ✅ COMPLETED [2026-02-22 04:39]
-  - [x] Subtask 0.10.3 — Show implementation order ✅ COMPLETED [2026-02-22 04:39]
-  - [ ] Subtask 0.10.4 — WAIT for user approval before proceeding
-
-### Phase 1 — Infrastructure Setup (Celery, Redis, S3)
-- [ ] Task 1.1 — Install/configure Celery + Redis broker (if not already configured)
-  - [ ] Subtask 1.1.1 — Add celery.py to Django project
-  - [ ] Subtask 1.1.2 — Configure CELERY_BROKER_URL and result backend
-  - [ ] Subtask 1.1.3 — Define queue names (rule_scoring, llm_evaluation, report_gen, email)
-  - [ ] Subtask 1.1.4 — Verify Celery worker starts and connects to Redis
-- [ ] Task 1.2 — Configure S3-compatible storage (if not already configured)
-  - [ ] Subtask 1.2.1 — Install boto3/django-storages
-  - [ ] Subtask 1.2.2 — Configure S3 bucket settings
-  - [ ] Subtask 1.2.3 — Verify upload/download works
-- [ ] Task 1.3 — Configure email service (SES/SendGrid)
-
-### Phase 2 — Database Models & Migrations (NEW tables only)
-- [ ] Task 2.1 — Create assessment_submission model
-  - [ ] Subtask 2.1.1 — Define model with FK to EXISTING user model
-  - [ ] Subtask 2.1.2 — Define model with FK to EXISTING test/assessment model
-  - [ ] Subtask 2.1.3 — Add status field (state machine), version column, idempotency_key
-  - [ ] Subtask 2.1.4 — Create and run migration
-  - [ ] Subtask 2.1.5 — Verify FK relationships work with existing models
-- [ ] Task 2.2 — Create submission_score model
-  - [ ] Subtask 2.2.1 — Define fields with UNIQUE constraint on (submission_id, domain)
-  - [ ] Subtask 2.2.2 — Create and run migration
-- [ ] Task 2.3 — Create audit_log model
-- [ ] Task 2.4 — Create dead_letter_queue model
-- [ ] Task 2.5 — Add all indexes as specified in architecture doc Section 6.3
-- [ ] Task 2.6 — Run full migration and verify DB state
-
-### Phase 3 — API Layer (Submission Endpoints)
-- [ ] Task 3.1 — Submission intake endpoint (POST /api/submissions/)
-  - [ ] Subtask 3.1.1 — DRF serializer with payload validation
-  - [ ] Subtask 3.1.2 — Idempotency key check (Redis fast-path + DB UNIQUE)
-  - [ ] Subtask 3.1.3 — Persist submission with status=PENDING
-  - [ ] Subtask 3.1.4 — S3 presigned URL generation for speaking audio upload
-  - [ ] Subtask 3.1.5 — Dispatch Celery task chain
-  - [ ] Subtask 3.1.6 — Return 202 Accepted with submission_id
-- [ ] Task 3.2 — Status polling endpoint (GET /api/submissions/{id}/status/)
-- [ ] Task 3.3 — Results retrieval endpoint (GET /api/submissions/{id}/results/)
-- [ ] Task 3.4 — Rate limiting (django-ratelimit + Redis)
-- [ ] Task 3.5 — Wire submission endpoint to existing student test-taking UI submit action
-
-### Phase 4 — Celery Task Pipeline
-- [ ] Task 4.1 — Phase A: Rule-based scoring task
-  - [ ] Subtask 4.1.1 — Listening scoring logic (match against correct answers from EXISTING test model)
-  - [ ] Subtask 4.1.2 — Reading scoring logic
-  - [ ] Subtask 4.1.3 — Vocabulary & Grammar scoring logic
-  - [ ] Subtask 4.1.4 — Persist scores, transition to RULES_COMPLETE
-- [ ] Task 4.2 — Phase B: Writing LLM evaluation task
-  - [ ] Subtask 4.2.1 — Prompt construction with rubric
-  - [ ] Subtask 4.2.2 — Claude API call with timeout handling
-  - [ ] Subtask 4.2.3 — 3-stage validation (JSON parse → Pydantic → semantic guard)
-  - [ ] Subtask 4.2.4 — Persist score with optimistic locking
-- [ ] Task 4.3 — Phase C: Speaking LLM evaluation task
-  - [ ] Subtask 4.3.1 — Audio transcription (Whisper/STT)
-  - [ ] Subtask 4.3.2 — Prompt construction with transcript + rubric
-  - [ ] Subtask 4.3.3 — Claude API call + 3-stage validation
-  - [ ] Subtask 4.3.4 — Persist score with optimistic locking
-- [ ] Task 4.4 — Wire up chain/chord/group pipeline (Section 4.2 of arch doc)
-- [x] Task 4.5 — Celery task configs (acks_late, reject_on_worker_lost, retry policies per Section 9.1) ✅ COMPLETED [2026-02-22 05:54]
-- [ ] Task 4.5 — Celery task configs (acks_late, reject_on_worker_lost, retry policies per Section 9.1)
-
-### Phase 5 — Report Generation
-- [ ] Task 5.1 — HTML report template (Django/Jinja2 with institution branding)
-- [ ] Task 5.2 — WeasyPrint PDF rendering
-- [ ] Task 5.3 — S3 upload with key pattern: reports/{submission_id}/{timestamp}.pdf
-- [ ] Task 5.4 — Update submission record with report_url, status=REPORT_READY
-
-### Phase 6 — Email Dispatch
-- [ ] Task 6.1 — HTML email template (score summary + presigned S3 link)
-- [ ] Task 6.2 — SES/SendGrid integration
-- [ ] Task 6.3 — Dedicated Celery queue for email workers
-- [ ] Task 6.4 — Bounce/complaint webhook endpoint
-- [ ] Task 6.5 — Deduplication (email_sent_at check)
-- [ ] Task 6.6 — Status transition to COMPLETE
-
-### Phase 7 — Failure Handling & DLQ
-- [ ] Task 7.1 — Per-stage retry policies (as per Section 9.1 of arch doc)
-- [ ] Task 7.2 — DLQ recording on retry exhaustion
-- [ ] Task 7.3 — Celery beat periodic DLQ sweeper (every 15 min)
-- [ ] Task 7.4 — Admin DLQ management interface (add to EXISTING admin dashboard)
-  - [ ] Subtask 7.4.1 — DLQ list view with filters (by task type, date, status)
-  - [ ] Subtask 7.4.2 — Manual retry button per DLQ entry
-  - [ ] Subtask 7.4.3 — Bulk retry action for multiple DLQ entries
-  - [ ] Subtask 7.4.4 — Mark as resolved / dismiss action
-  - [ ] Subtask 7.4.5 — DLQ entry detail view (full payload, error trace, retry history)
-
-### Phase 8 — Concurrency & Idempotency Controls
-- [ ] Task 8.1 — Optimistic locking on all status transitions
-- [ ] Task 8.2 — SELECT FOR UPDATE on report generation trigger
-- [ ] Task 8.3 — Database advisory locks on DLQ sweeper
-- [ ] Task 8.4 — Celery task_id deduplication via Redis
-
-### Phase 9 — Observability & Monitoring
-- [ ] Task 9.1 — Structured JSON logging across all services
-- [ ] Task 9.2 — correlation_id propagation through task chain
-- [ ] Task 9.3 — Prometheus metrics (Section 12.2 of arch doc)
-- [ ] Task 9.4 — Grafana dashboard configs
-- [ ] Task 9.5 — Alerting rules (P1/P2/P3 tiers)
-
-### Phase 10 — Security Hardening
-- [ ] Task 10.1 — JWT token config (15 min access, 7 day refresh) — if not already configured
-- [ ] Task 10.2 — S3 presigned URL scoping and expiry
-- [ ] Task 10.3 — Secrets manager integration for API keys
-- [ ] Task 10.4 — PII exclusion verification in LLM prompts
-- [ ] Task 10.5 — TLS enforcement on all connections
-- [ ] Task 10.6 — Least-privilege DB roles
-
-### Phase 11 — Admin Dashboard — Pipeline & Results Management (EXISTING admin UI)
-- [ ] Task 11.1 — Submission Pipeline Monitor
-  - [ ] Subtask 11.1.1 — Real-time submission status overview (counts by status: PENDING, RULES_COMPLETE, LLM_PROCESSING, etc.)
-  - [ ] Subtask 11.1.2 — Filterable submission list (by student, batch, test, status, date range)
-  - [ ] Subtask 11.1.3 — Submission detail view (full state history, audit trail, timestamps per stage)
-  - [ ] Subtask 11.1.4 — Pipeline health indicators (queue depths, worker status, success/failure rates)
-- [ ] Task 11.2 — Score Management
-  - [ ] Subtask 11.2.1 — View individual student scores (all 5 domains with feedback)
-  - [ ] Subtask 11.2.2 — View scores by batch (aggregate/average per domain)
-  - [ ] Subtask 11.2.3 — View scores by test (all students who took a specific test)
-  - [ ] Subtask 11.2.4 — Manual score override (admin can edit LLM-generated scores with reason log)
-  - [ ] Subtask 11.2.5 — Score export to CSV/Excel (by batch, by test, by date range)
-- [ ] Task 11.3 — LLM Evaluation Controls
-  - [ ] Subtask 11.3.1 — Re-trigger LLM evaluation for a specific submission (writing/speaking/both)
-  - [ ] Subtask 11.3.2 — View LLM prompt and raw response for any submission (for debugging/QA)
-  - [ ] Subtask 11.3.3 — LLM evaluation analytics (avg response time, validation failure rate, token usage)
-  - [ ] Subtask 11.3.4 — Manual score entry for submissions stuck in DLQ (bypass LLM)
-- [ ] Task 11.4 — Report Management
-  - [ ] Subtask 11.4.1 — View/download any student's PDF report
-  - [ ] Subtask 11.4.2 — Re-generate report for a specific submission
-  - [ ] Subtask 11.4.3 — Bulk report download (by batch or test)
-  - [ ] Subtask 11.4.4 — Report template preview/config (branding, layout)
-- [ ] Task 11.5 — Email Management
-  - [ ] Subtask 11.5.1 — Email delivery status per student (sent, bounced, pending)
-  - [ ] Subtask 11.5.2 — Re-send email for specific submission
-  - [ ] Subtask 11.5.3 — Bulk email resend (by batch or test)
-  - [ ] Subtask 11.5.4 — Bounce/complaint log view
-- [ ] Task 11.6 — DLQ Management (if not already covered by Phase 7.4, wire UI here)
-  - [ ] Subtask 11.6.1 — DLQ dashboard widget (unresolved count, oldest entry age)
-  - [ ] Subtask 11.6.2 — One-click retry and resolve actions from admin dashboard
-- [ ] Task 11.7 — Admin Notifications
-  - [ ] Subtask 11.7.1 — In-app alerts for pipeline failures (P1/P2 events)
-  - [ ] Subtask 11.7.2 — Daily summary email to admin (submissions processed, failures, DLQ count)
+- [x] Task 11.3 — LLM Evaluation Controls ✅ COMPLETED [2026-02-22 11:26]
+  - [x] Subtask 11.3.1 — Re-trigger LLM evaluation for a specific submission (writing/speaking/both) ✅ COMPLETED [2026-02-22 11:01]
+  - [x] Subtask 11.3.2 — View LLM prompt and raw response for any submission (for debugging/QA) ✅ COMPLETED [2026-02-22 11:26]
+  - [x] Subtask 11.3.3 — LLM evaluation analytics (avg response time, validation failure rate, token usage) ✅ COMPLETED [2026-02-22 11:26]
+  - [x] Subtask 11.3.4 — Manual score entry for submissions stuck in DLQ (bypass LLM) ✅ COMPLETED [2026-02-22 11:26]
+- [x] Task 11.4 — Report Management ✅ COMPLETED [2026-02-22 12:10]
+  - [x] Subtask 11.4.1 — View/download any student's PDF report ✅ COMPLETED [2026-02-22 12:10]
+  - [x] Subtask 11.4.2 — Re-generate report for a specific submission ✅ COMPLETED [2026-02-22 12:10]
+  - [x] Subtask 11.4.3 — Bulk report download (by batch or test) ✅ COMPLETED [2026-02-22 12:10]
+  - [x] Subtask 11.4.4 — Report template preview/config (branding, layout) ✅ COMPLETED [2026-02-22 12:10]
+- [x] Task 11.5 — Email Management ✅ COMPLETED [2026-02-22 12:42]
+  - [x] Subtask 11.5.1 — Email delivery status per student (sent, bounced, pending) ✅ COMPLETED [2026-02-22 12:42]
+  - [x] Subtask 11.5.2 — Re-send email for specific submission ✅ COMPLETED [2026-02-22 12:42]
+  - [x] Subtask 11.5.3 — Bulk email resend (by batch or test) ✅ COMPLETED [2026-02-22 12:42]
+  - [x] Subtask 11.5.4 — Bounce/complaint log view ✅ COMPLETED [2026-02-22 12:42]
+- [x] Task 11.6 — DLQ Management (if not already covered by Phase 7.4, wire UI here) ✅ COMPLETED [2026-02-22 13:05]
+  - [x] Subtask 11.6.1 — DLQ dashboard widget (unresolved count, oldest entry age) ✅ COMPLETED [2026-02-22 13:05]
+  - [x] Subtask 11.6.2 — One-click retry and resolve actions from admin dashboard ✅ COMPLETED [2026-02-22 13:05]
+- [x] Task 11.7 — Admin Notifications ✅ COMPLETED [2026-02-22 13:28]
+  - [x] Subtask 11.7.1 — In-app alerts for pipeline failures (P1/P2 events) ✅ COMPLETED [2026-02-22 13:28]
+  - [x] Subtask 11.7.2 — Daily summary email to admin (submissions processed, failures, DLQ count) ✅ COMPLETED [2026-02-22 13:28]
 
 ### Phase 12 — Student Dashboard — Results & Reports (EXISTING student UI)
-- [ ] Task 12.1 — Wire existing test submit button to new submission API endpoint
-- [ ] Task 12.2 — Add presigned S3 upload for speaking audio (if not already done)
-- [ ] Task 12.3 — Submission progress indicator
-  - [ ] Subtask 12.3.1 — Status polling / SSE after submission
-  - [ ] Subtask 12.3.2 — Progress UI (e.g., "Scoring your answers..." → "Evaluating writing..." → "Generating report...")
-- [ ] Task 12.4 — Results display page
-  - [ ] Subtask 12.4.1 — Overall score summary (all 5 domains)
-  - [ ] Subtask 12.4.2 — Per-domain score with LLM feedback (writing, speaking)
-  - [ ] Subtask 12.4.3 — Score history (if student has taken multiple tests)
-- [ ] Task 12.5 — Report download
-  - [ ] Subtask 12.5.1 — Download PDF report button (presigned S3 URL)
-  - [ ] Subtask 12.5.2 — Fallback link if report not yet ready
+- [x] Task 12.1 — Wire existing test submit button to new submission API endpoint ✅ COMPLETED [2026-02-22 13:46]
+- [x] Task 12.2 — Add presigned S3 upload for speaking audio (if not already done) ✅ COMPLETED [2026-02-22 14:18]
+- [x] Task 12.3 — Submission progress indicator ✅ COMPLETED [2026-02-22 14:44]
+  - [x] Subtask 12.3.1 — Status polling / SSE after submission ✅ COMPLETED [2026-02-22 14:44]
+  - [x] Subtask 12.3.2 — Progress UI (e.g., "Scoring your answers..." → "Evaluating writing..." → "Generating report...") ✅ COMPLETED [2026-02-22 14:44]
+- [x] Task 12.4 — Results display page ✅ COMPLETED [2026-02-22 15:08]
+  - [x] Subtask 12.4.1 — Overall score summary (all 5 domains) ✅ COMPLETED [2026-02-22 15:08]
+  - [x] Subtask 12.4.2 — Per-domain score with LLM feedback (writing, speaking) ✅ COMPLETED [2026-02-22 15:08]
+  - [x] Subtask 12.4.3 — Score history (if student has taken multiple tests) ✅ COMPLETED [2026-02-22 15:08]
+- [x] Task 12.5 — Report download ✅ COMPLETED [2026-02-22 15:26]
+  - [x] Subtask 12.5.1 — Download PDF report button (presigned S3 URL) ✅ COMPLETED [2026-02-22 15:26]
+  - [x] Subtask 12.5.2 — Fallback link if report not yet ready ✅ COMPLETED [2026-02-22 15:26]
 
 ### Phase 13 — Testing & Load Validation
 - [ ] Task 13.1 — Unit tests for all Celery tasks
