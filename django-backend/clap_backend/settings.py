@@ -218,3 +218,42 @@ SESSION_COOKIE_SECURE = not DEBUG
 # Custom settings matching Next.js behavior
 DEFAULT_PASSWORD = 'CLAP@123'  # Default password for new students
 BCRYPT_ROUNDS = 10  # Match Next.js bcrypt rounds
+
+
+# Celery Configuration
+CELERY_BROKER_URL = config('CELERY_BROKER_URL', default='redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = config('CELERY_RESULT_BACKEND', default='redis://localhost:6379/1')
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_TASK_ACKS_LATE = True
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
+CELERY_TASK_TRACK_STARTED = True
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+
+CELERY_TASK_ROUTES = {
+    'api.tasks.score_rule_based': {'queue': 'rule_scoring'},
+    'api.tasks.evaluate_writing': {'queue': 'llm_evaluation'},
+    'api.tasks.evaluate_speaking': {'queue': 'llm_evaluation'},
+    'api.tasks.generate_report': {'queue': 'report_gen'},
+    'api.tasks.send_email_report': {'queue': 'email'},
+}
+
+CELERY_TASK_DEFAULT_QUEUE = 'default'
+CLAP_CELERY_QUEUES = ('rule_scoring', 'llm_evaluation', 'report_gen', 'email')
+
+# Redis Configuration (cache/idempotency/rate limit fast-path)
+REDIS_URL = config('REDIS_URL', default='redis://localhost:6379/2')
+
+# S3 Configuration (used for speaking uploads and generated reports)
+S3_BUCKET_NAME = config('S3_BUCKET_NAME', default='')
+S3_REGION_NAME = config('S3_REGION_NAME', default='')
+S3_ENDPOINT_URL = config('S3_ENDPOINT_URL', default='')
+S3_REPORT_PREFIX = config('S3_REPORT_PREFIX', default='reports')
+S3_PRESIGNED_URL_EXPIRY_SECONDS = config('S3_PRESIGNED_URL_EXPIRY_SECONDS', default=604800, cast=int)
+
+# Email Provider Configuration (SES/SendGrid)
+EMAIL_PROVIDER = config('EMAIL_PROVIDER', default='ses')
+AWS_SES_REGION = config('AWS_SES_REGION', default='')
+SENDGRID_API_KEY = config('SENDGRID_API_KEY', default='')
