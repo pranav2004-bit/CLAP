@@ -72,6 +72,10 @@ urlpatterns = [
 
     path('admin/llm/submissions/<uuid:submission_id>/retrigger', llm_controls.retrigger_llm_evaluation, name='admin_llm_retrigger'),
 
+    path('admin/llm/submissions/<uuid:submission_id>/trace', llm_controls.llm_trace_by_submission, name='admin_llm_trace'),
+    path('admin/llm/analytics', llm_controls.llm_analytics, name='admin_llm_analytics'),
+    path('admin/llm/dlq/<int:dlq_id>/manual-score', llm_controls.manual_score_from_dlq, name='admin_llm_manual_score_from_dlq'),
+
     # Score Management
     path('admin/scores/submissions/<uuid:submission_id>', score_management.scores_by_submission, name='admin_scores_submission'),
     path('admin/scores/submissions/<uuid:submission_id>/override', score_management.override_score, name='admin_scores_override'),
