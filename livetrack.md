@@ -1,5 +1,6 @@
 # CLAP — Live Execution Tracker
 > Auto-updated by AI agent after every completed action.
+> Last updated: 2026-02-22 11:14 UTC
 > Last updated: 2026-02-22 11:01 UTC
 > Last updated: 2026-02-22 08:49 UTC
 > Last updated: 2026-02-22 08:37 UTC
@@ -168,6 +169,15 @@
 - **Current Subtask:** Subtask 0.10.4 — WAIT for user approval before proceeding
 - **Status:** PAUSED
 - **Blockers (if any):** None
+
+
+## 🧭 Tracker Navigation (to avoid missing previous updates)
+- **Latest active work** is always in the first `Current Status` block above.
+- **Previous update snapshots** are preserved below as additional `Current Status` blocks (older timestamps).
+- **Full historical task-by-task progress** is preserved in `Execution Plan` (all ✅/⛔ entries by phase).
+- Quick jump:
+  - Existing system baseline: `Existing System Summary`
+  - Full history of completions/blockers: `Execution Plan`
 
 ## 📌 Existing System Summary
 - **User Model:** User (api.User, db_table=users): id(UUID PK), email(unique), role(student|admin), student_id(unique nullable), batch(FK→api.Batch via batch_id), is_active
