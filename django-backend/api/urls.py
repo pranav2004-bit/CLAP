@@ -25,6 +25,7 @@ from api.views.admin import (
     llm_controls,
     report_management,
     email_management,
+    notifications,
 )
 from api.views.student import profile, clap_attempt, audio_upload, audio_playback
 from api.views import evaluate, legacy_tests, legacy_attempts, submissions, email_webhooks
@@ -93,6 +94,10 @@ urlpatterns = [
     path('admin/emails/submissions/<uuid:submission_id>/resend', email_management.resend_email, name='admin_email_resend'),
     path('admin/emails/bulk-resend', email_management.bulk_resend_email, name='admin_email_bulk_resend'),
     path('admin/emails/logs', email_management.bounce_complaint_logs, name='admin_email_logs'),
+
+    # Admin Notifications
+    path('admin/notifications/alerts', notifications.in_app_alerts, name='admin_notifications_alerts'),
+    path('admin/notifications/daily-summary', notifications.send_daily_summary, name='admin_notifications_daily_summary'),
 
     # Score Management
     path('admin/scores/submissions/<uuid:submission_id>', score_management.scores_by_submission, name='admin_scores_submission'),
