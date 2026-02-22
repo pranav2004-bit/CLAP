@@ -19,6 +19,11 @@ from api.views.admin import (
     clap_components,
     audio_upload as admin_audio_upload,
     clap_test_results,
+    dlq,
+    submissions_monitor
+)
+from api.views.student import profile, clap_attempt, audio_upload, audio_playback
+from api.views import evaluate, legacy_tests, legacy_attempts, submissions, email_webhooks
     dlq
 )
 from api.views.student import profile, clap_attempt, audio_upload, audio_playback
@@ -62,6 +67,13 @@ urlpatterns = [
     path('admin/clap-items/<uuid:item_id>/upload-audio', admin_audio_upload.upload_audio_file, name='admin_upload_audio'),
     path('admin/clap-items/<uuid:item_id>/audio', admin_audio_upload.delete_audio_file, name='admin_delete_audio'),
     
+
+
+    # Submission Pipeline Monitor
+    path('admin/submissions/overview', submissions_monitor.submission_status_overview, name='admin_submissions_overview'),
+    path('admin/submissions', submissions_monitor.submission_list, name='admin_submissions_list'),
+    path('admin/submissions/health', submissions_monitor.pipeline_health, name='admin_submissions_health'),
+    path('admin/submissions/<uuid:submission_id>', submissions_monitor.submission_detail, name='admin_submissions_detail'),
 
     # DLQ Management
     path('admin/dlq', dlq.dlq_list, name='admin_dlq_list'),
