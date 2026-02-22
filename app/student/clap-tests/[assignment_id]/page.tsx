@@ -33,6 +33,7 @@ export default function StudentClapTestDetailPage() {
   const [results, setResults] = useState<any>(null)
   const [history, setHistory] = useState<any[]>([])
 
+
   const submissionId = searchParams.get('submission_id')
 
 
@@ -235,6 +236,75 @@ export default function StudentClapTestDetailPage() {
         </Card>
       )}
 
+    if (assignment) fetchHistory()
+  }, [assignment])
+
+  const statusProgress = useMemo(() => {
+    if (!submission?.status) return 0
+    const idx = STATUS_STEPS.indexOf(submission.status)
+    if (idx < 0) return 0
+    return Math.round(((idx + 1) / STATUS_STEPS.length) * 100)
+  }, [submission])
+
+  const overallScore = useMemo(() => {
+    if (!results?.scores?.length) return null
+    const vals = results.scores.map((s: any) => Number(s.score || 0))
+    return Math.round((vals.reduce((a: number, b: number) => a + b, 0) / vals.length) * 100) / 100
+  }, [results])
+
+
+  const reportDownloadUrl = useMemo(() => {
+    if (results?.report_download_url) return results.report_download_url
+    const ready = history.find((h: any) => Boolean(h.report_download_url))
+    return ready?.report_download_url || ''
+  }, [results, history])
+
+  const reportIsReady = Boolean(reportDownloadUrl)
+
+  const getIcon = (type: string) => {
+    switch (type) {
+      case 'listening': return Headphones
+      case 'speaking': return Mic
+      case 'reading': return BookOpen
+      case 'writing': return PenTool
+      case 'vocabulary': return Brain
+      default: return CheckCircle
+    }
+  }
+
+  if (isLoading) return <div className="p-8 text-center">Loading details...</div>
+  if (!assignment) return null
+
+  return (
+    <div className="container mx-auto p-6 max-w-4xl">
+      <Button variant="ghost" className="mb-6 pl-0 hover:pl-2 transition-all" onClick={() => router.back()}>
+        <ArrowLeft className="w-4 h-4 mr-2" />
+        Back to Dashboard
+      </Button>
+
+      <div className="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-2xl p-8 text-white mb-8 shadow-xl">
+        <h1 className="text-3xl font-bold mb-2">{assignment.test_name}</h1>
+        <p className="text-indigo-100">Complete all 5 modules to finish the assessment.</p>
+      </div>
+
+      {submissionId && (
+        <Card className="mb-6 border-indigo-200">
+          <CardContent className="p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-500">Submission Processing</p>
+                <p className="font-semibold">Status: {submission?.status || 'Loading...'}</p>
+              </div>
+              {polling && <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />}
+            </div>
+            <div className="w-full bg-gray-200 h-2 rounded-full">
+              <div className="bg-indigo-600 h-2 rounded-full transition-all duration-300" style={{ width: `${statusProgress}%` }} />
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+
 
       <Card className="mb-6 border-sky-200">
         <CardContent className="p-5 flex items-center justify-between gap-4">
@@ -259,6 +329,17 @@ export default function StudentClapTestDetailPage() {
           )}
         </CardContent>
       </Card>
+
+      {results && (
+        <Card className="mb-6 border-green-200">
+          <CardContent className="p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-500">Latest Result Summary</p>
+                <p className="text-xl font-bold">Overall Score: {overallScore ?? '-'} / 10</p>
+              </div>
+            </div>
+
 
       {results && (
         <Card className="mb-6 border-green-200">
