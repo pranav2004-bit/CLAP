@@ -6,6 +6,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ArrowLeft, Headphones, Mic, BookOpen, PenTool, Brain, CheckCircle, PlayCircle, Loader2, Download } from 'lucide-react'
+import { ArrowLeft, Headphones, Mic, BookOpen, PenTool, Brain, CheckCircle, PlayCircle, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { getApiUrl } from '@/lib/api-config'
 
@@ -31,6 +32,18 @@ export default function StudentClapTestDetailPage() {
   const [polling, setPolling] = useState(false)
   const [results, setResults] = useState<any>(null)
   const [history, setHistory] = useState<any[]>([])
+
+  const submissionId = searchParams.get('submission_id')
+
+
+  const submissionId = searchParams.get('submission_id')
+
+  useEffect(() => {
+    const fetchAssignment = async () => {
+      try {
+        const response = await fetch(getApiUrl('student/clap-assignments'))
+        const data = await response.json()
+
 
   const submissionId = searchParams.get('submission_id')
 
@@ -68,6 +81,7 @@ export default function StudentClapTestDetailPage() {
     if (!submissionId) return
 
     let interval: NodeJS.Timeout | null = null
+    let stopped = false
 
     const poll = async () => {
       try {
@@ -83,6 +97,7 @@ export default function StudentClapTestDetailPage() {
 
         if (data.status === 'COMPLETE' || String(data.status || '').startsWith('FAILED')) {
           if (interval) clearInterval(interval)
+          stopped = true
         }
       } catch (e) {
         console.error('Submission polling failed', e)
@@ -138,6 +153,16 @@ export default function StudentClapTestDetailPage() {
 
     if (assignment) fetchHistory()
   }, [assignment])
+    }
+
+    poll()
+    interval = setInterval(poll, 5000)
+
+    return () => {
+      if (interval) clearInterval(interval)
+      if (!stopped) setPolling(false)
+    }
+  }, [submissionId])
 
   const statusProgress = useMemo(() => {
     if (!submission?.status) return 0
@@ -185,6 +210,12 @@ export default function StudentClapTestDetailPage() {
       <div className="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-2xl p-8 text-white mb-8 shadow-xl">
         <h1 className="text-3xl font-bold mb-2">{assignment.test_name}</h1>
         <p className="text-indigo-100">Complete all 5 modules to finish the assessment.</p>
+        <div className="mt-4 flex gap-4">
+          <Badge className="bg-white/20 hover:bg-white/30 text-white border-0">
+            {assignment.status || 'Pending'}
+          </Badge>
+          <span className="text-sm text-indigo-200">Assigned: {new Date(assignment.assigned_at).toLocaleDateString()}</span>
+        </div>
       </div>
 
       {submissionId && (
@@ -237,6 +268,11 @@ export default function StudentClapTestDetailPage() {
                 <p className="text-sm text-gray-500">Latest Result Summary</p>
                 <p className="text-xl font-bold">Overall Score: {overallScore ?? '-'} / 10</p>
               </div>
+              {results.report_download_url && (
+                <a href={results.report_download_url} target="_blank" rel="noreferrer">
+                  <Button><Download className="w-4 h-4 mr-2" />Download Report</Button>
+                </a>
+              )}
             </div>
 
             <div className="grid md:grid-cols-2 gap-3">
@@ -271,6 +307,15 @@ export default function StudentClapTestDetailPage() {
                 </div>
               ))}
             </div>
+            <div className="w-full bg-gray-200 h-2 rounded-full">
+              <div className="bg-indigo-600 h-2 rounded-full transition-all duration-300" style={{ width: `${statusProgress}%` }} />
+            </div>
+
+            <p className="text-xs text-gray-500">
+              {submission?.status === 'COMPLETE'
+                ? 'Processing complete. Your report/results are ready.'
+                : 'We are processing your submission (rule scoring → LLM evaluation → report generation).'}
+            </p>
           </CardContent>
         </Card>
       )}
@@ -295,6 +340,11 @@ export default function StudentClapTestDetailPage() {
                   </div>
                 </div>
                 <Button size="sm" className="rounded-full px-6">Start <PlayCircle className="w-4 h-4 ml-2" /></Button>
+                <div className="flex items-center gap-4">
+                  <Button size="sm" className="rounded-full px-6">
+                    Start <PlayCircle className="w-4 h-4 ml-2" />
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           )
