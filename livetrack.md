@@ -1,6 +1,7 @@
 # CLAP — Live Execution Tracker
 > Auto-updated by AI agent after every completed action.
 > Last updated: 2026-02-22 05:54 UTC
+> Last updated: 2026-02-22 05:50 UTC
 > Last active agent: GPT-5.2-Codex
 
 ## 🔖 Current Status
@@ -9,6 +10,50 @@
 - **Current Subtask:** Subtask 4.2.1 — Prompt construction with rubric
 - **Status:** BLOCKED
 - **Blockers (if any):** DB server unavailable in this environment (localhost:5432 refused), so migration apply/DB verification is blocked; package install proxy restriction still blocks Celery/S3 runtime checks
+- **Current Task:** Task 4.1 — Phase A: Rule-based scoring task
+- **Current Subtask:** Subtask 4.1.1 — Listening scoring logic
+- **Status:** BLOCKED
+- **Blockers (if any):** DB server unavailable in this environment (localhost:5432 refused), so migration apply/DB verification is blocked; package install proxy restriction still blocks Celery/S3 runtime checks
+> Last updated: 2026-02-22 05:04 UTC
+> Last active agent: GPT-5.2-Codex
+
+## 🔖 Current Status
+- **Current Phase:** Phase 3 — API Layer (Submission Endpoints)
+- **Current Task:** Task 3.5 — Wire submission endpoint to existing student test-taking UI submit action
+- **Current Subtask:** Subtask 3.5 — Wire submission endpoint to existing student test-taking UI submit action
+- **Status:** BLOCKED
+- **Blockers (if any):** DB server unavailable in this environment (localhost:5432 refused), so migration apply/DB verification is blocked; package install proxy restriction still blocks Celery/S3 runtime checks
+> Last updated: 2026-02-22 04:59 UTC
+> Last active agent: GPT-5.2-Codex
+
+## 🔖 Current Status
+- **Current Phase:** Phase 2 — Database Models & Migrations (NEW tables only)
+- **Current Task:** Task 2.6 — Run full migration and verify DB state
+- **Current Subtask:** Subtask 2.6 — Run full migration and verify DB state
+- **Status:** BLOCKED
+- **Blockers (if any):** DB server unavailable in this environment (localhost:5432 refused), so migration apply/DB verification is blocked; package install proxy restriction still blocks Celery/S3 runtime checks
+> Last updated: 2026-02-22 04:45 UTC
+> Last active agent: GPT-5.2-Codex
+
+## 🔖 Current Status
+- **Current Phase:** Phase 1 — Infrastructure Setup (Celery, Redis, S3)
+- **Current Task:** Task 1.2 — Configure S3-compatible storage (if not already configured)
+- **Current Subtask:** Subtask 1.2.3 — Verify upload/download works
+- **Status:** BLOCKED
+- **Blockers (if any):** Package installation blocked by environment proxy/network restrictions; Celery worker startup verification and S3 upload/download dependency validation are pending
+- **Current Task:** Task 1.1 — Install/configure Celery + Redis broker (if not already configured)
+- **Current Subtask:** Subtask 1.1.4 — Verify Celery worker starts and connects to Redis
+- **Status:** BLOCKED
+- **Blockers (if any):** Celery package install blocked by environment proxy/network restrictions, so worker bootstrap verification is pending
+> Last updated: 2026-02-22 04:39 UTC
+> Last active agent: GPT-5.2-Codex
+
+## 🔖 Current Status
+- **Current Phase:** Phase 0 — Codebase Audit & Integration Planning
+- **Current Task:** Task 0.10 — Present plan to user and get approval
+- **Current Subtask:** Subtask 0.10.4 — WAIT for user approval before proceeding
+- **Status:** PAUSED
+- **Blockers (if any):** None
 
 ## 📌 Existing System Summary
 - **User Model:** User (api.User, db_table=users): id(UUID PK), email(unique), role(student|admin), student_id(unique nullable), batch(FK→api.Batch via batch_id), is_active
@@ -85,6 +130,60 @@
   - [x] Subtask 4.1.2 — Reading scoring logic ✅ COMPLETED [2026-02-22 05:54]
   - [x] Subtask 4.1.3 — Vocabulary & Grammar scoring logic ✅ COMPLETED [2026-02-22 05:54]
   - [x] Subtask 4.1.4 — Persist scores, transition to RULES_COMPLETE ✅ COMPLETED [2026-02-22 05:54]
+- [ ] Task 3.4 — Rate limiting (django-ratelimit + Redis)
+- [x] Task 3.5 — Wire submission endpoint to existing student test-taking UI submit action ✅ COMPLETED [2026-02-22 05:04]
+- [ ] Task 0.10 — Present plan to user and get approval 🔄 IN PROGRESS
+  - [x] Subtask 0.10.1 — Show summary of existing system ✅ COMPLETED [2026-02-22 04:39]
+  - [x] Subtask 0.10.2 — Show proposed integration approach ✅ COMPLETED [2026-02-22 04:39]
+  - [x] Subtask 0.10.3 — Show implementation order ✅ COMPLETED [2026-02-22 04:39]
+  - [ ] Subtask 0.10.4 — WAIT for user approval before proceeding
+
+### Phase 1 — Infrastructure Setup (Celery, Redis, S3)
+- [ ] Task 1.1 — Install/configure Celery + Redis broker (if not already configured)
+  - [ ] Subtask 1.1.1 — Add celery.py to Django project
+  - [ ] Subtask 1.1.2 — Configure CELERY_BROKER_URL and result backend
+  - [ ] Subtask 1.1.3 — Define queue names (rule_scoring, llm_evaluation, report_gen, email)
+  - [ ] Subtask 1.1.4 — Verify Celery worker starts and connects to Redis
+- [ ] Task 1.2 — Configure S3-compatible storage (if not already configured)
+  - [ ] Subtask 1.2.1 — Install boto3/django-storages
+  - [ ] Subtask 1.2.2 — Configure S3 bucket settings
+  - [ ] Subtask 1.2.3 — Verify upload/download works
+- [ ] Task 1.3 — Configure email service (SES/SendGrid)
+
+### Phase 2 — Database Models & Migrations (NEW tables only)
+- [ ] Task 2.1 — Create assessment_submission model
+  - [ ] Subtask 2.1.1 — Define model with FK to EXISTING user model
+  - [ ] Subtask 2.1.2 — Define model with FK to EXISTING test/assessment model
+  - [ ] Subtask 2.1.3 — Add status field (state machine), version column, idempotency_key
+  - [ ] Subtask 2.1.4 — Create and run migration
+  - [ ] Subtask 2.1.5 — Verify FK relationships work with existing models
+- [ ] Task 2.2 — Create submission_score model
+  - [ ] Subtask 2.2.1 — Define fields with UNIQUE constraint on (submission_id, domain)
+  - [ ] Subtask 2.2.2 — Create and run migration
+- [ ] Task 2.3 — Create audit_log model
+- [ ] Task 2.4 — Create dead_letter_queue model
+- [ ] Task 2.5 — Add all indexes as specified in architecture doc Section 6.3
+- [ ] Task 2.6 — Run full migration and verify DB state
+
+### Phase 3 — API Layer (Submission Endpoints)
+- [ ] Task 3.1 — Submission intake endpoint (POST /api/submissions/)
+  - [ ] Subtask 3.1.1 — DRF serializer with payload validation
+  - [ ] Subtask 3.1.2 — Idempotency key check (Redis fast-path + DB UNIQUE)
+  - [ ] Subtask 3.1.3 — Persist submission with status=PENDING
+  - [ ] Subtask 3.1.4 — S3 presigned URL generation for speaking audio upload
+  - [ ] Subtask 3.1.5 — Dispatch Celery task chain
+  - [ ] Subtask 3.1.6 — Return 202 Accepted with submission_id
+- [ ] Task 3.2 — Status polling endpoint (GET /api/submissions/{id}/status/)
+- [ ] Task 3.3 — Results retrieval endpoint (GET /api/submissions/{id}/results/)
+- [ ] Task 3.4 — Rate limiting (django-ratelimit + Redis)
+- [ ] Task 3.5 — Wire submission endpoint to existing student test-taking UI submit action
+
+### Phase 4 — Celery Task Pipeline
+- [ ] Task 4.1 — Phase A: Rule-based scoring task
+  - [ ] Subtask 4.1.1 — Listening scoring logic (match against correct answers from EXISTING test model)
+  - [ ] Subtask 4.1.2 — Reading scoring logic
+  - [ ] Subtask 4.1.3 — Vocabulary & Grammar scoring logic
+  - [ ] Subtask 4.1.4 — Persist scores, transition to RULES_COMPLETE
 - [ ] Task 4.2 — Phase B: Writing LLM evaluation task
   - [ ] Subtask 4.2.1 — Prompt construction with rubric
   - [ ] Subtask 4.2.2 — Claude API call with timeout handling
@@ -97,6 +196,7 @@
   - [ ] Subtask 4.3.4 — Persist score with optimistic locking
 - [ ] Task 4.4 — Wire up chain/chord/group pipeline (Section 4.2 of arch doc)
 - [x] Task 4.5 — Celery task configs (acks_late, reject_on_worker_lost, retry policies per Section 9.1) ✅ COMPLETED [2026-02-22 05:54]
+- [ ] Task 4.5 — Celery task configs (acks_late, reject_on_worker_lost, retry policies per Section 9.1)
 
 ### Phase 5 — Report Generation
 - [ ] Task 5.1 — HTML report template (Django/Jinja2 with institution branding)
