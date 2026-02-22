@@ -132,6 +132,21 @@ export default function ClapTestTakingPage() {
                     method: 'POST'
                 })
             }
+
+            const idempotencyKey = crypto.randomUUID()
+            await fetch(getApiUrl('submissions'), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-user-id': localStorage.getItem('user_id') || ''
+                },
+                body: JSON.stringify({
+                    assignment_id: params.assignment_id,
+                    idempotency_key: idempotencyKey,
+                    correlation_id: idempotencyKey
+                })
+            })
+
             toast.success('Test Submitted!')
             router.push(`/student/clap-tests/${params.assignment_id}`)
         } catch (error) {
