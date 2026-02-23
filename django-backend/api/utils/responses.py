@@ -85,18 +85,26 @@ def bad_request_response(message, status=400):
 
 def custom_exception_handler(exc, context):
     """
-    Custom exception handler for DRF to match Next.js error responses
+    Custom exception handler for DRF to match Next.js error responses.
+    Does NOT leak internal error details to the client.
     """
+    from django.conf import settings as dj_settings
+
     # Call DRF's default exception handler first
     response = drf_exception_handler(exc, context)
-    
+
     if response is not None:
-        # Transform DRF response to match Next.js format
+        # Use generic message in production, detailed in debug mode
+        message = str(exc) if dj_settings.DEBUG else 'An error occurred. Please try again.'
         custom_response_data = {
             'success': False,
             'error': 'INTERNAL_ERROR',
-            'message': str(exc)
+            'message': message,
         }
         response.data = custom_response_data
-    
+
+    # Log the actual error for debugging regardless
+    if response is None or response.status_code >= 500:
+        logger.error('Unhandled exception: %s', exc, exc_info=True)
+
     return response

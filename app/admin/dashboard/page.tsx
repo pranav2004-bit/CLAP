@@ -85,6 +85,10 @@ export default function SimplifiedAdminDashboard() {
   const fetchBatches = async () => {
     try {
       const response = await fetch(getApiUrl('admin/batches'));
+      if (!response.ok) {
+        console.error('Failed to fetch batches:', response.status);
+        return;
+      }
       const data = await response.json();
 
       if (data.batches) {
@@ -99,9 +103,14 @@ export default function SimplifiedAdminDashboard() {
     try {
       const loadingToast = feedback.loadingData('CLAP tests')
       const response = await fetch(getApiUrl('admin/clap-tests'));
-      const data = await response.json();
 
       toast.dismiss(loadingToast)
+
+      if (!response.ok) {
+        console.error('Failed to fetch CLAP tests:', response.status);
+        return;
+      }
+      const data = await response.json();
 
       if (data.clapTests) {
         setClapTests(data.clapTests);
@@ -113,52 +122,6 @@ export default function SimplifiedAdminDashboard() {
       });
     }
   };
-
-  // Debug: Log when component renders
-  console.log('Admin Dashboard Rendering - Active Tab:', activeTab)
-
-  // Fallback mock data if API fails
-  useEffect(() => {
-    if (clapTests.length === 0) {
-      // Temporary mock data
-      setTimeout(() => {
-        setClapTests([
-          {
-            id: '1',
-            name: 'CLAP Assessment - Semester 1',
-            batch_id: 'batch-1',
-            batch_name: '2023-27',
-            status: 'published',
-            is_assigned: true,
-            created_at: '2024-01-15',
-            tests: [
-              { id: 'listening', name: 'Listening Test', type: 'listening', status: 'completed' },
-              { id: 'speaking', name: 'Speaking Test', type: 'speaking', status: 'pending' },
-              { id: 'reading', name: 'Reading Test', type: 'reading', status: 'completed' },
-              { id: 'writing', name: 'Writing Test', type: 'writing', status: 'in-progress' },
-              { id: 'vocabulary', name: 'Vocabulary & Grammar Test', type: 'vocabulary', status: 'pending' }
-            ]
-          },
-          {
-            id: '2',
-            name: 'CLAP Assessment - Semester 2',
-            batch_id: 'batch-2',
-            batch_name: '2024-28',
-            status: 'draft',
-            is_assigned: false,
-            created_at: '2024-02-01',
-            tests: [
-              { id: 'listening', name: 'Listening Test', type: 'listening', status: 'pending' },
-              { id: 'speaking', name: 'Speaking Test', type: 'speaking', status: 'pending' },
-              { id: 'reading', name: 'Reading Test', type: 'reading', status: 'pending' },
-              { id: 'writing', name: 'Writing Test', type: 'writing', status: 'pending' },
-              { id: 'vocabulary', name: 'Vocabulary & Grammar Test', type: 'vocabulary', status: 'pending' }
-            ]
-          }
-        ]);
-      }, 1000);
-    }
-  }, [clapTests.length]);
 
   const handleCreateNewClapTest = async (clapTestData: any) => {
     try {
@@ -194,30 +157,11 @@ export default function SimplifiedAdminDashboard() {
     }
   };
 
-  // Debug: Log when component renders
-  console.log('Admin Dashboard Rendering - Active Tab:', activeTab)
-
   // Fetch data on component mount
   useEffect(() => {
     fetchClapTests();
     fetchBatches();
   }, []);
-
-  // Mock data
-  const studentData = [
-    { id: 'STU001', name: 'John Smith', email: 'john.smith@example.com', status: 'completed', score: 42, avatar: 'JS' },
-    { id: 'STU002', name: 'Sarah Johnson', email: 'sarah.johnson@example.com', status: 'in_progress', score: null, avatar: 'SJ' },
-    { id: 'STU003', name: 'Mike Wilson', email: 'mike.wilson@example.com', status: 'completed', score: 38, avatar: 'MW' },
-    { id: 'STU004', name: 'Emma Davis', email: 'emma.davis@example.com', status: 'not_started', score: null, avatar: 'ED' }
-  ]
-
-  const batchData = [
-    { id: 'BATCH001', name: '2023-27', startYear: 2023, endYear: 2027, studentCount: 12, isActive: true },
-    { id: 'BATCH002', name: '2024-28', startYear: 2024, endYear: 2028, studentCount: 8, isActive: true },
-    { id: 'BATCH003', name: '2025-29', startYear: 2025, endYear: 2029, studentCount: 5, isActive: false }
-  ]
-
-
 
   const getStatusVariant = (status: string) => {
     switch (status) {
@@ -230,8 +174,6 @@ export default function SimplifiedAdminDashboard() {
 
   const handleCreateStudent = async (studentData: any) => {
     try {
-      console.log('Sending student data:', studentData);
-
       const response = await fetch(getApiUrl('admin/students'), {
         method: 'POST',
         headers: {
@@ -243,9 +185,7 @@ export default function SimplifiedAdminDashboard() {
         }),
       });
 
-      console.log('Response status:', response.status);
       const data = await response.json();
-      console.log('Response data:', data);
 
       if (response.ok && data.student) {
         // Show appropriate message based on whether it was restored or newly created
@@ -301,7 +241,6 @@ export default function SimplifiedAdminDashboard() {
   const handleCreateClapTest = () => {
     setShowCreateClapTestModal(true);
     fetchBatches(); // Fetch batches when modal opens
-    console.log('Opening CLAP test creation wizard');
   };
 
   const handleCloseCreateClapTest = () => {
@@ -313,7 +252,6 @@ export default function SimplifiedAdminDashboard() {
   const handleViewClapTest = (clapTest: any) => {
     setSelectedClapTest(clapTest);
     setShowClapTestDetails(true);
-    console.log('Viewing CLAP test:', clapTest.name);
   };
 
   const handleCloseClapTestDetails = () => {
@@ -325,7 +263,6 @@ export default function SimplifiedAdminDashboard() {
     setSelectedClapTest(clapTest);
     setShowEditClapTestModal(true);
     fetchBatches(); // Fetch batches when modal opens
-    console.log('Editing CLAP test:', clapTest.name);
   };
 
   const handleCloseEditClapTest = () => {
@@ -446,7 +383,6 @@ export default function SimplifiedAdminDashboard() {
 
   const handleAssignClapTest = async (clapTest: any) => {
     try {
-      console.log('Assigning CLAP test:', clapTest.name);
 
       // Optimistically update UI first
       setClapTests(prevTests =>
@@ -516,7 +452,6 @@ export default function SimplifiedAdminDashboard() {
 
   const handleUnassignClapTest = async (clapTest: any) => {
     try {
-      console.log('Unassigning CLAP test:', clapTest.name);
 
       // Optimistically update UI first
       setClapTests(prevTests =>
@@ -586,13 +521,11 @@ export default function SimplifiedAdminDashboard() {
     }
 
     try {
-      console.log('Deleting CLAP test:', clapTest.id);
       const response = await fetch(getApiUrl(`admin/clap-tests/${clapTest.id}`), {
         method: 'DELETE',
       });
 
       const data = await response.json();
-      console.log('Delete response:', response.status, data);
 
       if (response.ok) {
         // Immediately update UI by removing the deleted test
@@ -636,7 +569,6 @@ export default function SimplifiedAdminDashboard() {
             <div className="space-y-1">
               <button
                 onClick={() => {
-                  console.log('Switching to Overview tab');
                   setActiveTab('overview');
                   setSidebarOpen(false);
                 }}
@@ -651,7 +583,6 @@ export default function SimplifiedAdminDashboard() {
 
               <button
                 onClick={() => {
-                  console.log('Switching to Students tab');
                   setActiveTab('students');
                   setSidebarOpen(false);
                 }}
@@ -666,7 +597,6 @@ export default function SimplifiedAdminDashboard() {
 
               <button
                 onClick={() => {
-                  console.log('Switching to Batches tab');
                   setActiveTab('batches');
                   setSidebarOpen(false);
                 }}
@@ -683,7 +613,6 @@ export default function SimplifiedAdminDashboard() {
 
               <button
                 onClick={() => {
-                  console.log('Switching to Analytics tab');
                   setActiveTab('analytics');
                   setSidebarOpen(false);
                 }}
@@ -698,7 +627,6 @@ export default function SimplifiedAdminDashboard() {
 
               <button
                 onClick={() => {
-                  console.log('Switching to CLAP Tests tab');
                   setActiveTab('clap-tests');
                   setSidebarOpen(false);
                 }}

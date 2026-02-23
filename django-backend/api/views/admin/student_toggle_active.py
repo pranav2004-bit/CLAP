@@ -9,6 +9,7 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from api.models import User
+from api.utils.jwt_utils import get_user_from_request
 
 logger = logging.getLogger(__name__)
 
@@ -26,18 +27,29 @@ def error_response(error, status=400):
     return JsonResponse({'error': error}, status=status)
 
 
+def _require_admin(request):
+    """Verify the request comes from an admin user."""
+    admin_user = get_user_from_request(request)
+    if not admin_user or admin_user.role != 'admin':
+        return None, error_response('Unauthorized', status=401)
+    return admin_user, None
+
+
 @csrf_exempt
 @require_http_methods(["PATCH"])
 def toggle_student_active(request, student_id):
     """
     PATCH /api/admin/students/<student_id>/toggle-active
-    
+
     Toggles the is_active status of a student account.
     - Active → Inactive (disable account)
     - Inactive → Active (enable account)
-    
+
     Returns the updated student data.
     """
+    admin_user, err = _require_admin(request)
+    if err:
+        return err
     try:
         logger.info(f'Toggle active status for student: {student_id}')
         

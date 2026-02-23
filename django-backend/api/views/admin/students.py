@@ -21,8 +21,17 @@ import bcrypt
 
 from api.models import User, Batch
 from api.utils import success_response, error_response
+from api.utils.jwt_utils import get_user_from_request
 
 logger = logging.getLogger(__name__)
+
+
+def _require_admin(request):
+    """Verify the request comes from an admin user."""
+    admin_user = get_user_from_request(request)
+    if not admin_user or admin_user.role != 'admin':
+        return None, error_response('Unauthorized', status=401)
+    return admin_user, None
 
 
 @csrf_exempt
@@ -30,12 +39,15 @@ logger = logging.getLogger(__name__)
 def list_students(request):
     """
     GET /api/admin/students
-    
+
     Returns ACTIVE and INACTIVE students (not DELETED)
     - Active students: is_active=True, can login
     - Inactive students: is_active=False, cannot login, can be re-enabled
     - Deleted students: Hidden (student_id starts with "DELETED_"), data preserved
     """
+    admin_user, err = _require_admin(request)
+    if err:
+        return err
     try:
         search = request.GET.get('search', '')
         status = request.GET.get('status', '')
@@ -100,14 +112,17 @@ def list_students(request):
 def create_student(request):
     """
     POST /api/admin/students
-    
+
     Creates a NEW student account OR restores a deleted one.
     - If student_id already exists (active or inactive): Returns error
     - If student_id exists but is deleted: RESTORES the deleted account
     - If student_id doesn't exist: Creates new account
-    
+
     IMPORTANT: Deleted students are RESTORED instead of creating duplicates.
     """
+    admin_user, err = _require_admin(request)
+    if err:
+        return err
     try:
         body = json.loads(request.body)
         logger.info(f'Received student creation request: {body}')

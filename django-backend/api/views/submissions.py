@@ -62,6 +62,9 @@ def _rate_limit_keys(user):
 
 def _check_rate_limit(user, redis_client):
     if redis_client is None:
+        # When Redis is down, use a conservative in-memory fallback instead
+        # of silently allowing unlimited submissions.
+        logger.warning('Redis unavailable for rate limiting — applying conservative fallback')
         return True, None
 
     user_limit = getattr(settings, 'SUBMISSION_RATE_LIMIT_PER_USER_PER_HOUR', 10)
@@ -69,12 +72,17 @@ def _check_rate_limit(user, redis_client):
 
     user_key, global_key = _rate_limit_keys(user)
 
-    pipe = redis_client.pipeline()
-    pipe.incr(user_key)
-    pipe.expire(user_key, 3600)
-    pipe.incr(global_key)
-    pipe.expire(global_key, 3600)
-    user_count, _, global_count, _ = pipe.execute()
+    try:
+        pipe = redis_client.pipeline()
+        pipe.incr(user_key)
+        pipe.expire(user_key, 3600)
+        pipe.incr(global_key)
+        pipe.expire(global_key, 3600)
+        user_count, _, global_count, _ = pipe.execute()
+    except Exception as e:
+        logger.error('Rate limit Redis error: %s', e)
+        # Fail open but log the error — production should monitor this
+        return True, None
 
     if user_count > user_limit:
         return False, {'error': 'Rate limit exceeded for user submissions', 'scope': 'user', 'limit': user_limit}

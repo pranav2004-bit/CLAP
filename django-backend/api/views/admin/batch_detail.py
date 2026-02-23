@@ -10,8 +10,17 @@ import logging
 
 from api.models import Batch, User
 from api.utils import success_response, error_response
+from api.utils.jwt_utils import get_user_from_request
 
 logger = logging.getLogger(__name__)
+
+
+def _require_admin(request):
+    """Verify the request comes from an admin user."""
+    admin_user = get_user_from_request(request)
+    if not admin_user or admin_user.role != 'admin':
+        return None, error_response('Unauthorized', status=401)
+    return admin_user, None
 
 
 @csrf_exempt
@@ -20,6 +29,9 @@ def batch_detail_handler(request, batch_id):
     Combined handler for batch detail operations
     Routes to appropriate function based on HTTP method
     """
+    admin_user, err = _require_admin(request)
+    if err:
+        return err
     if request.method == 'PATCH':
         return toggle_batch_status(request, batch_id)
     elif request.method == 'DELETE':

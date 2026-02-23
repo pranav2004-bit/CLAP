@@ -295,7 +295,12 @@ export function ReportManagement() {
               {previewHtml && (
                 <div className="mt-4 border rounded-lg p-4">
                   <h4 className="text-sm font-medium mb-2">Template Preview</h4>
-                  <div className="bg-white border rounded p-4 text-xs" dangerouslySetInnerHTML={{ __html: previewHtml }} />
+                  <iframe
+                    srcDoc={previewHtml}
+                    sandbox=""
+                    className="bg-white border rounded w-full h-64"
+                    title="Report Template Preview"
+                  />
                 </div>
               )}
             </CardContent>

@@ -13,8 +13,17 @@ import bcrypt
 
 from api.models import User
 from api.utils import error_response
+from api.utils.jwt_utils import get_user_from_request
 
 logger = logging.getLogger(__name__)
+
+
+def _require_admin(request):
+    """Verify the request comes from an admin user."""
+    admin_user = get_user_from_request(request)
+    if not admin_user or admin_user.role != 'admin':
+        return None, error_response('Unauthorized', status=401)
+    return admin_user, None
 
 
 @csrf_exempt
@@ -25,6 +34,9 @@ def reset_student_password(request, student_id):
     Reset student password to default (CLAP@123)
     Matches Next.js POST function behavior
     """
+    admin_user, err = _require_admin(request)
+    if err:
+        return err
     try:
         # Hash default password
         default_password = settings.DEFAULT_PASSWORD

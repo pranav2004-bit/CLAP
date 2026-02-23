@@ -19,8 +19,17 @@ import uuid
 
 from api.models import User
 from api.utils import success_response, error_response
+from api.utils.jwt_utils import get_user_from_request
 
 logger = logging.getLogger(__name__)
+
+
+def _require_admin(request):
+    """Verify the request comes from an admin user."""
+    admin_user = get_user_from_request(request)
+    if not admin_user or admin_user.role != 'admin':
+        return None, error_response('Unauthorized', status=401)
+    return admin_user, None
 
 
 @csrf_exempt
@@ -29,6 +38,9 @@ def student_detail_handler(request, student_id):
     Combined handler for student detail operations
     Routes to appropriate function based on HTTP method
     """
+    admin_user, err = _require_admin(request)
+    if err:
+        return err
     if request.method == 'GET':
         return get_student(request, student_id)
     elif request.method == 'PUT':

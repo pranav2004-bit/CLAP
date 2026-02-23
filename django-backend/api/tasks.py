@@ -53,14 +53,17 @@ def _redis_client():
 
 
 def _task_already_processed(task_id: str):
+    """Atomically check-and-set task processed flag using Redis SET NX."""
     client = _redis_client()
     if client is None:
         return False
     key = f'task:processed:{task_id}'
-    if client.exists(key):
-        return True
-    client.setex(key, 86400, '1')
-    return False
+    # SET key value EX 86400 NX — atomic: sets only if key does NOT exist.
+    # Returns True if set succeeded (first time), None if key already exists.
+    was_set = client.set(key, '1', ex=86400, nx=True)
+    if was_set:
+        return False  # First time seeing this task — NOT already processed
+    return True  # Key already existed — task WAS already processed
 
 
 def _parse_s3_report_location(report_url: str):
@@ -322,7 +325,7 @@ def _persist_llm_score(submission: AssessmentSubmission, domain: str, payload: d
     )
 
 
-@shared_task(bind=True, max_retries=3, autoretry_for=(Exception,), retry_backoff=False, default_retry_delay=5, acks_late=True, reject_on_worker_lost=True)
+@shared_task(bind=True, max_retries=3, autoretry_for=(Exception,), retry_backoff=False, default_retry_delay=5, acks_late=True, reject_on_worker_lost=True, time_limit=120, soft_time_limit=100)
 def score_rule_based(self, submission_id):
     if _task_already_processed(self.request.id):
         return {'status': 'skipped', 'reason': 'task already processed', 'task_id': self.request.id}
@@ -364,9 +367,11 @@ def score_rule_based(self, submission_id):
         if self.request.retries >= self.max_retries:
             _record_dlq('score_rule_based', submission_id, {'submission_id': str(submission_id)}, exc, self.request.retries)
         raise
+    finally:
+        connection.close()
 
 
-@shared_task(bind=True, max_retries=3, autoretry_for=(TimeoutError, ConnectionError, ValueError), retry_backoff=True, retry_backoff_max=300, retry_jitter=True, acks_late=True, reject_on_worker_lost=True)
+@shared_task(bind=True, max_retries=3, autoretry_for=(TimeoutError, ConnectionError, ValueError), retry_backoff=True, retry_backoff_max=300, retry_jitter=True, acks_late=True, reject_on_worker_lost=True, time_limit=180, soft_time_limit=160)
 def evaluate_writing(self, submission_id):
     if _task_already_processed(self.request.id):
         return {'status': 'skipped', 'reason': 'task already processed', 'task_id': self.request.id}
@@ -392,9 +397,11 @@ def evaluate_writing(self, submission_id):
         if self.request.retries >= self.max_retries:
             _record_dlq('evaluate_writing', submission_id, {'submission_id': str(submission_id)}, exc, self.request.retries)
         raise
+    finally:
+        connection.close()
 
 
-@shared_task(bind=True, max_retries=3, autoretry_for=(TimeoutError, ConnectionError, ValueError), retry_backoff=True, retry_backoff_max=300, retry_jitter=True, acks_late=True, reject_on_worker_lost=True)
+@shared_task(bind=True, max_retries=3, autoretry_for=(TimeoutError, ConnectionError, ValueError), retry_backoff=True, retry_backoff_max=300, retry_jitter=True, acks_late=True, reject_on_worker_lost=True, time_limit=180, soft_time_limit=160)
 def evaluate_speaking(self, submission_id):
     if _task_already_processed(self.request.id):
         return {'status': 'skipped', 'reason': 'task already processed', 'task_id': self.request.id}
@@ -419,9 +426,11 @@ def evaluate_speaking(self, submission_id):
         if self.request.retries >= self.max_retries:
             _record_dlq('evaluate_speaking', submission_id, {'submission_id': str(submission_id)}, exc, self.request.retries)
         raise
+    finally:
+        connection.close()
 
 
-@shared_task(bind=True, max_retries=3, autoretry_for=(Exception,), retry_backoff=False, default_retry_delay=30, acks_late=True, reject_on_worker_lost=True)
+@shared_task(bind=True, max_retries=3, autoretry_for=(Exception,), retry_backoff=False, default_retry_delay=30, acks_late=True, reject_on_worker_lost=True, time_limit=300, soft_time_limit=270)
 def generate_report(self, submission_id):
     if _task_already_processed(self.request.id):
         return {'status': 'skipped', 'reason': 'task already processed', 'task_id': self.request.id}
@@ -507,9 +516,11 @@ def generate_report(self, submission_id):
         if self.request.retries >= self.max_retries:
             _record_dlq('generate_report', submission_id, {'submission_id': str(submission_id)}, exc, self.request.retries)
         raise
+    finally:
+        connection.close()
 
 
-@shared_task(bind=True, max_retries=3, autoretry_for=(Exception,), retry_backoff=True, retry_backoff_max=900, retry_jitter=True, acks_late=True, reject_on_worker_lost=True)
+@shared_task(bind=True, max_retries=3, autoretry_for=(Exception,), retry_backoff=True, retry_backoff_max=900, retry_jitter=True, acks_late=True, reject_on_worker_lost=True, time_limit=120, soft_time_limit=100)
 def send_email_report(self, submission_id):
     if _task_already_processed(self.request.id):
         return {'status': 'skipped', 'reason': 'task already processed', 'task_id': self.request.id}
@@ -564,14 +575,29 @@ def send_email_report(self, submission_id):
         if self.request.retries >= self.max_retries:
             _record_dlq('send_email_report', submission_id, {'submission_id': str(submission_id)}, exc, self.request.retries)
         raise
+    finally:
+        connection.close()
 
 
-@shared_task(bind=True, max_retries=0, acks_late=True, reject_on_worker_lost=True)
+DLQ_MAX_RETRY_COUNT = 5  # Circuit breaker: stop retrying after this many DLQ retries
+
+
+@shared_task(bind=True, max_retries=0, acks_late=True, reject_on_worker_lost=True, time_limit=60, soft_time_limit=50)
 def retry_dlq_entry(self, dlq_entry_id):
     if _task_already_processed(self.request.id):
         return {'status': 'skipped', 'reason': 'task already processed', 'task_id': self.request.id}
 
     entry = DeadLetterQueue.objects.select_related('submission').get(id=dlq_entry_id)
+
+    # Circuit breaker: skip entries that have been retried too many times
+    if entry.retry_count >= DLQ_MAX_RETRY_COUNT:
+        log_event('warning', 'dlq_circuit_breaker', dlq_entry_id=dlq_entry_id,
+                  task_name=entry.task_name, retry_count=entry.retry_count)
+        entry.resolved = True
+        entry.save(update_fields=['resolved'])
+        return {'status': 'skipped', 'reason': f'Circuit breaker: max retries ({DLQ_MAX_RETRY_COUNT}) exceeded',
+                'dlq_entry_id': dlq_entry_id}
+
     task_name = entry.task_name
 
     task_map = {
@@ -585,13 +611,16 @@ def retry_dlq_entry(self, dlq_entry_id):
     if not task:
         return {'status': 'skipped', 'reason': f'No task mapping for {task_name}', 'dlq_entry_id': dlq_entry_id}
 
-    task.delay(str(entry.submission_id))
+    # Increment retry count before dispatching
+    entry.retry_count = F('retry_count') + 1
     entry.resolved = True
-    entry.save(update_fields=['resolved'])
+    entry.save(update_fields=['resolved', 'retry_count'])
+
+    task.delay(str(entry.submission_id))
     return {'status': 'ok', 'dlq_entry_id': dlq_entry_id, 'task_name': task_name}
 
 
-@shared_task(bind=True, max_retries=0, acks_late=True, reject_on_worker_lost=True)
+@shared_task(bind=True, max_retries=0, acks_late=True, reject_on_worker_lost=True, time_limit=120, soft_time_limit=100)
 def dlq_sweeper(self):
     if _task_already_processed(self.request.id):
         return {'status': 'skipped', 'reason': 'task already processed', 'task_id': self.request.id}
@@ -606,14 +635,25 @@ def dlq_sweeper(self):
 
     try:
         threshold = timezone.now() - timezone.timedelta(minutes=5)
-        entries = DeadLetterQueue.objects.filter(resolved=False, created_at__lte=threshold).order_by('created_at')[:100]
+        # Only retry entries below the circuit breaker threshold
+        entries = DeadLetterQueue.objects.filter(
+            resolved=False,
+            created_at__lte=threshold,
+            retry_count__lt=DLQ_MAX_RETRY_COUNT,
+        ).order_by('created_at')[:100]
 
         processed = 0
         for entry in entries:
             retry_dlq_entry.delay(entry.id)
             processed += 1
 
-        return {'status': 'ok', 'processed': processed}
+        # Update gauge metric for unresolved DLQ count
+        unresolved = DeadLetterQueue.objects.filter(resolved=False).count()
+        dlq_unresolved_count.set(unresolved)
+
+        return {'status': 'ok', 'processed': processed, 'unresolved_total': unresolved}
     finally:
         with connection.cursor() as cursor:
             cursor.execute('SELECT pg_advisory_unlock(%s);', [lock_key])
+        # Close stale DB connections after long-running sweeper
+        connection.close()

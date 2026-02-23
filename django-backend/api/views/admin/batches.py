@@ -13,8 +13,17 @@ import time
 
 from api.models import Batch, User
 from api.utils import success_response, error_response, bad_request_response
+from api.utils.jwt_utils import get_user_from_request
 
 logger = logging.getLogger(__name__)
+
+
+def _require_admin(request):
+    """Verify the request comes from an admin user."""
+    admin_user = get_user_from_request(request)
+    if not admin_user or admin_user.role != 'admin':
+        return None, error_response('Unauthorized', status=401)
+    return admin_user, None
 
 
 @csrf_exempt
@@ -24,6 +33,9 @@ def list_batches(request):
     GET /api/admin/batches
     Matches Next.js GET function behavior
     """
+    admin_user, err = _require_admin(request)
+    if err:
+        return err
     try:
         start_time = time.time()
         logger.info('batch-fetch started')
@@ -75,10 +87,13 @@ def create_batch(request):
     """
     POST /api/admin/batches
     Matches Next.js POST function behavior
-    
+
     IMPORTANT: If a deleted batch with the same name exists, it will be REACTIVATED
     instead of creating a duplicate. This also reactivates all student accounts.
     """
+    admin_user, err = _require_admin(request)
+    if err:
+        return err
     try:
         start_time = time.time()
         logger.info('POST /api/admin/batches called')

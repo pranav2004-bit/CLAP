@@ -15,10 +15,11 @@ import importlib.util
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = config('SECRET_KEY', default='django-insecure-change-this-in-production')
+# In production, SECRET_KEY MUST be set via environment variable.
+SECRET_KEY = config('SECRET_KEY', default='django-insecure-change-this-in-production-CHANGE-ME')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = config('DEBUG', default=True, cast=bool)
+DEBUG = config('DEBUG', default=False, cast=bool)
 
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1').split(',')
 
@@ -86,11 +87,17 @@ DATABASES = {
         'PASSWORD': DB_APP_PASSWORD,
         'HOST': config('DB_HOST', default='localhost'),
         'PORT': config('DB_PORT', default='5432'),
+        'CONN_MAX_AGE': config('DB_CONN_MAX_AGE', default=600, cast=int),
         'OPTIONS': {
-            'sslmode': 'require',
+            'sslmode': config('DB_SSLMODE', default='require'),
+            'connect_timeout': config('DB_CONNECT_TIMEOUT', default=10, cast=int),
+            'options': '-c statement_timeout=' + str(config('DB_STATEMENT_TIMEOUT_MS', default=30000, cast=int)),
         },
     }
 }
+
+# Request body size limit (prevent memory exhaustion from large payloads)
+DATA_UPLOAD_MAX_MEMORY_SIZE = config('DATA_UPLOAD_MAX_MEMORY_SIZE', default=10 * 1024 * 1024, cast=int)  # 10 MB
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
@@ -319,6 +326,9 @@ CELERY_TASK_ACKS_LATE = True
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 CELERY_TASK_TRACK_STARTED = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+CELERY_RESULT_EXPIRES = config('CELERY_RESULT_EXPIRES', default=3600, cast=int)  # 1 hour
+CELERY_TASK_TIME_LIMIT = config('CELERY_TASK_TIME_LIMIT', default=600, cast=int)  # 10 min hard kill
+CELERY_TASK_SOFT_TIME_LIMIT = config('CELERY_TASK_SOFT_TIME_LIMIT', default=540, cast=int)  # 9 min graceful
 
 CELERY_TASK_ROUTES = {
     'api.tasks.score_rule_based': {'queue': 'rule_scoring'},
