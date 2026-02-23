@@ -344,24 +344,54 @@ CLAP_CELERY_QUEUES = ('rule_scoring', 'llm_evaluation', 'report_gen', 'email')
 # Redis Configuration (cache/idempotency/rate limit fast-path)
 REDIS_URL = config('REDIS_URL', default='redis://localhost:6379/2')
 
-# S3 Configuration (used for speaking uploads and generated reports)
+# ── Media Storage Configuration ──────────────────────────────────────────────
+# STORAGE_PROVIDER controls where audio recordings and PDF reports are stored.
+# Options:
+#   'aws'      — Amazon S3 (set S3_BUCKET_NAME + S3_ACCESS_KEY_ID + S3_SECRET_ACCESS_KEY)
+#   'supabase' — Supabase Storage (S3-compatible; set SUPABASE_STORAGE_BUCKET +
+#                SUPABASE_STORAGE_ACCESS_KEY + SUPABASE_STORAGE_SECRET_KEY +
+#                SUPABASE_PROJECT_REF)
+#   ''         — No cloud storage; files saved locally under MEDIA_ROOT (dev only)
+STORAGE_PROVIDER = config('STORAGE_PROVIDER', default='').lower()
+
+# ── AWS S3 credentials (used when STORAGE_PROVIDER=aws) ─────────────────────
 S3_BUCKET_NAME = config('S3_BUCKET_NAME', default='')
 S3_REGION_NAME = config('S3_REGION_NAME', default='')
-S3_ENDPOINT_URL = config('S3_ENDPOINT_URL', default='')
+S3_ACCESS_KEY_ID = config('S3_ACCESS_KEY_ID', default='')
+S3_SECRET_ACCESS_KEY = config('S3_SECRET_ACCESS_KEY', default='')
+
+# ── Supabase Storage credentials (used when STORAGE_PROVIDER=supabase) ───────
+# Supabase Storage is fully S3-compatible — uses the same boto3 under the hood.
+# Get these from: Supabase Dashboard → Storage → S3 Access
+SUPABASE_PROJECT_REF = config('SUPABASE_PROJECT_REF', default='')          # e.g. abcxyzprojectref
+SUPABASE_STORAGE_BUCKET = config('SUPABASE_STORAGE_BUCKET', default='')    # bucket name in Supabase Storage
+SUPABASE_STORAGE_ACCESS_KEY = config('SUPABASE_STORAGE_ACCESS_KEY', default='')
+SUPABASE_STORAGE_SECRET_KEY = config('SUPABASE_STORAGE_SECRET_KEY', default='')
+SUPABASE_STORAGE_REGION = config('SUPABASE_STORAGE_REGION', default='ap-southeast-1')
+
+# ── Resolve active storage credentials based on provider ─────────────────────
+if STORAGE_PROVIDER == 'supabase' and SUPABASE_PROJECT_REF:
+    S3_BUCKET_NAME = SUPABASE_STORAGE_BUCKET
+    S3_REGION_NAME = SUPABASE_STORAGE_REGION
+    S3_ACCESS_KEY_ID = SUPABASE_STORAGE_ACCESS_KEY
+    S3_SECRET_ACCESS_KEY = SUPABASE_STORAGE_SECRET_KEY
+    # Supabase Storage S3-compatible endpoint — path-style required
+    S3_ENDPOINT_URL = f'https://{SUPABASE_PROJECT_REF}.supabase.co/storage/v1/s3'
+    S3_SIGNATURE_VERSION = 's3v4'
+    S3_ADDRESSING_STYLE = 'path'   # Supabase requires path-style (not virtual-hosted)
+elif STORAGE_PROVIDER == 'aws':
+    S3_ENDPOINT_URL = config('S3_ENDPOINT_URL', default='')
+    S3_SIGNATURE_VERSION = config('S3_SIGNATURE_VERSION', default='s3v4')
+    S3_ADDRESSING_STYLE = config('S3_ADDRESSING_STYLE', default='virtual')
+else:
+    S3_ENDPOINT_URL = ''
+    S3_SIGNATURE_VERSION = 's3v4'
+    S3_ADDRESSING_STYLE = 'virtual'
+
 S3_REPORT_PREFIX = config('S3_REPORT_PREFIX', default='reports')
 S3_PRESIGNED_URL_EXPIRY_SECONDS = config('S3_PRESIGNED_URL_EXPIRY_SECONDS', default=604800, cast=int)
 
-# Email Provider Configuration (SES/SendGrid)
-EMAIL_PROVIDER = config('EMAIL_PROVIDER', default='ses')
-AWS_SES_REGION = config('AWS_SES_REGION', default='')
-SENDGRID_API_KEY = _resolve_secret('SENDGRID_API_KEY', default='')
-
-S3_ACCESS_KEY_ID = config('S3_ACCESS_KEY_ID', default='')
-S3_SECRET_ACCESS_KEY = config('S3_SECRET_ACCESS_KEY', default='')
-S3_SIGNATURE_VERSION = config('S3_SIGNATURE_VERSION', default='s3v4')
-S3_ADDRESSING_STYLE = config('S3_ADDRESSING_STYLE', default='virtual')
-
-# django-storages settings (activated when S3 bucket is configured)
+# ── django-storages settings (activated when storage provider is configured) ──
 AWS_ACCESS_KEY_ID = S3_ACCESS_KEY_ID or None
 AWS_SECRET_ACCESS_KEY = S3_SECRET_ACCESS_KEY or None
 AWS_STORAGE_BUCKET_NAME = S3_BUCKET_NAME or None
@@ -373,7 +403,7 @@ AWS_QUERYSTRING_EXPIRE = S3_PRESIGNED_URL_EXPIRY_SECONDS
 AWS_DEFAULT_ACL = None
 AWS_S3_FILE_OVERWRITE = False
 
-if S3_BUCKET_NAME:
+if S3_BUCKET_NAME and STORAGE_PROVIDER in ('aws', 'supabase'):
     STORAGES = {
         'default': {
             'BACKEND': 'storages.backends.s3.S3Storage',
@@ -383,12 +413,18 @@ if S3_BUCKET_NAME:
         },
     }
 
+# Email Provider Configuration (SES / SendGrid / Resend)
+EMAIL_PROVIDER = config('EMAIL_PROVIDER', default='console')
+AWS_SES_REGION = config('AWS_SES_REGION', default='')
+SENDGRID_API_KEY = _resolve_secret('SENDGRID_API_KEY', default='')
+RESEND_API_KEY = _resolve_secret('RESEND_API_KEY', default='')
+
 # Email backend/provider defaults
 EMAIL_HOST = config('EMAIL_HOST', default='smtp.sendgrid.net')
 EMAIL_PORT = config('EMAIL_PORT', default=587, cast=int)
 EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
 EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='apikey')
-EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default=SENDGRID_API_KEY)
+EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default=SENDGRID_API_KEY if SENDGRID_API_KEY else '')
 AWS_SES_ACCESS_KEY_ID = _resolve_secret('AWS_SES_ACCESS_KEY_ID', default='')
 AWS_SES_SECRET_ACCESS_KEY = _resolve_secret('AWS_SES_SECRET_ACCESS_KEY', default='')
 
