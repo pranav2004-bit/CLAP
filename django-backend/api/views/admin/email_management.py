@@ -7,7 +7,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from api.models import AssessmentSubmission, AuditLog
-from api.utils.jwt_utils import get_user_from_request
+from api.utils.auth import require_admin as _require_admin
 
 from importlib.util import find_spec
 
@@ -17,13 +17,6 @@ else:
     send_email_report = None
 
 BOUNCE_EVENT_MARKERS = ('bounce', 'bounced', 'complaint')
-
-
-def _require_admin(request):
-    user = get_user_from_request(request)
-    if not user or user.role != 'admin':
-        return None, JsonResponse({'error': 'Unauthorized'}, status=401)
-    return user, None
 
 
 def _latest_email_event_map(submission_ids):

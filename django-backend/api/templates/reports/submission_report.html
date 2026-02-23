@@ -70,58 +70,61 @@
 
     <p class="total-score">Total Score: {{ s.score }} / 10</p>
 
-    {% if s.feedback_json.feedback %}
-    <div class="feedback-overall">
-      <strong>Overall Feedback:</strong> {{ s.feedback_json.feedback }}
-    </div>
-    {% endif %}
+    {% if s.feedback_json %}
+      {# feedback_json.overall holds the overall summary text from the LLM #}
+      {% if s.feedback_json.overall %}
+      <div class="feedback-overall">
+        <strong>Overall Feedback:</strong> {{ s.feedback_json.overall|escape }}
+      </div>
+      {% endif %}
 
-    {% if s.feedback_json.breakdown %}
-    <h3>Sub-Score Breakdown</h3>
-    <table class="breakdown-table">
-      <thead>
-        <tr>
-          <th>Criterion</th>
-          <th>Score</th>
-          <th>Max</th>
-          <th>Feedback</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% if s.feedback_json.breakdown.taskAchievement %}
-        <tr>
-          <td>Task Achievement</td>
-          <td>{{ s.feedback_json.breakdown.taskAchievement.score }}</td>
-          <td>{{ s.feedback_json.breakdown.taskAchievement.maxScore }}</td>
-          <td>{{ s.feedback_json.breakdown.taskAchievement.feedback }}</td>
-        </tr>
-        {% endif %}
-        {% if s.feedback_json.breakdown.coherence %}
-        <tr>
-          <td>Coherence &amp; Cohesion</td>
-          <td>{{ s.feedback_json.breakdown.coherence.score }}</td>
-          <td>{{ s.feedback_json.breakdown.coherence.maxScore }}</td>
-          <td>{{ s.feedback_json.breakdown.coherence.feedback }}</td>
-        </tr>
-        {% endif %}
-        {% if s.feedback_json.breakdown.vocabulary %}
-        <tr>
-          <td>Vocabulary</td>
-          <td>{{ s.feedback_json.breakdown.vocabulary.score }}</td>
-          <td>{{ s.feedback_json.breakdown.vocabulary.maxScore }}</td>
-          <td>{{ s.feedback_json.breakdown.vocabulary.feedback }}</td>
-        </tr>
-        {% endif %}
-        {% if s.feedback_json.breakdown.grammar %}
-        <tr>
-          <td>Grammar</td>
-          <td>{{ s.feedback_json.breakdown.grammar.score }}</td>
-          <td>{{ s.feedback_json.breakdown.grammar.maxScore }}</td>
-          <td>{{ s.feedback_json.breakdown.grammar.feedback }}</td>
-        </tr>
-        {% endif %}
-      </tbody>
-    </table>
+      {% if s.feedback_json.breakdown %}
+      <h3>Sub-Score Breakdown</h3>
+      <table class="breakdown-table">
+        <thead>
+          <tr>
+            <th>Criterion</th>
+            <th>Score</th>
+            <th>Max</th>
+            <th>Feedback</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if s.feedback_json.breakdown.taskAchievement %}
+          <tr>
+            <td>Task Achievement</td>
+            <td>{{ s.feedback_json.breakdown.taskAchievement.score }}</td>
+            <td>{{ s.feedback_json.breakdown.taskAchievement.maxScore }}</td>
+            <td>{{ s.feedback_json.breakdown.taskAchievement.feedback|escape }}</td>
+          </tr>
+          {% endif %}
+          {% if s.feedback_json.breakdown.coherence %}
+          <tr>
+            <td>Coherence &amp; Cohesion</td>
+            <td>{{ s.feedback_json.breakdown.coherence.score }}</td>
+            <td>{{ s.feedback_json.breakdown.coherence.maxScore }}</td>
+            <td>{{ s.feedback_json.breakdown.coherence.feedback|escape }}</td>
+          </tr>
+          {% endif %}
+          {% if s.feedback_json.breakdown.vocabulary %}
+          <tr>
+            <td>Vocabulary</td>
+            <td>{{ s.feedback_json.breakdown.vocabulary.score }}</td>
+            <td>{{ s.feedback_json.breakdown.vocabulary.maxScore }}</td>
+            <td>{{ s.feedback_json.breakdown.vocabulary.feedback|escape }}</td>
+          </tr>
+          {% endif %}
+          {% if s.feedback_json.breakdown.grammar %}
+          <tr>
+            <td>Grammar</td>
+            <td>{{ s.feedback_json.breakdown.grammar.score }}</td>
+            <td>{{ s.feedback_json.breakdown.grammar.maxScore }}</td>
+            <td>{{ s.feedback_json.breakdown.grammar.feedback|escape }}</td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+      {% endif %}
     {% endif %}
 
   </div>
@@ -134,58 +137,61 @@
 
     <p class="total-score">Total Score: {{ s.score }} / 10</p>
 
-    {% if s.feedback_json.feedback %}
-    <div class="feedback-overall">
-      <strong>Overall Feedback:</strong> {{ s.feedback_json.feedback }}
-    </div>
-    {% endif %}
+    {% if s.feedback_json %}
+      {# feedback_json.overall holds the overall summary text from the LLM #}
+      {% if s.feedback_json.overall %}
+      <div class="feedback-overall">
+        <strong>Overall Feedback:</strong> {{ s.feedback_json.overall|escape }}
+      </div>
+      {% endif %}
 
-    {% if s.feedback_json.breakdown %}
-    <h3>Sub-Score Breakdown</h3>
-    <table class="breakdown-table">
-      <thead>
-        <tr>
-          <th>Criterion</th>
-          <th>Score</th>
-          <th>Max</th>
-          <th>Feedback</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% if s.feedback_json.breakdown.fluency %}
-        <tr>
-          <td>Fluency</td>
-          <td>{{ s.feedback_json.breakdown.fluency.score }}</td>
-          <td>{{ s.feedback_json.breakdown.fluency.maxScore }}</td>
-          <td>{{ s.feedback_json.breakdown.fluency.feedback }}</td>
-        </tr>
-        {% endif %}
-        {% if s.feedback_json.breakdown.pronunciation %}
-        <tr>
-          <td>Pronunciation</td>
-          <td>{{ s.feedback_json.breakdown.pronunciation.score }}</td>
-          <td>{{ s.feedback_json.breakdown.pronunciation.maxScore }}</td>
-          <td>{{ s.feedback_json.breakdown.pronunciation.feedback }}</td>
-        </tr>
-        {% endif %}
-        {% if s.feedback_json.breakdown.vocabulary %}
-        <tr>
-          <td>Vocabulary</td>
-          <td>{{ s.feedback_json.breakdown.vocabulary.score }}</td>
-          <td>{{ s.feedback_json.breakdown.vocabulary.maxScore }}</td>
-          <td>{{ s.feedback_json.breakdown.vocabulary.feedback }}</td>
-        </tr>
-        {% endif %}
-        {% if s.feedback_json.breakdown.grammar %}
-        <tr>
-          <td>Grammar</td>
-          <td>{{ s.feedback_json.breakdown.grammar.score }}</td>
-          <td>{{ s.feedback_json.breakdown.grammar.maxScore }}</td>
-          <td>{{ s.feedback_json.breakdown.grammar.feedback }}</td>
-        </tr>
-        {% endif %}
-      </tbody>
-    </table>
+      {% if s.feedback_json.breakdown %}
+      <h3>Sub-Score Breakdown</h3>
+      <table class="breakdown-table">
+        <thead>
+          <tr>
+            <th>Criterion</th>
+            <th>Score</th>
+            <th>Max</th>
+            <th>Feedback</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if s.feedback_json.breakdown.fluency %}
+          <tr>
+            <td>Fluency</td>
+            <td>{{ s.feedback_json.breakdown.fluency.score }}</td>
+            <td>{{ s.feedback_json.breakdown.fluency.maxScore }}</td>
+            <td>{{ s.feedback_json.breakdown.fluency.feedback|escape }}</td>
+          </tr>
+          {% endif %}
+          {% if s.feedback_json.breakdown.pronunciation %}
+          <tr>
+            <td>Pronunciation</td>
+            <td>{{ s.feedback_json.breakdown.pronunciation.score }}</td>
+            <td>{{ s.feedback_json.breakdown.pronunciation.maxScore }}</td>
+            <td>{{ s.feedback_json.breakdown.pronunciation.feedback|escape }}</td>
+          </tr>
+          {% endif %}
+          {% if s.feedback_json.breakdown.vocabulary %}
+          <tr>
+            <td>Vocabulary</td>
+            <td>{{ s.feedback_json.breakdown.vocabulary.score }}</td>
+            <td>{{ s.feedback_json.breakdown.vocabulary.maxScore }}</td>
+            <td>{{ s.feedback_json.breakdown.vocabulary.feedback|escape }}</td>
+          </tr>
+          {% endif %}
+          {% if s.feedback_json.breakdown.grammar %}
+          <tr>
+            <td>Grammar</td>
+            <td>{{ s.feedback_json.breakdown.grammar.score }}</td>
+            <td>{{ s.feedback_json.breakdown.grammar.maxScore }}</td>
+            <td>{{ s.feedback_json.breakdown.grammar.feedback|escape }}</td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+      {% endif %}
     {% endif %}
 
   </div>

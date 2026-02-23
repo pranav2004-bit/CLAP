@@ -37,6 +37,11 @@ if find_spec('redis') is not None:
 else:
     redis = None
 
+if find_spec('boto3') is not None:
+    import boto3 as _boto3
+else:
+    _boto3 = None
+
 
 def _correlation_id(task, submission_id):
     headers = getattr(task.request, "headers", {}) or {}
@@ -94,13 +99,14 @@ def _presigned_report_download_url(report_url: str):
     if not bucket or not key:
         return report_url
 
-    try:
-        import boto3
+    if _boto3 is None:
+        return report_url
 
+    try:
         expiry = getattr(settings, 'S3_PRESIGNED_URL_EXPIRY_SECONDS', 604800)
         expiry = max(60, min(int(expiry), 604800))
 
-        client = boto3.client(
+        client = _boto3.client(
             's3',
             endpoint_url=getattr(settings, 'S3_ENDPOINT_URL', None) or None,
             region_name=getattr(settings, 'S3_REGION_NAME', None) or None,
@@ -307,10 +313,13 @@ def _persist_llm_score(submission: AssessmentSubmission, domain: str, payload: d
         llm_validation_failures_total.labels(domain=domain, failure_type='feedback_schema').inc()
         raise ValueError('LLM feedback must be object')
 
-    # Semantic guard
+    # Semantic guard — score/feedback contradiction raises so task retries / goes DLQ
     guarded = _semantic_guard(score, feedback)
     if not guarded:
-        feedback['semantic_warning'] = 'Potential contradiction detected'
+        llm_validation_failures_total.labels(domain=domain, failure_type='semantic_contradiction').inc()
+        raise ValueError(
+            f'Semantic contradiction: score={score} conflicts with feedback sentiment for domain={domain}'
+        )
 
     SubmissionScore.objects.update_or_create(
         submission=submission,
@@ -414,7 +423,45 @@ def evaluate_speaking(self, submission_id):
 
         assignment = StudentClapAssignment.objects.filter(student=submission.user, clap_test=submission.assessment).first()
         audio = StudentAudioResponse.objects.filter(assignment=assignment, item__component__test_type='speaking').order_by('-uploaded_at').first()
-        transcript = (audio.transcription or '') if audio else ''
+
+        # ── Transcription: run Whisper if transcript not yet stored ─────────
+        transcript = (audio.transcription or '').strip() if audio else ''
+        if audio and not transcript:
+            try:
+                from api.utils.openai_client import transcribe_audio
+                if audio.file_path and audio.file_path.startswith('s3://') and _boto3:
+                    # S3-backed audio: download bytes then transcribe
+                    parts = audio.file_path[5:].split('/', 1)
+                    if len(parts) == 2:
+                        s3_bucket, s3_key = parts
+                        s3_client = _boto3.client(
+                            's3',
+                            endpoint_url=getattr(settings, 'S3_ENDPOINT_URL', None) or None,
+                            region_name=getattr(settings, 'S3_REGION_NAME', None) or None,
+                            aws_access_key_id=getattr(settings, 'S3_ACCESS_KEY_ID', None) or None,
+                            aws_secret_access_key=getattr(settings, 'S3_SECRET_ACCESS_KEY', None) or None,
+                        )
+                        obj = s3_client.get_object(Bucket=s3_bucket, Key=s3_key)
+                        audio_bytes = obj['Body'].read()
+                        import io
+                        audio_file_obj = (f'audio.{audio.file_path.rsplit(".", 1)[-1]}', audio_bytes, audio.mime_type or 'audio/webm')
+                        transcript = transcribe_audio(audio_file_obj, mime_type=audio.mime_type or 'audio/webm') or ''
+                elif audio.file_path:
+                    # Local filesystem audio
+                    from django.conf import settings as dj_settings
+                    import io
+                    full_path = os.path.join(dj_settings.MEDIA_ROOT, audio.file_path)
+                    if os.path.exists(full_path):
+                        with open(full_path, 'rb') as f:
+                            transcript = transcribe_audio(f, mime_type=audio.mime_type or 'audio/webm') or ''
+
+                if transcript:
+                    # Persist so future re-runs skip Whisper
+                    StudentAudioResponse.objects.filter(id=audio.id).update(transcription=transcript)
+                    log_event('info', 'whisper_transcribed', submission_id=str(submission_id), chars=len(transcript))
+            except Exception as whisper_exc:
+                log_event('warning', 'whisper_transcription_failed', submission_id=str(submission_id), error=str(whisper_exc))
+                # Proceed with empty transcript — LLM will return low score with note
 
         payload = _evaluate_speaking_payload(transcript=transcript, prompt='Evaluate speaking transcript using rubric and return JSON')
         _persist_llm_score(submission, 'speaking', payload)
@@ -471,9 +518,8 @@ def generate_report(self, submission_id):
 
         report_url = None
         try:
-            import boto3
-            if getattr(settings, 'S3_BUCKET_NAME', ''):
-                client = boto3.client(
+            if _boto3 is not None and getattr(settings, 'S3_BUCKET_NAME', ''):
+                client = _boto3.client(
                     's3',
                     endpoint_url=getattr(settings, 'S3_ENDPOINT_URL', None) or None,
                     region_name=getattr(settings, 'S3_REGION_NAME', None) or None,

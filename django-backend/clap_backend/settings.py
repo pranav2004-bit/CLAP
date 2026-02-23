@@ -452,3 +452,74 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': 900.0,
     },
 }
+
+
+# ── Startup validation ────────────────────────────────────────────────────────
+# Runs at Django process startup.  Raises ValueError for hard misconfigurations
+# that would cause silent data loss; logs WARNING for soft misconfigurations.
+
+def _validate_settings():
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+
+    # --- Storage provider ---
+    _valid_storage = ('aws', 'supabase', '')
+    if STORAGE_PROVIDER not in _valid_storage:
+        raise ValueError(
+            f"STORAGE_PROVIDER='{STORAGE_PROVIDER}' is invalid. "
+            f"Must be one of: {_valid_storage}"
+        )
+
+    if STORAGE_PROVIDER == 'aws' and not S3_BUCKET_NAME:
+        _log.warning(
+            'STORAGE_PROVIDER=aws but S3_BUCKET_NAME is not set — '
+            'reports and audio will fall back to local disk storage.'
+        )
+
+    if STORAGE_PROVIDER == 'supabase' and not SUPABASE_PROJECT_REF:
+        _log.warning(
+            'STORAGE_PROVIDER=supabase but SUPABASE_PROJECT_REF is not set — '
+            'the S3-compatible endpoint URL cannot be built; storage will fail.'
+        )
+
+    # --- Email provider ---
+    _valid_email = ('ses', 'sendgrid', 'resend', 'console', '')
+    if EMAIL_PROVIDER not in _valid_email:
+        raise ValueError(
+            f"EMAIL_PROVIDER='{EMAIL_PROVIDER}' is invalid. "
+            f"Must be one of: {_valid_email}"
+        )
+
+    if EMAIL_PROVIDER in ('console', '') and not DEBUG:
+        _log.warning(
+            "EMAIL_PROVIDER='%s' in a non-DEBUG environment — "
+            'emails will NOT be delivered to students. '
+            "Set EMAIL_PROVIDER to 'ses', 'sendgrid', or 'resend'.",
+            EMAIL_PROVIDER,
+        )
+
+    # --- FROM_EMAIL domain sanity ---
+    _test_domains = ('clap-test.com', 'example.com', 'test.com', 'localhost')
+    _from_domain = (FROM_EMAIL or '').split('@')[-1].lower()
+    if _from_domain in _test_domains and not DEBUG:
+        _log.warning(
+            "FROM_EMAIL='%s' uses a test/placeholder domain in a non-DEBUG environment. "
+            'Students will not receive emails. Set FROM_EMAIL to your verified sender address.',
+            FROM_EMAIL,
+        )
+
+    # --- LLM provider keys ---
+    if LLM_PROVIDER == 'openai' and not OPENAI_API_KEY:
+        _log.warning(
+            'LLM_PROVIDER=openai but OPENAI_API_KEY is not set — '
+            'writing and speaking evaluation will fail.'
+        )
+
+    if LLM_PROVIDER == 'gemini' and not GEMINI_API_KEY:
+        _log.warning(
+            'LLM_PROVIDER=gemini but GEMINI_API_KEY is not set — '
+            'writing and speaking evaluation will fail.'
+        )
+
+
+_validate_settings()

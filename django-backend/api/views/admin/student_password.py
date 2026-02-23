@@ -13,17 +13,9 @@ import bcrypt
 
 from api.models import User
 from api.utils import error_response
-from api.utils.jwt_utils import get_user_from_request
+from api.utils.auth import require_admin as _require_admin
 
 logger = logging.getLogger(__name__)
-
-
-def _require_admin(request):
-    """Verify the request comes from an admin user."""
-    admin_user = get_user_from_request(request)
-    if not admin_user or admin_user.role != 'admin':
-        return None, error_response('Unauthorized', status=401)
-    return admin_user, None
 
 
 @csrf_exempt
@@ -77,7 +69,4 @@ def reset_student_password(request, student_id):
         
     except Exception as error:
         logger.error(f'Error resetting password: {error}', exc_info=True)
-        return error_response(
-            str(error) if str(error) else 'Failed to reset password',
-            status=500
-        )
+        return error_response('Failed to reset password', status=500)

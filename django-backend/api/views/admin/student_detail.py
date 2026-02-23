@@ -19,17 +19,9 @@ import uuid
 
 from api.models import User
 from api.utils import success_response, error_response
-from api.utils.jwt_utils import get_user_from_request
+from api.utils.auth import require_admin as _require_admin
 
 logger = logging.getLogger(__name__)
-
-
-def _require_admin(request):
-    """Verify the request comes from an admin user."""
-    admin_user = get_user_from_request(request)
-    if not admin_user or admin_user.role != 'admin':
-        return None, error_response('Unauthorized', status=401)
-    return admin_user, None
 
 
 @csrf_exempt

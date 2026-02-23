@@ -10,17 +10,9 @@ import logging
 
 from api.models import Batch, User
 from api.utils import success_response, error_response
-from api.utils.jwt_utils import get_user_from_request
+from api.utils.auth import require_admin as _require_admin
 
 logger = logging.getLogger(__name__)
-
-
-def _require_admin(request):
-    """Verify the request comes from an admin user."""
-    admin_user = get_user_from_request(request)
-    if not admin_user or admin_user.role != 'admin':
-        return None, error_response('Unauthorized', status=401)
-    return admin_user, None
 
 
 @csrf_exempt
@@ -79,15 +71,21 @@ def toggle_batch_status(request, batch_id):
             logger.error('Database error: Batch not found')
             return error_response('Failed to update batch', status=400)
         
-        # CRITICAL: Update all students in this batch
-        # When batch is deleted (is_active=False), deactivate all student accounts
-        # When batch is restored (is_active=True), reactivate all student accounts
-        # This prevents deleted batch students from logging in
-        # All historical data (tests, scores, reports, assignments) is preserved
-        students_updated = User.objects.filter(
+        # Update non-deleted students in this batch.
+        # Deactivating: set all non-deleted students inactive.
+        # Restoring: only reactivate currently-inactive non-deleted students
+        # (avoids accidentally un-doing individually applied deactivations if
+        # we had a way to distinguish them — without a separate reason field
+        # we restore all non-deleted inactive students as best approximation).
+        # Deleted students (student_id starts with DELETED_) are never touched.
+        qs = User.objects.filter(
             batch_id=batch_id,
-            role='student'
-        ).update(is_active=is_active)
+            role='student',
+        ).exclude(student_id__startswith='DELETED_')
+        if is_active:
+            students_updated = qs.filter(is_active=False).update(is_active=True)
+        else:
+            students_updated = qs.update(is_active=False)
         
         logger.info(f'Updated {students_updated} student accounts to is_active={is_active}')
         
@@ -116,10 +114,7 @@ def toggle_batch_status(request, batch_id):
         
     except Exception as error:
         logger.error(f'Server error: {error}', exc_info=True)
-        return error_response(
-            str(error) if str(error) else 'Internal server error',
-            status=500
-        )
+        return error_response('Internal server error', status=500)
 
 
 @csrf_exempt
@@ -156,10 +151,7 @@ def hard_delete_batch(request, batch_id):
         
     except Exception as error:
         logger.error(f'Server error: {error}', exc_info=True)
-        return error_response(
-            str(error) if str(error) else 'Internal server error',
-            status=500
-        )
+        return error_response('Internal server error', status=500)
 
 
 @csrf_exempt

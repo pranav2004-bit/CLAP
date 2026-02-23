@@ -14,7 +14,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from api.models import AssessmentSubmission, AuditLog, SubmissionScore
-from api.utils.jwt_utils import get_user_from_request
+from api.utils.auth import require_admin as _require_admin
 
 from importlib.util import find_spec
 
@@ -36,13 +36,6 @@ TEMPLATE_CONFIG_DEFAULTS = {
     'show_logo': True,
     'layout': 'default',
 }
-
-
-def _require_admin(request):
-    user = get_user_from_request(request)
-    if not user or user.role != 'admin':
-        return None, JsonResponse({'error': 'Unauthorized'}, status=401)
-    return user, None
 
 
 def _parse_s3_report_location(report_url):
@@ -102,7 +95,7 @@ def _presigned_report_url(report_url):
         return client.generate_presigned_url(
             'get_object',
             Params={'Bucket': bucket, 'Key': key},
-            ExpiresIn=int(getattr(settings, 'S3_PRESIGNED_EXPIRY_SECONDS', 604800)),
+            ExpiresIn=int(getattr(settings, 'S3_PRESIGNED_URL_EXPIRY_SECONDS', 604800)),
         )
     except Exception:
         return report_url

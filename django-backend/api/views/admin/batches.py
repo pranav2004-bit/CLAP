@@ -13,17 +13,9 @@ import time
 
 from api.models import Batch, User
 from api.utils import success_response, error_response, bad_request_response
-from api.utils.jwt_utils import get_user_from_request
+from api.utils.auth import require_admin as _require_admin
 
 logger = logging.getLogger(__name__)
-
-
-def _require_admin(request):
-    """Verify the request comes from an admin user."""
-    admin_user = get_user_from_request(request)
-    if not admin_user or admin_user.role != 'admin':
-        return None, error_response('Unauthorized', status=401)
-    return admin_user, None
 
 
 @csrf_exempt
@@ -147,12 +139,19 @@ def create_batch(request):
                 existing_batch.end_year = end_year_int
                 existing_batch.save()
                 
-                # CRITICAL: Reactivate all students in this batch
-                # When batch is restored, all student accounts should be reactivated
-                # This allows students to login again
+                # Reactivate students in this batch that were inactive (due to batch deactivation).
+                # NOTE: Only restores students that are currently inactive and not deleted.
+                # Students individually disciplined (is_active=False manually) are also
+                # reactivated here because we have no separate "deactivation reason" field.
+                # Individually disciplined students should be manually re-deactivated afterward
+                # if needed. Deleted students (student_id starting with DELETED_) are never
+                # reactivated.
                 students_reactivated = User.objects.filter(
                     batch_id=existing_batch.id,
-                    role='student'
+                    role='student',
+                    is_active=False,
+                ).exclude(
+                    student_id__startswith='DELETED_',
                 ).update(is_active=True)
                 
                 logger.info(f'Reactivated {students_reactivated} student accounts')
@@ -209,7 +208,7 @@ def create_batch(request):
         
     except Exception as error:
         logger.error(f'Server error: {error}', exc_info=True)
-        return error_response(str(error) if str(error) else 'Internal server error', status=500)
+        return error_response('Internal server error', status=500)
 
 
 @csrf_exempt
