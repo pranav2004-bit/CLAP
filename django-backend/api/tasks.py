@@ -428,16 +428,18 @@ def generate_report(self, submission_id):
 
     try:
         start_ts = timezone.now()
-        submission = AssessmentSubmission.objects.select_related('assessment', 'user').get(id=submission_id)
 
-        if submission.report_url:
-            return {'status': 'skipped', 'task': 'generate_report', 'submission_id': submission_id, 'reason': 'report already exists'}
+        with transaction.atomic():
+            submission = AssessmentSubmission.objects.select_for_update().select_related('assessment', 'user').get(id=submission_id)
 
-        _transition_submission_status(
-            submission,
-            AssessmentSubmission.STATUS_REPORT_GENERATING,
-            expected_status=AssessmentSubmission.STATUS_LLM_COMPLETE,
-        )
+            if submission.report_url:
+                return {'status': 'skipped', 'task': 'generate_report', 'submission_id': submission_id, 'reason': 'report already exists'}
+
+            _transition_submission_status(
+                submission,
+                AssessmentSubmission.STATUS_REPORT_GENERATING,
+                expected_status=AssessmentSubmission.STATUS_LLM_COMPLETE,
+            )
 
         scores = list(SubmissionScore.objects.filter(submission=submission).order_by('domain'))
         if len(scores) < 5:

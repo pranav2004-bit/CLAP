@@ -36,7 +36,12 @@ import {
   Play,
   Square,
   Loader2,
-  Monitor
+  Monitor,
+  Mail,
+  Brain,
+  Activity,
+  BarChart,
+  FileCheck
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
@@ -44,11 +49,18 @@ import { toast } from 'sonner'
 import { BatchManagement } from '@/components/BatchManagement'
 import { EnhancedStudentManagement } from '@/components/EnhancedStudentManagement'
 import { EnhancedStudentManagementModal } from '@/components/EnhancedStudentManagementModal'
+import { SubmissionMonitor } from '@/components/admin/SubmissionMonitor'
+import { ScoreManagement } from '@/components/admin/ScoreManagement'
+import { LLMControls } from '@/components/admin/LLMControls'
+import { ReportManagement } from '@/components/admin/ReportManagement'
+import { EmailManagement } from '@/components/admin/EmailManagement'
+import { DLQManagement } from '@/components/admin/DLQManagement'
+import { AdminNotifications } from '@/components/admin/AdminNotifications'
 import { getApiUrl } from '@/lib/api-config'
 import { feedback } from '@/lib/user-feedback'
 
 export default function SimplifiedAdminDashboard() {
-  const [activeTab, setActiveTab] = useState<'overview' | 'students' | 'analytics' | 'batches' | 'clap-tests' | 'control-room'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'students' | 'analytics' | 'batches' | 'clap-tests' | 'control-room' | 'submissions' | 'scores' | 'llm' | 'reports' | 'emails' | 'dlq' | 'notifications'>('overview')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [controlRoomSubTab, setControlRoomSubTab] = useState<'wt' | 'st'>('wt')
   const [isAddStudentModalOpen, setIsAddStudentModalOpen] = useState(false)
@@ -712,6 +724,67 @@ export default function SimplifiedAdminDashboard() {
                 <Monitor className="w-5 h-5" />
                 Control Room
               </button>
+
+              {/* Phase 11 - Pipeline & Operations */}
+              <div className="pt-4 mt-4 border-t border-gray-200">
+                <p className="px-4 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Operations</p>
+
+                <button
+                  onClick={() => { setActiveTab('submissions'); setSidebarOpen(false); }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'submissions' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}`}
+                >
+                  <Activity className="w-5 h-5" />
+                  Submissions
+                </button>
+
+                <button
+                  onClick={() => { setActiveTab('scores'); setSidebarOpen(false); }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'scores' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}`}
+                >
+                  <BarChart className="w-5 h-5" />
+                  Scores
+                </button>
+
+                <button
+                  onClick={() => { setActiveTab('llm'); setSidebarOpen(false); }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'llm' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}`}
+                >
+                  <Brain className="w-5 h-5" />
+                  LLM Controls
+                </button>
+
+                <button
+                  onClick={() => { setActiveTab('reports'); setSidebarOpen(false); }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'reports' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}`}
+                >
+                  <FileCheck className="w-5 h-5" />
+                  Reports
+                </button>
+
+                <button
+                  onClick={() => { setActiveTab('emails'); setSidebarOpen(false); }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'emails' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}`}
+                >
+                  <Mail className="w-5 h-5" />
+                  Emails
+                </button>
+
+                <button
+                  onClick={() => { setActiveTab('dlq'); setSidebarOpen(false); }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'dlq' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}`}
+                >
+                  <AlertCircle className="w-5 h-5" />
+                  DLQ
+                </button>
+
+                <button
+                  onClick={() => { setActiveTab('notifications'); setSidebarOpen(false); }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'notifications' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}`}
+                >
+                  <Bell className="w-5 h-5" />
+                  Notifications
+                </button>
+              </div>
             </div>
           </nav>
 
@@ -1486,6 +1559,69 @@ export default function SimplifiedAdminDashboard() {
                     {controlRoomSubTab === 'wt' ? 'WT Control Panel' : 'ST Control Panel'} is under development.
                   </p>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* SUBMISSION PIPELINE MONITOR TAB */}
+          {activeTab === 'submissions' && (
+            <div className="bg-white p-0 border-b border-gray-200">
+              <div className="p-6">
+                <SubmissionMonitor />
+              </div>
+            </div>
+          )}
+
+          {/* SCORE MANAGEMENT TAB */}
+          {activeTab === 'scores' && (
+            <div className="bg-white p-0 border-b border-gray-200">
+              <div className="p-6">
+                <ScoreManagement />
+              </div>
+            </div>
+          )}
+
+          {/* LLM CONTROLS TAB */}
+          {activeTab === 'llm' && (
+            <div className="bg-white p-0 border-b border-gray-200">
+              <div className="p-6">
+                <LLMControls />
+              </div>
+            </div>
+          )}
+
+          {/* REPORT MANAGEMENT TAB */}
+          {activeTab === 'reports' && (
+            <div className="bg-white p-0 border-b border-gray-200">
+              <div className="p-6">
+                <ReportManagement />
+              </div>
+            </div>
+          )}
+
+          {/* EMAIL MANAGEMENT TAB */}
+          {activeTab === 'emails' && (
+            <div className="bg-white p-0 border-b border-gray-200">
+              <div className="p-6">
+                <EmailManagement />
+              </div>
+            </div>
+          )}
+
+          {/* DLQ MANAGEMENT TAB */}
+          {activeTab === 'dlq' && (
+            <div className="bg-white p-0 border-b border-gray-200">
+              <div className="p-6">
+                <DLQManagement />
+              </div>
+            </div>
+          )}
+
+          {/* ADMIN NOTIFICATIONS TAB */}
+          {activeTab === 'notifications' && (
+            <div className="bg-white p-0 border-b border-gray-200">
+              <div className="p-6">
+                <AdminNotifications />
               </div>
             </div>
           )}
