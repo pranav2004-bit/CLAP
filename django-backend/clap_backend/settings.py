@@ -40,12 +40,20 @@ MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'corsheaders.middleware.CorsMiddleware',
+    # A5/E1: IP-based rate limiting — placed early to reject abuse before view logic runs
+    'api.middleware.rate_limit.ApiRateLimitMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    # Phase 2.2: sets Cache-Control: no-store on all /api/* responses that have
+    # not already set a Cache-Control header in the view.  Positioned last so it
+    # runs first on the response path (innermost = processed immediately after view).
+    # Views that need a different policy (audio playback) set their own header and
+    # this middleware leaves them untouched.
+    'api.middleware.cache_headers.CacheControlMiddleware',
 ]
 
 ROOT_URLCONF = 'clap_backend.urls'
@@ -88,6 +96,9 @@ DATABASES = {
         'HOST': config('DB_HOST', default='localhost'),
         'PORT': config('DB_PORT', default='5432'),
         'CONN_MAX_AGE': config('DB_CONN_MAX_AGE', default=600, cast=int),
+        # B2: validate connection health before reuse (Django 4.1+)
+        # Prevents stale-connection errors after DB failover / network blip
+        'CONN_HEALTH_CHECKS': True,
         'OPTIONS': {
             'sslmode': config('DB_SSLMODE', default='require'),
             'connect_timeout': config('DB_CONNECT_TIMEOUT', default=10, cast=int),
@@ -98,6 +109,13 @@ DATABASES = {
 
 # Request body size limit (prevent memory exhaustion from large payloads)
 DATA_UPLOAD_MAX_MEMORY_SIZE = config('DATA_UPLOAD_MAX_MEMORY_SIZE', default=10 * 1024 * 1024, cast=int)  # 10 MB
+
+# A4: Always spool uploaded files to disk — prevents OOM when students upload
+# 10 MB audio recordings. TemporaryFileUploadHandler writes to disk immediately;
+# MemoryFileUploadHandler (Django default) holds entire upload in RAM.
+FILE_UPLOAD_HANDLERS = [
+    'django.core.files.uploadhandler.TemporaryFileUploadHandler',
+]
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
@@ -124,6 +142,15 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# Phase 2.2 — WhiteNoise static-asset caching
+# CompressedManifestStaticFilesStorage appends a content hash to every filename
+# (e.g. app.abc123.js), making URLs unique per content version — safe to cache
+# forever.  WHITENOISE_MAX_AGE sets the max-age in seconds for those hashed files.
+# Non-hashed files (if any) are served without a long max-age by WhiteNoise.
+WHITENOISE_MAX_AGE = 31_536_000  # 1 year in seconds — CDN + browser cache forever
+# Compress static files with Brotli and gzip (reduces transfer size ~70%).
+WHITENOISE_USE_FINDERS = False    # Only serve from STATIC_ROOT after collectstatic
 
 # Media files (uploaded content)
 MEDIA_ROOT = BASE_DIR / 'media'
@@ -224,7 +251,31 @@ REST_FRAMEWORK = {
         'rest_framework.parsers.MultiPartParser',
     ],
     'EXCEPTION_HANDLER': 'api.utils.custom_exception_handler',
+    # A5/E1: DRF-level throttle classes (applies to APIView-based endpoints)
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': config('DRF_THROTTLE_ANON', default='60/min'),
+        'user': config('DRF_THROTTLE_USER', default='300/min'),
+    },
 }
+
+# ── API Rate Limiting (middleware-level, applies to all function-based views) ─
+# A5/E1: brute-force / API-abuse protection
+# Controls ApiRateLimitMiddleware in api/middleware/rate_limit.py
+RATE_LIMIT_ENABLED         = config('RATE_LIMIT_ENABLED', default=True, cast=bool)
+RATE_LIMIT_ANON_PER_MINUTE = config('RATE_LIMIT_ANON_PER_MINUTE', default=60, cast=int)
+RATE_LIMIT_AUTH_PER_MINUTE = config('RATE_LIMIT_AUTH_PER_MINUTE', default=300, cast=int)
+
+# ── E2: x-user-id header trust ───────────────────────────────────────────────
+# When True (default), the x-user-id request header is trusted as a direct
+# user identity shortcut (matches current frontend behaviour).
+# WARNING: In production behind a reverse proxy (nginx/ALB), set this to False
+# and ensure the proxy STRIPS the x-user-id header from external requests.
+# When False, only JWT Bearer tokens are accepted for authentication.
+TRUST_X_USER_ID_HEADER = config('TRUST_X_USER_ID_HEADER', default=True, cast=bool)
 
 # JWT settings (architecture target: 15 minute access, 7 day refresh)
 JWT_ACCESS_TOKEN_MINUTES = config('JWT_ACCESS_TOKEN_MINUTES', default=15, cast=int)
@@ -255,24 +306,26 @@ OPENAI_API_KEY = _resolve_secret('OPENAI_API_KEY', default='')
 RESEND_API_KEY = _resolve_secret('RESEND_API_KEY', default='')
 FROM_EMAIL = config('FROM_EMAIL', default='noreply@clap-test.com')
 
-# Logging Configuration - Match Next.js console logging behavior
+# A6: Structured JSON logging — machine-parseable by CloudWatch, Datadog, etc.
+# Each log line is a JSON object with timestamp, level, logger, message fields.
+# Falls back to human-readable text in DEBUG mode for readability in dev.
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
     'formatters': {
-        'verbose': {
-            'format': '{levelname} {asctime} {module} {message}',
-            'style': '{',
+        'json': {
+            '()': 'clap_backend.json_formatter.JsonFormatter',
         },
-        'simple': {
-            'format': '{levelname} {message}',
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
             'style': '{',
         },
     },
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
-            'formatter': 'verbose',
+            # Use JSON in production, human-readable in dev (DEBUG=True)
+            'formatter': 'verbose' if DEBUG else 'json',
         },
     },
     'root': {
@@ -285,9 +338,19 @@ LOGGING = {
             'level': 'INFO',
             'propagate': False,
         },
+        'django.request': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
         'api': {
             'handlers': ['console'],
             'level': 'DEBUG' if DEBUG else 'INFO',
+            'propagate': False,
+        },
+        'celery': {
+            'handlers': ['console'],
+            'level': 'INFO',
             'propagate': False,
         },
     },
@@ -305,10 +368,14 @@ SESSION_COOKIE_SECURE = ENFORCE_TLS
 CSRF_COOKIE_SECURE = ENFORCE_TLS
 SECURE_HSTS_SECONDS = config('SECURE_HSTS_SECONDS', default=31536000 if ENFORCE_TLS else 0, cast=int)
 SECURE_HSTS_INCLUDE_SUBDOMAINS = config('SECURE_HSTS_INCLUDE_SUBDOMAINS', default=ENFORCE_TLS, cast=bool)
-SECURE_HSTS_PRELOAD = config('SECURE_HSTS_PRELOAD', default=False, cast=bool)
+# E3: enable HSTS preload when TLS is enforced (eliminates security.W021 warning)
+# CAUTION: once submitted to browser preload lists this cannot be undone for ~1 year.
+SECURE_HSTS_PRELOAD = config('SECURE_HSTS_PRELOAD', default=ENFORCE_TLS, cast=bool)
 SECURE_REFERRER_POLICY = config('SECURE_REFERRER_POLICY', default='strict-origin-when-cross-origin')
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_CROSS_ORIGIN_OPENER_POLICY = 'same-origin'
+# Deny framing of API responses (pure API — should never be iframed)
+X_FRAME_OPTIONS = 'DENY'
 
 # Custom settings matching Next.js behavior
 DEFAULT_PASSWORD = 'CLAP@123'  # Default password for new students
@@ -400,7 +467,11 @@ AWS_S3_ENDPOINT_URL = S3_ENDPOINT_URL or None
 AWS_S3_SIGNATURE_VERSION = S3_SIGNATURE_VERSION
 AWS_S3_ADDRESSING_STYLE = S3_ADDRESSING_STYLE
 AWS_QUERYSTRING_EXPIRE = S3_PRESIGNED_URL_EXPIRY_SECONDS
-AWS_DEFAULT_ACL = None
+# E3/E4: For AWS S3 explicitly enforce private ACL (defence-in-depth; bucket-level
+# public-access-block should ALSO be enabled, but per-object ACL is a second layer).
+# For Supabase Storage the ACL concept does not apply (bucket RLS controls access)
+# so we leave it as None to avoid sending an unsupported ACL header.
+AWS_DEFAULT_ACL = 'private' if STORAGE_PROVIDER == 'aws' else None
 AWS_S3_FILE_OVERWRITE = False
 
 if S3_BUCKET_NAME and STORAGE_PROVIDER in ('aws', 'supabase'):
@@ -452,6 +523,43 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': 900.0,
     },
 }
+
+# ── Application version ────────────────────────────────────────────────────────
+# Exposed by /api/health/ and included in Sentry release tag.
+APP_VERSION = config('APP_VERSION', default='')
+
+# ── CDN delivery (Phase 2.1 / 2.3) ────────────────────────────────────────────
+# CDN_ENABLED=False → all storage URLs returned unchanged (safe default).
+# Set CDN_ENABLED=True and CDN_BASE_URL once a CDN distribution is configured.
+CDN_ENABLED = config('CDN_ENABLED', default=False, cast=bool)
+CDN_BASE_URL = config('CDN_BASE_URL', default='').rstrip('/')
+
+# CDN_PROVIDER drives both URL rewriting (Phase 2.1) and signed URL generation
+# (Phase 2.3).  Supported values:
+#   'cloudfront' — AWS CloudFront signed URLs (RSA-SHA1 via botocore.signers)
+#   'generic'    — plain S3 presigned GET URL (no CDN layer signing)
+#   'cloudflare' — stub (not yet implemented; use 'generic' as fallback)
+#   'fastly'     — stub (not yet implemented; use 'generic' as fallback)
+CDN_PROVIDER = config('CDN_PROVIDER', default='generic')
+
+# Phase 2.3: when True, resolve_delivery_url() generates a cryptographically
+# signed URL instead of plain URL rewriting. Requires CDN_SIGNING_KEY_ID and
+# CDN_SIGNING_PRIVATE_KEY to be set for CDN_PROVIDER=cloudfront.
+CDN_SIGNED_URLS_ENABLED = config('CDN_SIGNED_URLS_ENABLED', default=False, cast=bool)
+
+# Phase 2.3 — CloudFront signing credentials
+# CDN_SIGNING_KEY_ID:      CloudFront Key Pair ID (from AWS Console →
+#                           CloudFront → Public keys → Key pairs)
+# CDN_SIGNING_PRIVATE_KEY: RSA-2048 private key, PEM format, base64-encoded.
+#                           Encode:  base64 -w0 private_key.pem
+#                           Decode:  base64 -d > private_key.pem
+CDN_SIGNING_KEY_ID = config('CDN_SIGNING_KEY_ID', default='')
+CDN_SIGNING_PRIVATE_KEY = _resolve_secret('CDN_SIGNING_PRIVATE_KEY', default='')
+
+# ── Sentry / Error tracking (D4) ──────────────────────────────────────────────
+# Set SENTRY_DSN in .env to activate. Safe no-op when DSN is absent.
+# sentry-sdk captures Django exceptions AND Celery task failures automatically.
+SENTRY_DSN = _resolve_secret('SENTRY_DSN', default='')
 
 
 # ── Startup validation ────────────────────────────────────────────────────────
@@ -523,3 +631,42 @@ def _validate_settings():
 
 
 _validate_settings()
+
+# ── Sentry SDK initialisation (D4/E5) ─────────────────────────────────────────
+# Initialised here (after settings are complete) so the DSN and release tag are
+# available.  Gunicorn loads this module once before fork — all workers inherit
+# the Sentry client.  Celery workers run their own Django setup and also reach
+# this block, so task-level errors are captured automatically.
+if SENTRY_DSN:
+    import sentry_sdk  # noqa: E402 — imported here to keep it optional
+    from sentry_sdk.integrations.django import DjangoIntegration
+    from sentry_sdk.integrations.celery import CeleryIntegration
+    from sentry_sdk.integrations.logging import LoggingIntegration
+    import logging as _log_sentry
+
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        integrations=[
+            DjangoIntegration(
+                transaction_style='url',    # group by URL pattern, not specific URLs
+                middleware_spans=True,
+                signals_spans=False,        # suppress low-value signal noise
+                cache_spans=False,
+            ),
+            CeleryIntegration(
+                monitor_beat_tasks=True,    # heartbeat for celery-beat via Crons
+                propagate_traces=True,      # link Celery task errors to parent trace
+            ),
+            LoggingIntegration(
+                level=_log_sentry.WARNING,        # WARNING+ captured as breadcrumbs
+                event_level=_log_sentry.ERROR,    # ERROR+ sent as Sentry events
+            ),
+        ],
+        release=APP_VERSION or None,
+        environment='production' if not DEBUG else 'development',
+        # Performance monitoring: 5 % sample rate — increase gradually in prod.
+        traces_sample_rate=config('SENTRY_TRACES_SAMPLE_RATE', default=0.05, cast=float),
+        # Never include request body or user PII in Sentry events.
+        send_default_pii=False,
+        attach_stacktrace=True,
+    )

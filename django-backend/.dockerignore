@@ -1,0 +1,58 @@
+# ── Python cache ─────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.so
+
+# ── Virtual environments ──────────────────────────────────────────
+venv/
+.venv/
+env/
+.env/
+ENV/
+
+# ── Django runtime artifacts ──────────────────────────────────────
+*.log
+*.pot
+db.sqlite3
+media/
+staticfiles/
+
+# ── Secrets — NEVER include in image ─────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Git / CI ──────────────────────────────────────────────────────
+.git/
+.gitignore
+.github/
+
+# ── Tests & QA ───────────────────────────────────────────────────
+tests/
+*.test.py
+coverage/
+.coverage
+htmlcov/
+*.xml
+
+# ── Documentation (not needed at runtime) ────────────────────────
+*.md
+docs/
+
+# ── OS artifacts ─────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# ── IDE configs ───────────────────────────────────────────────────
+.vscode/
+.idea/
+*.iml
+
+# ── Node (shouldn't exist here, but safety net) ───────────────────
+node_modules/

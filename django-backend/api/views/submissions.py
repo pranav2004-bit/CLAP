@@ -15,6 +15,7 @@ from api.serializers import SubmissionCreateSerializer, SubmissionStatusSerializ
 from api.utils.jwt_utils import get_user_from_request
 from api.utils.metrics import submissions_total
 from api.utils.observability import log_event
+from api.utils.cdn import resolve_delivery_url
 
 if find_spec('redis') is not None:
     import redis
@@ -165,11 +166,13 @@ def _report_download_url(submission):
             aws_access_key_id=getattr(settings, 'S3_ACCESS_KEY_ID', None) or None,
             aws_secret_access_key=getattr(settings, 'S3_SECRET_ACCESS_KEY', None) or None,
         )
-        return client.generate_presigned_url(
+        # Phase 2.1: wrap through CDN resolver — no-op when CDN_ENABLED=False.
+        raw = client.generate_presigned_url(
             'get_object',
             Params={'Bucket': bucket, 'Key': key},
             ExpiresIn=expiry,
         )
+        return resolve_delivery_url(raw, url_type='download')
     except Exception:
         logger.exception('Failed generating presigned report URL for submission %s', submission.id)
         return raw_url
@@ -318,7 +321,15 @@ def submission_history(request):
     if not user:
         return JsonResponse({'error': 'Unauthorized'}, status=401)
 
-    qs = AssessmentSubmission.objects.select_related('assessment').filter(user_id=user.id).order_by('-created_at')
+    # A3: prefetch_related('scores') eliminates the N+1 query that previously
+    # fired 1 + (50×2) = 101 DB queries for a 50-row history page.
+    qs = (
+        AssessmentSubmission.objects
+        .select_related('assessment')
+        .prefetch_related('scores')
+        .filter(user_id=user.id)
+        .order_by('-created_at')
+    )
 
     assessment_id = request.GET.get('assessment_id')
     if assessment_id:
@@ -326,10 +337,10 @@ def submission_history(request):
 
     rows = []
     for sub in qs[:50]:
-        domain_scores = SubmissionScore.objects.filter(submission=sub)
+        scores_list = list(sub.scores.all())   # uses prefetch cache — no extra DB hit
         overall_score = None
-        if domain_scores.exists():
-            vals = [float(s.score) for s in domain_scores]
+        if scores_list:
+            vals = [float(s.score) for s in scores_list]
             overall_score = round(sum(vals) / len(vals), 2)
 
         rows.append({

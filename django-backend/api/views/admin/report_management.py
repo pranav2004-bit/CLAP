@@ -15,6 +15,7 @@ from django.views.decorators.http import require_http_methods
 
 from api.models import AssessmentSubmission, AuditLog, SubmissionScore
 from api.utils.auth import require_admin as _require_admin
+from api.utils.cdn import resolve_delivery_url
 
 from importlib.util import find_spec
 
@@ -92,11 +93,13 @@ def _presigned_report_url(report_url):
         return report_url
 
     try:
-        return client.generate_presigned_url(
+        # Phase 2.1: wrap through CDN resolver — no-op when CDN_ENABLED=False.
+        raw = client.generate_presigned_url(
             'get_object',
             Params={'Bucket': bucket, 'Key': key},
             ExpiresIn=int(getattr(settings, 'S3_PRESIGNED_URL_EXPIRY_SECONDS', 604800)),
         )
+        return resolve_delivery_url(raw, url_type='download')
     except Exception:
         return report_url
 
