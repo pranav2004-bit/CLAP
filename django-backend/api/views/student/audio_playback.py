@@ -71,17 +71,45 @@ def retrieve_audio_file(request, item_id):
         # No response yet, playback allowed
         pass
 
-    # Serve file
+    # Serve file — route based on storage backend
+    if admin_audio.file_path.startswith('s3://'):
+        # A1/A2: S3-backed audio — generate a short-lived presigned URL and
+        # redirect.  The browser/audio element follows the 302 automatically,
+        # and bytes never pass through Django (no memory pressure, no FD leak).
+        from api.utils.storage import get_s3_client
+        from django.http import HttpResponseRedirect
+        client = get_s3_client()
+        if not client:
+            return JsonResponse({'error': 'S3 client not configured'}, status=503)
+        try:
+            without_scheme = admin_audio.file_path[len('s3://'):]
+            bucket, _, key = without_scheme.partition('/')
+            presigned_url = client.generate_presigned_url(
+                ClientMethod='get_object',
+                Params={'Bucket': bucket, 'Key': key},
+                ExpiresIn=900,  # 15 minutes — covers one test session
+            )
+            return HttpResponseRedirect(presigned_url)
+        except Exception as exc:
+            return JsonResponse({'error': f'Failed to generate audio URL: {exc}'}, status=500)
+
+    # Local filesystem audio
+    # A2: explicit file handle management — close on exception to prevent FD leak
     file_path = os.path.join(settings.MEDIA_ROOT, admin_audio.file_path)
     if not os.path.exists(file_path):
         return JsonResponse({'error': 'Audio file not found on server'}, status=404)
 
+    fh = None
     try:
-        response = FileResponse(open(file_path, 'rb'), content_type=admin_audio.mime_type)
+        fh = open(file_path, 'rb')
+        response = FileResponse(fh, content_type=admin_audio.mime_type)
         response['Content-Disposition'] = 'inline'
+        # Django closes fh when streaming is complete; we hand ownership to FileResponse
         return response
-    except Exception as e:
-        return JsonResponse({'error': f'Failed to serve file: {str(e)}'}, status=500)
+    except Exception as exc:
+        if fh is not None:
+            fh.close()  # Close explicitly so FD is not leaked on error path
+        return JsonResponse({'error': f'Failed to serve file: {exc}'}, status=500)
 
 
 @csrf_exempt

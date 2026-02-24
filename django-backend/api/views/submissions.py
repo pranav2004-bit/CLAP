@@ -318,7 +318,15 @@ def submission_history(request):
     if not user:
         return JsonResponse({'error': 'Unauthorized'}, status=401)
 
-    qs = AssessmentSubmission.objects.select_related('assessment').filter(user_id=user.id).order_by('-created_at')
+    # A3: prefetch_related('scores') eliminates the N+1 query that previously
+    # fired 1 + (50×2) = 101 DB queries for a 50-row history page.
+    qs = (
+        AssessmentSubmission.objects
+        .select_related('assessment')
+        .prefetch_related('scores')
+        .filter(user_id=user.id)
+        .order_by('-created_at')
+    )
 
     assessment_id = request.GET.get('assessment_id')
     if assessment_id:
@@ -326,10 +334,10 @@ def submission_history(request):
 
     rows = []
     for sub in qs[:50]:
-        domain_scores = SubmissionScore.objects.filter(submission=sub)
+        scores_list = list(sub.scores.all())   # uses prefetch cache — no extra DB hit
         overall_score = None
-        if domain_scores.exists():
-            vals = [float(s.score) for s in domain_scores]
+        if scores_list:
+            vals = [float(s.score) for s in scores_list]
             overall_score = round(sum(vals) / len(vals), 2)
 
         rows.append({

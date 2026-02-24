@@ -428,29 +428,39 @@ def evaluate_speaking(self, submission_id):
         transcript = (audio.transcription or '').strip() if audio else ''
         if audio and not transcript:
             try:
+                import tempfile
                 from api.utils.openai_client import transcribe_audio
-                if audio.file_path and audio.file_path.startswith('s3://') and _boto3:
-                    # S3-backed audio: download bytes then transcribe
-                    parts = audio.file_path[5:].split('/', 1)
-                    if len(parts) == 2:
-                        s3_bucket, s3_key = parts
-                        s3_client = _boto3.client(
-                            's3',
-                            endpoint_url=getattr(settings, 'S3_ENDPOINT_URL', None) or None,
-                            region_name=getattr(settings, 'S3_REGION_NAME', None) or None,
-                            aws_access_key_id=getattr(settings, 'S3_ACCESS_KEY_ID', None) or None,
-                            aws_secret_access_key=getattr(settings, 'S3_SECRET_ACCESS_KEY', None) or None,
-                        )
-                        obj = s3_client.get_object(Bucket=s3_bucket, Key=s3_key)
-                        audio_bytes = obj['Body'].read()
-                        import io
-                        audio_file_obj = (f'audio.{audio.file_path.rsplit(".", 1)[-1]}', audio_bytes, audio.mime_type or 'audio/webm')
-                        transcript = transcribe_audio(audio_file_obj, mime_type=audio.mime_type or 'audio/webm') or ''
+                from api.utils.storage import get_s3_client as _get_s3_client
+
+                if audio.file_path and audio.file_path.startswith('s3://'):
+                    # C1: Stream S3 audio to a SpooledTemporaryFile instead of
+                    # loading the entire file into a Python bytestring.
+                    # SpooledTemporaryFile holds bytes in RAM up to max_size (5 MB)
+                    # then spills to a temp file on disk — prevents OOM on 10 MB files.
+                    s3_client = _get_s3_client()
+                    if s3_client:
+                        without_scheme = audio.file_path[len('s3://'):]
+                        s3_bucket, _, s3_key = without_scheme.partition('/')
+                        ext = audio.file_path.rsplit('.', 1)[-1]
+                        with tempfile.SpooledTemporaryFile(
+                            max_size=5 * 1024 * 1024,  # spill to disk above 5 MB
+                            suffix=f'.{ext}',
+                        ) as tmp:
+                            s3_client.download_fileobj(s3_bucket, s3_key, tmp)
+                            tmp.seek(0)
+                            # Whisper API expects (filename, bytes, content_type)
+                            audio_file_obj = (
+                                f'audio.{ext}',
+                                tmp.read(),
+                                audio.mime_type or 'audio/webm',
+                            )
+                            transcript = transcribe_audio(
+                                audio_file_obj, mime_type=audio.mime_type or 'audio/webm'
+                            ) or ''
+                        # SpooledTemporaryFile auto-deleted on context manager exit
                 elif audio.file_path:
-                    # Local filesystem audio
-                    from django.conf import settings as dj_settings
-                    import io
-                    full_path = os.path.join(dj_settings.MEDIA_ROOT, audio.file_path)
+                    # Local filesystem audio — open with context manager (no FD leak)
+                    full_path = os.path.join(settings.MEDIA_ROOT, audio.file_path)
                     if os.path.exists(full_path):
                         with open(full_path, 'rb') as f:
                             transcript = transcribe_audio(f, mime_type=audio.mime_type or 'audio/webm') or ''
@@ -510,39 +520,56 @@ def generate_report(self, submission_id):
         timestamp = timezone.now().strftime('%Y%m%d%H%M%S')
         report_relpath = f'reports/{submission.id}/{timestamp}.pdf'
 
-        try:
-            from weasyprint import HTML
-            pdf_bytes = HTML(string=html).write_pdf()
-        except Exception:
-            pdf_bytes = html.encode('utf-8')
+        # C2: Write PDF to a temp file instead of holding bytes in memory.
+        # WeasyPrint.write_pdf(target=path) writes directly to disk — the Python
+        # process never holds the entire PDF as a bytestring.  For S3 uploads
+        # we stream from the temp file with upload_fileobj (chunked transfer).
+        import tempfile
+        from api.utils.storage import get_s3_client as _get_s3_client
 
-        report_url = None
+        tmp_pdf_fd, tmp_pdf_path = tempfile.mkstemp(suffix='.pdf')
+        os.close(tmp_pdf_fd)  # close the raw FD; we'll re-open via context manager
         try:
-            if _boto3 is not None and getattr(settings, 'S3_BUCKET_NAME', ''):
-                client = _boto3.client(
-                    's3',
-                    endpoint_url=getattr(settings, 'S3_ENDPOINT_URL', None) or None,
-                    region_name=getattr(settings, 'S3_REGION_NAME', None) or None,
-                    aws_access_key_id=getattr(settings, 'S3_ACCESS_KEY_ID', None) or None,
-                    aws_secret_access_key=getattr(settings, 'S3_SECRET_ACCESS_KEY', None) or None,
-                )
-                client.put_object(
-                    Bucket=settings.S3_BUCKET_NAME,
-                    Key=report_relpath,
-                    Body=pdf_bytes,
-                    ContentType='application/pdf',
-                )
-                report_url = f's3://{settings.S3_BUCKET_NAME}/{report_relpath}'
-        except Exception:
+            try:
+                from weasyprint import HTML
+                HTML(string=html).write_pdf(target=tmp_pdf_path)
+            except Exception:
+                # Fallback: write HTML bytes (PDF unavailable)
+                with open(tmp_pdf_path, 'wb') as f:
+                    f.write(html.encode('utf-8'))
+
             report_url = None
+            s3_client = _get_s3_client()
+            bucket = getattr(settings, 'S3_BUCKET_NAME', '') or ''
+            if s3_client and bucket:
+                try:
+                    with open(tmp_pdf_path, 'rb') as pdf_fp:
+                        s3_client.upload_fileobj(
+                            pdf_fp,
+                            bucket,
+                            report_relpath,
+                            ExtraArgs={
+                                'ContentType': 'application/pdf',
+                                'ServerSideEncryption': 'AES256',
+                            },
+                        )
+                    report_url = f's3://{bucket}/{report_relpath}'
+                except Exception as s3_err:
+                    log_event('warning', 'report_s3_upload_failed',
+                              submission_id=str(submission_id), error=str(s3_err))
+                    report_url = None
 
-        if not report_url:
-            from django.conf import settings as dj_settings
-            full_path = os.path.join(dj_settings.MEDIA_ROOT, report_relpath)
-            os.makedirs(os.path.dirname(full_path), exist_ok=True)
-            with open(full_path, 'wb') as f:
-                f.write(pdf_bytes)
-            report_url = f"{dj_settings.MEDIA_URL.rstrip('/')}/{report_relpath}"
+            if not report_url:
+                # Local fallback — move temp file to MEDIA_ROOT
+                full_path = os.path.join(settings.MEDIA_ROOT, report_relpath)
+                os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                import shutil
+                shutil.move(tmp_pdf_path, full_path)
+                report_url = f"{settings.MEDIA_URL.rstrip('/')}/{report_relpath}"
+        finally:
+            # Always clean up temp file (shutil.move removes it, but guard any other path)
+            if os.path.exists(tmp_pdf_path):
+                os.unlink(tmp_pdf_path)
 
         AssessmentSubmission.objects.filter(id=submission.id).update(
             report_url=report_url,
