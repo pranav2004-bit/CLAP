@@ -528,14 +528,33 @@ CELERY_BEAT_SCHEDULE = {
 # Exposed by /api/health/ and included in Sentry release tag.
 APP_VERSION = config('APP_VERSION', default='')
 
-# ── CDN delivery (Phase 2.1) ───────────────────────────────────────────────────
+# ── CDN delivery (Phase 2.1 / 2.3) ────────────────────────────────────────────
 # CDN_ENABLED=False → all storage URLs returned unchanged (safe default).
 # Set CDN_ENABLED=True and CDN_BASE_URL once a CDN distribution is configured.
-# CDN_PROVIDER is informational only (used for Phase 2.3 signed URL dispatch).
 CDN_ENABLED = config('CDN_ENABLED', default=False, cast=bool)
 CDN_BASE_URL = config('CDN_BASE_URL', default='').rstrip('/')
-CDN_PROVIDER = config('CDN_PROVIDER', default='generic')   # cloudfront | cloudflare | fastly | generic
+
+# CDN_PROVIDER drives both URL rewriting (Phase 2.1) and signed URL generation
+# (Phase 2.3).  Supported values:
+#   'cloudfront' — AWS CloudFront signed URLs (RSA-SHA1 via botocore.signers)
+#   'generic'    — plain S3 presigned GET URL (no CDN layer signing)
+#   'cloudflare' — stub (not yet implemented; use 'generic' as fallback)
+#   'fastly'     — stub (not yet implemented; use 'generic' as fallback)
+CDN_PROVIDER = config('CDN_PROVIDER', default='generic')
+
+# Phase 2.3: when True, resolve_delivery_url() generates a cryptographically
+# signed URL instead of plain URL rewriting. Requires CDN_SIGNING_KEY_ID and
+# CDN_SIGNING_PRIVATE_KEY to be set for CDN_PROVIDER=cloudfront.
 CDN_SIGNED_URLS_ENABLED = config('CDN_SIGNED_URLS_ENABLED', default=False, cast=bool)
+
+# Phase 2.3 — CloudFront signing credentials
+# CDN_SIGNING_KEY_ID:      CloudFront Key Pair ID (from AWS Console →
+#                           CloudFront → Public keys → Key pairs)
+# CDN_SIGNING_PRIVATE_KEY: RSA-2048 private key, PEM format, base64-encoded.
+#                           Encode:  base64 -w0 private_key.pem
+#                           Decode:  base64 -d > private_key.pem
+CDN_SIGNING_KEY_ID = config('CDN_SIGNING_KEY_ID', default='')
+CDN_SIGNING_PRIVATE_KEY = _resolve_secret('CDN_SIGNING_PRIVATE_KEY', default='')
 
 # ── Sentry / Error tracking (D4) ──────────────────────────────────────────────
 # Set SENTRY_DSN in .env to activate. Safe no-op when DSN is absent.
