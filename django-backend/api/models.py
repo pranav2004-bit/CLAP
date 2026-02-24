@@ -364,12 +364,9 @@ class StudentAudioResponse(models.Model):
         return f"/api/student/audio-responses/{self.id}/file"
 
     def delete_file(self):
-        """Delete physical file from filesystem"""
-        import os
-        from django.conf import settings
-        full_path = os.path.join(settings.MEDIA_ROOT, self.file_path)
-        if os.path.exists(full_path):
-            os.remove(full_path)
+        """Delete physical file from S3 or local filesystem."""
+        from api.utils.storage import delete_from_storage
+        delete_from_storage(self.file_path)
 
 
 class AdminAudioFile(models.Model):
@@ -389,7 +386,7 @@ class AdminAudioFile(models.Model):
     uploaded_by = models.UUIDField(db_column='uploaded_by', null=True)
 
     # Audio file metadata
-    file_path = models.CharField(max_length=500)  # Relative to MEDIA_ROOT
+    file_path = models.CharField(max_length=500)  # 's3://bucket/key' or local path relative to MEDIA_ROOT
     file_size = models.IntegerField()  # Bytes
     mime_type = models.CharField(max_length=50)  # audio/mpeg, audio/wav, etc.
     duration_seconds = models.DecimalField(max_digits=6, decimal_places=2, null=True)
@@ -411,12 +408,9 @@ class AdminAudioFile(models.Model):
         return f"/api/student/clap-items/{self.item_id}/audio"
 
     def delete_file(self):
-        """Delete physical file from filesystem"""
-        import os
-        from django.conf import settings
-        full_path = os.path.join(settings.MEDIA_ROOT, self.file_path)
-        if os.path.exists(full_path):
-            os.remove(full_path)
+        """Delete physical file from S3 or local filesystem."""
+        from api.utils.storage import delete_from_storage
+        delete_from_storage(self.file_path)
 
 
 class AssessmentSubmission(models.Model):
