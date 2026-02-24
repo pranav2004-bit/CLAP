@@ -35,3 +35,10 @@ celery==5.4.0
 redis==5.0.8
 boto3==1.35.24
 django-storages==1.14.4
+
+# PDF generation (report worker)
+weasyprint==62.3
+
+# Error tracking / observability (D4/E5)
+# Set SENTRY_DSN in .env to activate; safe no-op if DSN is absent.
+sentry-sdk[django,celery]==2.19.2

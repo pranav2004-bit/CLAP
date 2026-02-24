@@ -353,10 +353,14 @@ SESSION_COOKIE_SECURE = ENFORCE_TLS
 CSRF_COOKIE_SECURE = ENFORCE_TLS
 SECURE_HSTS_SECONDS = config('SECURE_HSTS_SECONDS', default=31536000 if ENFORCE_TLS else 0, cast=int)
 SECURE_HSTS_INCLUDE_SUBDOMAINS = config('SECURE_HSTS_INCLUDE_SUBDOMAINS', default=ENFORCE_TLS, cast=bool)
-SECURE_HSTS_PRELOAD = config('SECURE_HSTS_PRELOAD', default=False, cast=bool)
+# E3: enable HSTS preload when TLS is enforced (eliminates security.W021 warning)
+# CAUTION: once submitted to browser preload lists this cannot be undone for ~1 year.
+SECURE_HSTS_PRELOAD = config('SECURE_HSTS_PRELOAD', default=ENFORCE_TLS, cast=bool)
 SECURE_REFERRER_POLICY = config('SECURE_REFERRER_POLICY', default='strict-origin-when-cross-origin')
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_CROSS_ORIGIN_OPENER_POLICY = 'same-origin'
+# Deny framing of API responses (pure API — should never be iframed)
+X_FRAME_OPTIONS = 'DENY'
 
 # Custom settings matching Next.js behavior
 DEFAULT_PASSWORD = 'CLAP@123'  # Default password for new students
@@ -448,7 +452,11 @@ AWS_S3_ENDPOINT_URL = S3_ENDPOINT_URL or None
 AWS_S3_SIGNATURE_VERSION = S3_SIGNATURE_VERSION
 AWS_S3_ADDRESSING_STYLE = S3_ADDRESSING_STYLE
 AWS_QUERYSTRING_EXPIRE = S3_PRESIGNED_URL_EXPIRY_SECONDS
-AWS_DEFAULT_ACL = None
+# E3/E4: For AWS S3 explicitly enforce private ACL (defence-in-depth; bucket-level
+# public-access-block should ALSO be enabled, but per-object ACL is a second layer).
+# For Supabase Storage the ACL concept does not apply (bucket RLS controls access)
+# so we leave it as None to avoid sending an unsupported ACL header.
+AWS_DEFAULT_ACL = 'private' if STORAGE_PROVIDER == 'aws' else None
 AWS_S3_FILE_OVERWRITE = False
 
 if S3_BUCKET_NAME and STORAGE_PROVIDER in ('aws', 'supabase'):
@@ -500,6 +508,24 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': 900.0,
     },
 }
+
+# ── Application version ────────────────────────────────────────────────────────
+# Exposed by /api/health/ and included in Sentry release tag.
+APP_VERSION = config('APP_VERSION', default='')
+
+# ── CDN delivery (Phase 2.1) ───────────────────────────────────────────────────
+# CDN_ENABLED=False → all storage URLs returned unchanged (safe default).
+# Set CDN_ENABLED=True and CDN_BASE_URL once a CDN distribution is configured.
+# CDN_PROVIDER is informational only (used for Phase 2.3 signed URL dispatch).
+CDN_ENABLED = config('CDN_ENABLED', default=False, cast=bool)
+CDN_BASE_URL = config('CDN_BASE_URL', default='').rstrip('/')
+CDN_PROVIDER = config('CDN_PROVIDER', default='generic')   # cloudfront | cloudflare | fastly | generic
+CDN_SIGNED_URLS_ENABLED = config('CDN_SIGNED_URLS_ENABLED', default=False, cast=bool)
+
+# ── Sentry / Error tracking (D4) ──────────────────────────────────────────────
+# Set SENTRY_DSN in .env to activate. Safe no-op when DSN is absent.
+# sentry-sdk captures Django exceptions AND Celery task failures automatically.
+SENTRY_DSN = _resolve_secret('SENTRY_DSN', default='')
 
 
 # ── Startup validation ────────────────────────────────────────────────────────
@@ -571,3 +597,42 @@ def _validate_settings():
 
 
 _validate_settings()
+
+# ── Sentry SDK initialisation (D4/E5) ─────────────────────────────────────────
+# Initialised here (after settings are complete) so the DSN and release tag are
+# available.  Gunicorn loads this module once before fork — all workers inherit
+# the Sentry client.  Celery workers run their own Django setup and also reach
+# this block, so task-level errors are captured automatically.
+if SENTRY_DSN:
+    import sentry_sdk  # noqa: E402 — imported here to keep it optional
+    from sentry_sdk.integrations.django import DjangoIntegration
+    from sentry_sdk.integrations.celery import CeleryIntegration
+    from sentry_sdk.integrations.logging import LoggingIntegration
+    import logging as _log_sentry
+
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        integrations=[
+            DjangoIntegration(
+                transaction_style='url',    # group by URL pattern, not specific URLs
+                middleware_spans=True,
+                signals_spans=False,        # suppress low-value signal noise
+                cache_spans=False,
+            ),
+            CeleryIntegration(
+                monitor_beat_tasks=True,    # heartbeat for celery-beat via Crons
+                propagate_traces=True,      # link Celery task errors to parent trace
+            ),
+            LoggingIntegration(
+                level=_log_sentry.WARNING,        # WARNING+ captured as breadcrumbs
+                event_level=_log_sentry.ERROR,    # ERROR+ sent as Sentry events
+            ),
+        ],
+        release=APP_VERSION or None,
+        environment='production' if not DEBUG else 'development',
+        # Performance monitoring: 5 % sample rate — increase gradually in prod.
+        traces_sample_rate=config('SENTRY_TRACES_SAMPLE_RATE', default=0.05, cast=float),
+        # Never include request body or user PII in Sentry events.
+        send_default_pii=False,
+        attach_stacktrace=True,
+    )
