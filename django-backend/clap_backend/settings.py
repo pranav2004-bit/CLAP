@@ -90,6 +90,9 @@ DATABASES = {
         'HOST': config('DB_HOST', default='localhost'),
         'PORT': config('DB_PORT', default='5432'),
         'CONN_MAX_AGE': config('DB_CONN_MAX_AGE', default=600, cast=int),
+        # B2: validate connection health before reuse (Django 4.1+)
+        # Prevents stale-connection errors after DB failover / network blip
+        'CONN_HEALTH_CHECKS': True,
         'OPTIONS': {
             'sslmode': config('DB_SSLMODE', default='require'),
             'connect_timeout': config('DB_CONNECT_TIMEOUT', default=10, cast=int),
@@ -100,6 +103,13 @@ DATABASES = {
 
 # Request body size limit (prevent memory exhaustion from large payloads)
 DATA_UPLOAD_MAX_MEMORY_SIZE = config('DATA_UPLOAD_MAX_MEMORY_SIZE', default=10 * 1024 * 1024, cast=int)  # 10 MB
+
+# A4: Always spool uploaded files to disk — prevents OOM when students upload
+# 10 MB audio recordings. TemporaryFileUploadHandler writes to disk immediately;
+# MemoryFileUploadHandler (Django default) holds entire upload in RAM.
+FILE_UPLOAD_HANDLERS = [
+    'django.core.files.uploadhandler.TemporaryFileUploadHandler',
+]
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
@@ -281,24 +291,26 @@ OPENAI_API_KEY = _resolve_secret('OPENAI_API_KEY', default='')
 RESEND_API_KEY = _resolve_secret('RESEND_API_KEY', default='')
 FROM_EMAIL = config('FROM_EMAIL', default='noreply@clap-test.com')
 
-# Logging Configuration - Match Next.js console logging behavior
+# A6: Structured JSON logging — machine-parseable by CloudWatch, Datadog, etc.
+# Each log line is a JSON object with timestamp, level, logger, message fields.
+# Falls back to human-readable text in DEBUG mode for readability in dev.
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
     'formatters': {
-        'verbose': {
-            'format': '{levelname} {asctime} {module} {message}',
-            'style': '{',
+        'json': {
+            '()': 'clap_backend.json_formatter.JsonFormatter',
         },
-        'simple': {
-            'format': '{levelname} {message}',
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
             'style': '{',
         },
     },
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
-            'formatter': 'verbose',
+            # Use JSON in production, human-readable in dev (DEBUG=True)
+            'formatter': 'verbose' if DEBUG else 'json',
         },
     },
     'root': {
@@ -311,9 +323,19 @@ LOGGING = {
             'level': 'INFO',
             'propagate': False,
         },
+        'django.request': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
         'api': {
             'handlers': ['console'],
             'level': 'DEBUG' if DEBUG else 'INFO',
+            'propagate': False,
+        },
+        'celery': {
+            'handlers': ['console'],
+            'level': 'INFO',
             'propagate': False,
         },
     },

@@ -10,6 +10,7 @@ from urllib import request as urlrequest
 from urllib.parse import urlparse
 
 from celery import shared_task
+from celery.exceptions import SoftTimeLimitExceeded
 from django.conf import settings
 from django.db import transaction, connection
 from django.db.models import F, Sum
@@ -402,6 +403,12 @@ def evaluate_writing(self, submission_id):
         _persist_llm_score(submission, 'writing', payload)
         _try_mark_llm_complete(submission)
         return {'status': 'ok', 'task': 'evaluate_writing', 'submission_id': submission_id}
+    except SoftTimeLimitExceeded:
+        # C4: handle before the hard kill so DLQ is recorded and DB connection cleaned up
+        log_event('error', 'evaluate_writing_soft_time_limit', submission_id=str(submission_id))
+        _record_dlq('evaluate_writing', submission_id, {'submission_id': str(submission_id)},
+                    RuntimeError('SoftTimeLimitExceeded'), self.request.retries)
+        raise
     except Exception as exc:
         if self.request.retries >= self.max_retries:
             _record_dlq('evaluate_writing', submission_id, {'submission_id': str(submission_id)}, exc, self.request.retries)
@@ -479,6 +486,12 @@ def evaluate_speaking(self, submission_id):
         _try_mark_llm_complete(submission)
 
         return {'status': 'ok', 'task': 'evaluate_speaking', 'submission_id': submission_id}
+    except SoftTimeLimitExceeded:
+        # C4: handle before the hard kill so DLQ is recorded and DB connection cleaned up
+        log_event('error', 'evaluate_speaking_soft_time_limit', submission_id=str(submission_id))
+        _record_dlq('evaluate_speaking', submission_id, {'submission_id': str(submission_id)},
+                    RuntimeError('SoftTimeLimitExceeded'), self.request.retries)
+        raise
     except Exception as exc:
         if self.request.retries >= self.max_retries:
             _record_dlq('evaluate_speaking', submission_id, {'submission_id': str(submission_id)}, exc, self.request.retries)
@@ -487,7 +500,9 @@ def evaluate_speaking(self, submission_id):
         connection.close()
 
 
-@shared_task(bind=True, max_retries=3, autoretry_for=(Exception,), retry_backoff=False, default_retry_delay=30, acks_late=True, reject_on_worker_lost=True, time_limit=300, soft_time_limit=270)
+# C3: retry_backoff=True + jitter prevents thundering herd on PDF generation
+# failures (e.g., WeasyPrint OOM, S3 transient error, DB contention).
+@shared_task(bind=True, max_retries=3, autoretry_for=(Exception,), retry_backoff=True, retry_backoff_max=300, retry_jitter=True, acks_late=True, reject_on_worker_lost=True, time_limit=300, soft_time_limit=270)
 def generate_report(self, submission_id):
     if _task_already_processed(self.request.id):
         return {'status': 'skipped', 'reason': 'task already processed', 'task_id': self.request.id}
@@ -585,6 +600,13 @@ def generate_report(self, submission_id):
         report_generation_duration.observe(duration)
         log_event('info', 'report_generated', submission_id=str(submission_id), duration_seconds=duration, report_url=report_url)
         return {'status': 'ok', 'task': 'generate_report', 'submission_id': submission_id, 'report_url': report_url}
+    except SoftTimeLimitExceeded:
+        # C4: handle soft time limit explicitly so DLQ is recorded and DB connection
+        # is cleaned up before the hard kill signal arrives (time_limit=300).
+        log_event('error', 'generate_report_soft_time_limit', submission_id=str(submission_id))
+        _record_dlq('generate_report', submission_id, {'submission_id': str(submission_id)},
+                    RuntimeError('SoftTimeLimitExceeded'), self.request.retries)
+        raise
     except Exception as exc:
         if self.request.retries >= self.max_retries:
             _record_dlq('generate_report', submission_id, {'submission_id': str(submission_id)}, exc, self.request.retries)
