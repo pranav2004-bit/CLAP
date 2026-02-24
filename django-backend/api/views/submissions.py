@@ -15,6 +15,7 @@ from api.serializers import SubmissionCreateSerializer, SubmissionStatusSerializ
 from api.utils.jwt_utils import get_user_from_request
 from api.utils.metrics import submissions_total
 from api.utils.observability import log_event
+from api.utils.cdn import resolve_delivery_url
 
 if find_spec('redis') is not None:
     import redis
@@ -165,11 +166,13 @@ def _report_download_url(submission):
             aws_access_key_id=getattr(settings, 'S3_ACCESS_KEY_ID', None) or None,
             aws_secret_access_key=getattr(settings, 'S3_SECRET_ACCESS_KEY', None) or None,
         )
-        return client.generate_presigned_url(
+        # Phase 2.1: wrap through CDN resolver — no-op when CDN_ENABLED=False.
+        raw = client.generate_presigned_url(
             'get_object',
             Params={'Bucket': bucket, 'Key': key},
             ExpiresIn=expiry,
         )
+        return resolve_delivery_url(raw, url_type='download')
     except Exception:
         logger.exception('Failed generating presigned report URL for submission %s', submission.id)
         return raw_url

@@ -1,0 +1,76 @@
+{
+  "_comment": [
+    "CLAP backend — S3 lifecycle configuration (G1).",
+    "",
+    "Rationale:",
+    "  Audio recordings and PDF reports accumulate indefinitely without a lifecycle",
+    "  policy. At 6,000 students × ~10 submissions × ~5 MB audio + ~0.5 MB PDF =",
+    "  ~330 GB over one academic year. After the retention period, objects should",
+    "  be tiered to cheaper storage then expired to contain cost.",
+    "",
+    "Instructions (AWS Console):",
+    "  1. S3 Console → Bucket → Management → Lifecycle Rules → Create Rule",
+    "  2. Apply the two rules below (one for audio/, one for reports/).",
+    "  3. Confirm tiering and expiry dates with institutional data-retention policy.",
+    "",
+    "Instructions (AWS CLI):",
+    "  aws s3api put-bucket-lifecycle-configuration \\",
+    "    --bucket BUCKET_NAME \\",
+    "    --lifecycle-configuration file://s3-lifecycle.json",
+    "(strip _comment keys first, or use the Rules array directly)",
+    "",
+    "Instructions (Supabase Storage):",
+    "  Supabase Storage does not yet support S3-compatible lifecycle rules via API.",
+    "  Implement a monthly Celery task that calls delete_from_storage() for objects",
+    "  older than the retention threshold (query submission_score.created_at).",
+    "  Alternatively, migrate to AWS S3 where lifecycle is natively supported."
+  ],
+  "Rules": [
+    {
+      "ID": "clap-audio-lifecycle",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "audio/"
+      },
+      "Transitions": [
+        {
+          "Days": 90,
+          "StorageClass": "STANDARD_IA",
+          "_comment": "Move to Infrequent Access after 90 days — ~46% cost reduction"
+        },
+        {
+          "Days": 180,
+          "StorageClass": "GLACIER_IR",
+          "_comment": "Move to Glacier Instant Retrieval after 6 months — ~68% cost reduction"
+        }
+      ],
+      "Expiration": {
+        "Days": 365,
+        "_comment": "Delete audio after 1 year. Adjust to institutional data-retention policy."
+      }
+    },
+    {
+      "ID": "clap-reports-lifecycle",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "reports/"
+      },
+      "Transitions": [
+        {
+          "Days": 365,
+          "StorageClass": "STANDARD_IA",
+          "_comment": "Move reports to Infrequent Access after 1 year"
+        },
+        {
+          "Days": 730,
+          "StorageClass": "GLACIER_IR",
+          "_comment": "Move to Glacier after 2 years"
+        }
+      ],
+      "Expiration": {
+        "Days": 1095,
+        "_comment": "Delete reports after 3 years. Adjust to institutional retention policy."
+      }
+    }
+  ]
+}

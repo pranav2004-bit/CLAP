@@ -32,6 +32,7 @@ from api.utils.openai_client import evaluate_speaking as openai_evaluate_speakin
 from api.utils.openai_client import evaluate_writing as openai_evaluate_writing
 from api.utils.observability import log_event
 from api.utils.metrics import llm_validation_failures_total, report_generation_duration, dlq_unresolved_count
+from api.utils.cdn import resolve_delivery_url
 
 if find_spec('redis') is not None:
     import redis
@@ -114,11 +115,15 @@ def _presigned_report_download_url(report_url: str):
             aws_access_key_id=getattr(settings, 'S3_ACCESS_KEY_ID', None) or None,
             aws_secret_access_key=getattr(settings, 'S3_SECRET_ACCESS_KEY', None) or None,
         )
-        return client.generate_presigned_url(
+        # Phase 2.1: wrap presigned URL through CDN resolver.
+        # When CDN_ENABLED=False (default) this is a no-op.
+        # When CDN_ENABLED=True, the S3 URL is rewritten to CDN_BASE_URL/{key}.
+        raw = client.generate_presigned_url(
             'get_object',
             Params={'Bucket': bucket, 'Key': key},
             ExpiresIn=expiry,
         )
+        return resolve_delivery_url(raw, url_type='download')
     except Exception:
         return report_url
 
