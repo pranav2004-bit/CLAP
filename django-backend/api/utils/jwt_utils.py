@@ -1,50 +1,75 @@
+"""
+api/utils/jwt_utils.py
+
+Request authentication helper for CLAP Django backend.
+
+Supported authentication methods (in priority order):
+  1. x-user-id header  — Direct user UUID, trusted only when
+                          settings.TRUST_X_USER_ID_HEADER is True.
+                          WARNING: disable in production unless your reverse
+                          proxy strips this header from external requests.
+  2. Authorization: Bearer <JWT>  — HS256 JWT signed with settings.SECRET_KEY.
+
+E2 security note:
+  TRUST_X_USER_ID_HEADER defaults to True for backward compatibility with
+  the existing Next.js frontend. Set it to False in production after ensuring
+  your nginx/ALB config strips 'x-user-id' from incoming requests.
+"""
+
 import logging
+
 try:
     import jwt
 except ImportError:
     jwt = None
+
 from django.conf import settings
 from api.models import User
 
 logger = logging.getLogger(__name__)
 
+
 def get_user_from_request(request):
     """
-    Retrieve user from request headers.
-    Supports 'x-user-id' (direct ID) and 'Authorization: Bearer <token>' (JWT).
+    Retrieve the authenticated User from the request.
+
+    Returns a User instance on success, or None if authentication fails.
     """
-    # 1. Check for explicit user ID (used by frontend in some places)
-    user_id = request.headers.get('x-user-id')
-    if user_id:
-        try:
-            return User.objects.get(id=user_id)
-        except User.DoesNotExist:
-            logger.warning(f"User not found for x-user-id: {user_id}")
-            # Don't return None yet, try token
-    
-    # 2. Check for Bearer token
-    auth_header = request.headers.get('Authorization')
-    if auth_header and auth_header.startswith('Bearer '):
+    # ── Method 1: x-user-id header ───────────────────────────────
+    trust_header = getattr(settings, 'TRUST_X_USER_ID_HEADER', True)
+    if trust_header:
+        user_id = request.headers.get('x-user-id', '').strip()
+        if user_id:
+            try:
+                return User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                logger.warning('x-user-id header: user not found (id=%s)', user_id)
+                # Fall through to JWT check
+
+    # ── Method 2: JWT Bearer token ────────────────────────────────
+    auth_header = request.headers.get('Authorization', '')
+    if auth_header.startswith('Bearer '):
         if jwt is None:
-            logger.error("PyJWT is not installed. Cannot decode token.")
+            logger.error('PyJWT is not installed — cannot decode Bearer tokens.')
             return None
-            
-        token = auth_header.split(' ')[1]
+
+        token = auth_header.split(' ', 1)[1]
         try:
-            # Decode token - adjust algorithm/key as needed
-            # Assuming HS256 and SECRET_KEY for now based on typical Django setup
-            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=['HS256'])
+            payload = jwt.decode(
+                token,
+                settings.SECRET_KEY,
+                algorithms=['HS256'],
+            )
             user_id = payload.get('sub') or payload.get('user_id')
-            
             if user_id:
                 return User.objects.get(id=user_id)
         except jwt.ExpiredSignatureError:
-            logger.warning("Token expired")
-        except jwt.InvalidTokenError as e:
-            logger.warning(f"Invalid token: {e}")
+            logger.warning('Bearer token expired')
+        except jwt.InvalidTokenError as exc:
+            logger.warning('Invalid Bearer token: %s', exc)
         except User.DoesNotExist:
-            logger.warning(f"User not found for token payload: {user_id}")
-        except Exception as e:
-            logger.error(f"Error decoding token: {e}")
+            logger.warning('Bearer token: user not found (id=%s)', user_id)
+        except Exception as exc:
+            logger.error('Unexpected error decoding Bearer token: %s', exc)
 
     return None

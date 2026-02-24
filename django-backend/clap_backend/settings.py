@@ -40,6 +40,8 @@ MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'corsheaders.middleware.CorsMiddleware',
+    # A5/E1: IP-based rate limiting — placed early to reject abuse before view logic runs
+    'api.middleware.rate_limit.ApiRateLimitMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -224,7 +226,31 @@ REST_FRAMEWORK = {
         'rest_framework.parsers.MultiPartParser',
     ],
     'EXCEPTION_HANDLER': 'api.utils.custom_exception_handler',
+    # A5/E1: DRF-level throttle classes (applies to APIView-based endpoints)
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': config('DRF_THROTTLE_ANON', default='60/min'),
+        'user': config('DRF_THROTTLE_USER', default='300/min'),
+    },
 }
+
+# ── API Rate Limiting (middleware-level, applies to all function-based views) ─
+# A5/E1: brute-force / API-abuse protection
+# Controls ApiRateLimitMiddleware in api/middleware/rate_limit.py
+RATE_LIMIT_ENABLED         = config('RATE_LIMIT_ENABLED', default=True, cast=bool)
+RATE_LIMIT_ANON_PER_MINUTE = config('RATE_LIMIT_ANON_PER_MINUTE', default=60, cast=int)
+RATE_LIMIT_AUTH_PER_MINUTE = config('RATE_LIMIT_AUTH_PER_MINUTE', default=300, cast=int)
+
+# ── E2: x-user-id header trust ───────────────────────────────────────────────
+# When True (default), the x-user-id request header is trusted as a direct
+# user identity shortcut (matches current frontend behaviour).
+# WARNING: In production behind a reverse proxy (nginx/ALB), set this to False
+# and ensure the proxy STRIPS the x-user-id header from external requests.
+# When False, only JWT Bearer tokens are accepted for authentication.
+TRUST_X_USER_ID_HEADER = config('TRUST_X_USER_ID_HEADER', default=True, cast=bool)
 
 # JWT settings (architecture target: 15 minute access, 7 day refresh)
 JWT_ACCESS_TOKEN_MINUTES = config('JWT_ACCESS_TOKEN_MINUTES', default=15, cast=int)
