@@ -1,0 +1,24 @@
+# Procfile — Heroku / Render / Railway process definitions
+#
+# Usage:
+#   heroku ps:scale web=1 worker_llm=1 worker_scoring=1 worker_beat=1
+#   render: set each as a separate service pointing to this Procfile
+#
+# Concurrency notes:
+#   web          — Gunicorn: (2×CPU)+1 workers × 4 threads (see gunicorn.conf.py)
+#   worker_llm   — 2 concurrent: audio load + OpenAI API (memory-intensive)
+#   worker_rpts  — 2 concurrent: PDF generation (memory-intensive)
+#   worker_scr   — 8 concurrent: rule scoring + email (lightweight)
+#   worker_beat  — Single instance only (scheduler must not be duplicated)
+
+web: gunicorn clap_backend.wsgi:application --config gunicorn.conf.py
+
+worker_llm: python -m celery -A clap_backend worker --loglevel=info --queues=llm_evaluation --concurrency=2 --hostname=llm@%h --max-tasks-per-child=50
+
+worker_rpts: python -m celery -A clap_backend worker --loglevel=info --queues=report_gen --concurrency=2 --hostname=reports@%h --max-tasks-per-child=100
+
+worker_scr: python -m celery -A clap_backend worker --loglevel=info --queues=rule_scoring,email --concurrency=8 --hostname=scoring@%h --max-tasks-per-child=500
+
+worker_beat: python -m celery -A clap_backend beat --loglevel=info --scheduler celery.beat:PersistentScheduler
+
+release: python manage.py migrate --check

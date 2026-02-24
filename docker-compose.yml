@@ -1,0 +1,200 @@
+# ================================================================
+# CLAP Full-Stack — Docker Compose
+# ================================================================
+# Services:
+#   redis          — Message broker + result backend + rate-limit cache
+#   django         — Django API server (Gunicorn, gthread workers)
+#   celery-llm     — LLM evaluation tasks (low concurrency, memory-intensive)
+#   celery-reports — PDF report generation (low concurrency, memory-intensive)
+#   celery-scoring — Rule-based scoring + email (high concurrency, lightweight)
+#   celery-beat    — Periodic task scheduler (DLQ sweeper every 15 min)
+#
+# Usage:
+#   First time:
+#     cp django-backend/.env.example django-backend/.env
+#     # Fill in django-backend/.env with your values, then:
+#     docker compose up --build
+#
+#   Daily:
+#     docker compose up          # start all services
+#     docker compose down        # stop and remove containers
+#     docker compose logs -f     # follow all logs
+#     docker compose logs -f django celery-llm  # follow specific services
+#
+#   Run migrations (first time or after git pull):
+#     docker compose exec django python manage.py migrate
+#
+#   Django shell:
+#     docker compose exec django python manage.py shell
+#
+# Scaling (horizontal, production):
+#   docker compose up --scale celery-llm=2 --scale celery-scoring=3
+# ================================================================
+
+services:
+
+  # ── Redis ───────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # ── Django API server ───────────────────────────────────────────
+  django:
+    build:
+      context: ./django-backend
+      dockerfile: Dockerfile
+      target: runtime
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./django-backend/.env
+    environment:
+      # Override Redis URLs to use the compose service name
+      REDIS_URL: "redis://redis:6379/2"
+      CELERY_BROKER_URL: "redis://redis:6379/0"
+      CELERY_RESULT_BACKEND: "redis://redis:6379/1"
+      # Disable SSL for local Redis (not needed in compose network)
+      DB_SSLMODE: "prefer"
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - media_files:/app/media
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health/')\" 2>/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ── Celery Worker: LLM evaluation ───────────────────────────────
+  # Queue: llm_evaluation
+  # Concurrency: 2  (each task loads 10 MB audio + OpenAI API call)
+  # Low concurrency prevents OOM on memory-intensive LLM tasks
+  celery-llm:
+    build:
+      context: ./django-backend
+      dockerfile: Dockerfile
+      target: runtime
+    restart: unless-stopped
+    env_file:
+      - ./django-backend/.env
+    environment:
+      REDIS_URL: "redis://redis:6379/2"
+      CELERY_BROKER_URL: "redis://redis:6379/0"
+      CELERY_RESULT_BACKEND: "redis://redis:6379/1"
+      DB_SSLMODE: "prefer"
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - media_files:/app/media
+    command: >
+      python -m celery -A clap_backend worker
+        --loglevel=info
+        --queues=llm_evaluation
+        --concurrency=2
+        --hostname=llm@%h
+        --max-tasks-per-child=50
+
+  # ── Celery Worker: Report generation ───────────────────────────
+  # Queue: report_gen
+  # Concurrency: 2  (PDF generation can be memory-intensive)
+  celery-reports:
+    build:
+      context: ./django-backend
+      dockerfile: Dockerfile
+      target: runtime
+    restart: unless-stopped
+    env_file:
+      - ./django-backend/.env
+    environment:
+      REDIS_URL: "redis://redis:6379/2"
+      CELERY_BROKER_URL: "redis://redis:6379/0"
+      CELERY_RESULT_BACKEND: "redis://redis:6379/1"
+      DB_SSLMODE: "prefer"
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - media_files:/app/media
+    command: >
+      python -m celery -A clap_backend worker
+        --loglevel=info
+        --queues=report_gen
+        --concurrency=2
+        --hostname=reports@%h
+        --max-tasks-per-child=100
+
+  # ── Celery Worker: Rule scoring + Email ─────────────────────────
+  # Queues: rule_scoring, email
+  # Concurrency: 8  (lightweight, fast tasks — pure DB + rule logic)
+  celery-scoring:
+    build:
+      context: ./django-backend
+      dockerfile: Dockerfile
+      target: runtime
+    restart: unless-stopped
+    env_file:
+      - ./django-backend/.env
+    environment:
+      REDIS_URL: "redis://redis:6379/2"
+      CELERY_BROKER_URL: "redis://redis:6379/0"
+      CELERY_RESULT_BACKEND: "redis://redis:6379/1"
+      DB_SSLMODE: "prefer"
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - media_files:/app/media
+    command: >
+      python -m celery -A clap_backend worker
+        --loglevel=info
+        --queues=rule_scoring,email
+        --concurrency=8
+        --hostname=scoring@%h
+        --max-tasks-per-child=500
+
+  # ── Celery Beat: Periodic task scheduler ────────────────────────
+  # Runs DLQ sweeper every 15 minutes (defined in settings.CELERY_BEAT_SCHEDULE)
+  # Only ONE beat instance should ever run — do not scale this service.
+  celery-beat:
+    build:
+      context: ./django-backend
+      dockerfile: Dockerfile
+      target: runtime
+    restart: unless-stopped
+    env_file:
+      - ./django-backend/.env
+    environment:
+      REDIS_URL: "redis://redis:6379/2"
+      CELERY_BROKER_URL: "redis://redis:6379/0"
+      CELERY_RESULT_BACKEND: "redis://redis:6379/1"
+      DB_SSLMODE: "prefer"
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: >
+      python -m celery -A clap_backend beat
+        --loglevel=info
+        --scheduler celery.beat:PersistentScheduler
+
+
+# ── Named volumes ────────────────────────────────────────────────
+volumes:
+  redis_data:
+    driver: local
+  media_files:
+    driver: local
