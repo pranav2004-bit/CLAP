@@ -29,10 +29,15 @@ from api.views.admin import (
 )
 from api.views.student import profile, clap_attempt, audio_upload, audio_playback
 from api.views import evaluate, legacy_tests, legacy_attempts, submissions, email_webhooks
+from api.views.health import health_check
 
 app_name = 'api'
 
 urlpatterns = [
+    # D5: Public health endpoint (no auth, no rate limit, used by Docker/LB)
+    path('health/', health_check, name='health'),
+    path('health', health_check, name='health_no_slash'),
+
     # ============================================
     # ADMIN - BATCH MANAGEMENT (5 endpoints)
     # ============================================
