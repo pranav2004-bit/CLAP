@@ -89,12 +89,17 @@ def retrieve_audio_file(request, item_id):
                 Params={'Bucket': bucket, 'Key': key},
                 ExpiresIn=900,  # 15 minutes — covers one test session
             )
-            return HttpResponseRedirect(presigned_url)
+            # Phase 2.2: do NOT cache this redirect — each request passes through
+            # auth checks (assignment ownership, play-limit enforcement) and
+            # generates a fresh presigned URL.  Caching would bypass those checks.
+            redirect = HttpResponseRedirect(presigned_url)
+            redirect['Cache-Control'] = 'no-store'
+            return redirect
         except Exception as exc:
             return JsonResponse({'error': f'Failed to generate audio URL: {exc}'}, status=500)
 
-    # Local filesystem audio
-    # A2: explicit file handle management — close on exception to prevent FD leak
+    # Local filesystem audio — shared listening asset, safe to cache publicly.
+    # A2: explicit file handle management — close on exception to prevent FD leak.
     file_path = os.path.join(settings.MEDIA_ROOT, admin_audio.file_path)
     if not os.path.exists(file_path):
         return JsonResponse({'error': 'Audio file not found on server'}, status=404)
@@ -104,6 +109,10 @@ def retrieve_audio_file(request, item_id):
         fh = open(file_path, 'rb')
         response = FileResponse(fh, content_type=admin_audio.mime_type)
         response['Content-Disposition'] = 'inline'
+        # Phase 2.2: admin listening audio is the same bytes for every student;
+        # browsers may cache it for 24 h.  CacheControlMiddleware's /api/ no-store
+        # default is skipped because we explicitly set the header here.
+        response['Cache-Control'] = 'public, max-age=86400'
         # Django closes fh when streaming is complete; we hand ownership to FileResponse
         return response
     except Exception as exc:

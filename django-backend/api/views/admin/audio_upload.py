@@ -119,7 +119,14 @@ def upload_audio_file(request, item_id):
 
     if storage_provider in ('aws', 'supabase'):
         try:
-            file_path = upload_to_storage(audio_file, object_key, mime_type)
+            # Phase 2.2: admin listening audio is a shared asset — all students on
+            # the same test hear the same file.  Mark it publicly CDN-cacheable for
+            # 24 hours (s-maxage) so CDN edge nodes can cache it and reduce S3 egress.
+            # Per-student auth is enforced in the playback view before the redirect.
+            file_path = upload_to_storage(
+                audio_file, object_key, mime_type,
+                cache_control='public, max-age=86400, s-maxage=86400',
+            )
         except RuntimeError as exc:
             logger.error('Admin audio S3 upload failed for item %s: %s', item_id, exc)
             return JsonResponse({'error': f'Storage error: {exc}'}, status=500)

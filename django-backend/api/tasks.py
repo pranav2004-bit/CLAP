@@ -571,6 +571,10 @@ def generate_report(self, submission_id):
                             ExtraArgs={
                                 'ContentType': 'application/pdf',
                                 'ServerSideEncryption': 'AES256',
+                                # Phase 2.2: reports are user-specific — CDN must NOT
+                                # cache them (private).  Browser may cache for 7 days
+                                # to match the presigned URL lifetime.
+                                'CacheControl': 'private, max-age=604800',
                             },
                         )
                     report_url = f's3://{bucket}/{report_relpath}'

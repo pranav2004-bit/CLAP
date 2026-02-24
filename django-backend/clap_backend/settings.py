@@ -48,6 +48,12 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    # Phase 2.2: sets Cache-Control: no-store on all /api/* responses that have
+    # not already set a Cache-Control header in the view.  Positioned last so it
+    # runs first on the response path (innermost = processed immediately after view).
+    # Views that need a different policy (audio playback) set their own header and
+    # this middleware leaves them untouched.
+    'api.middleware.cache_headers.CacheControlMiddleware',
 ]
 
 ROOT_URLCONF = 'clap_backend.urls'
@@ -136,6 +142,15 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# Phase 2.2 — WhiteNoise static-asset caching
+# CompressedManifestStaticFilesStorage appends a content hash to every filename
+# (e.g. app.abc123.js), making URLs unique per content version — safe to cache
+# forever.  WHITENOISE_MAX_AGE sets the max-age in seconds for those hashed files.
+# Non-hashed files (if any) are served without a long max-age by WhiteNoise.
+WHITENOISE_MAX_AGE = 31_536_000  # 1 year in seconds — CDN + browser cache forever
+# Compress static files with Brotli and gzip (reduces transfer size ~70%).
+WHITENOISE_USE_FINDERS = False    # Only serve from STATIC_ROOT after collectstatic
 
 # Media files (uploaded content)
 MEDIA_ROOT = BASE_DIR / 'media'

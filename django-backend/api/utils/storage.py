@@ -92,6 +92,7 @@ def upload_to_storage(
     file_obj,
     object_key: str,
     content_type: str,
+    cache_control: Optional[str] = None,
 ) -> Optional[str]:
     """
     Upload a file-like object to S3 (or Supabase Storage).
@@ -111,9 +112,16 @@ def upload_to_storage(
         the hot path for concurrent student submissions.
 
     Args:
-        file_obj:     Django UploadedFile or any object with .read() / .chunks().
-        object_key:   S3 object key, e.g. 'admin_audio/2026/02/item-id_ts.mp3'
-        content_type: MIME type, e.g. 'audio/mpeg'
+        file_obj:      Django UploadedFile or any object with .read() / .chunks().
+        object_key:    S3 object key, e.g. 'admin_audio/2026/02/item-id_ts.mp3'
+        content_type:  MIME type, e.g. 'audio/mpeg'
+        cache_control: Optional Cache-Control header value to embed in S3 object
+                       metadata. When set, CDN edge nodes and browsers will use
+                       this value when serving the object.
+                       Examples:
+                         'public, max-age=86400, s-maxage=86400'  — CDN-cacheable
+                         'private, max-age=3600'                   — browser-only
+                       None = no Cache-Control metadata (S3 default: no-cache).
     """
     client = get_s3_client()
     bucket = getattr(settings, 'S3_BUCKET_NAME', '') or ''
@@ -127,14 +135,18 @@ def upload_to_storage(
         # Django InMemoryUploadedFile / TemporaryUploadedFile support .chunks()
         data = b''.join(file_obj.chunks())
 
+    put_kwargs: dict = {
+        'Bucket': bucket,
+        'Key': object_key,
+        'Body': data,
+        'ContentType': content_type,
+        'ServerSideEncryption': 'AES256',   # E3: enforce at-rest encryption
+    }
+    if cache_control:
+        put_kwargs['CacheControl'] = cache_control   # Phase 2.2
+
     try:
-        client.put_object(
-            Bucket=bucket,
-            Key=object_key,
-            Body=data,
-            ContentType=content_type,
-            ServerSideEncryption='AES256',   # E3: enforce at-rest encryption
-        )
+        client.put_object(**put_kwargs)
     except (BotoCoreError, ClientError) as exc:
         logger.error('S3 upload failed (key=%s): %s', object_key, exc)
         raise RuntimeError(f'S3 upload failed: {exc}') from exc

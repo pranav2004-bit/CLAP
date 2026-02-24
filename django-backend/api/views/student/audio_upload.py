@@ -297,6 +297,18 @@ def retrieve_audio_file(request, audio_response_id):
     if not os.path.exists(full_path):
         return JsonResponse({'error': 'File not found'}, status=404)
 
-    response = FileResponse(open(full_path, 'rb'), content_type=audio_response.mime_type)
-    response['Content-Disposition'] = f'inline; filename="recording.{audio_response.file_path.split(".")[-1]}"'
-    return response
+    # A2/Phase 2.2: explicit file handle management — close on exception to prevent
+    # FD leak.  Student recordings are user-specific: cache privately in browser for
+    # 1 hour (enough to replay during the same session without re-fetching).
+    fh = None
+    try:
+        fh = open(full_path, 'rb')
+        ext = audio_response.file_path.rsplit('.', 1)[-1]
+        response = FileResponse(fh, content_type=audio_response.mime_type)
+        response['Content-Disposition'] = f'inline; filename="recording.{ext}"'
+        response['Cache-Control'] = 'private, max-age=3600'
+        return response
+    except Exception as exc:
+        if fh is not None:
+            fh.close()
+        return JsonResponse({'error': f'Failed to serve file: {exc}'}, status=500)
