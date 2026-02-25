@@ -38,7 +38,6 @@ import {
   Loader2,
   Monitor,
   Mail,
-  Brain,
   Activity,
   BarChart,
   FileCheck

@@ -16,7 +16,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # SECURITY WARNING: keep the secret key used in production secret!
 # In production, SECRET_KEY MUST be set via environment variable.
-SECRET_KEY = config('SECRET_KEY', default='django-insecure-change-this-in-production-CHANGE-ME')
+SECRET_KEY = config('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', default=False, cast=bool)
@@ -87,12 +87,13 @@ DB_APP_PASSWORD = config('DB_APP_PASSWORD', default=config('DB_PASSWORD', defaul
 # - API deployments should run with DB_APP_USER/DB_APP_PASSWORD (no schema modification privileges).
 # - Worker deployments can run with separate credentials via the same settings module by setting
 #   DB_APP_USER/DB_APP_PASSWORD differently in worker environment.
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': config('DB_NAME', default='postgres'),
-        'USER': DB_APP_USER,
-        'PASSWORD': DB_APP_PASSWORD,
+        'USER': config('DB_USER'),
+        'PASSWORD': config('DB_PASSWORD'),
         'HOST': config('DB_HOST', default='localhost'),
         'PORT': config('DB_PORT', default='5432'),
         'CONN_MAX_AGE': config('DB_CONN_MAX_AGE', default=600, cast=int),

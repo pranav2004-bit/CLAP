@@ -1,0 +1,88 @@
+﻿
+============================================================
+  CLAP API Test Suite  ù  2026-02-25
+============================================================
+
+[setup] Loading data from database...
+  admin:      6c191fbd-5e0e-4dd2-b178-4fd84d4e0925  (admin)
+  student:    119ef277-7c9b-4483-8945-019707909f6d  (A26126551029)
+  batch:      6846db5c-c9a4-4ee3-9449-df0233532c29  (2025-29)
+  clap_test:  17a846b8-79df-438b-8c04-fed7a82797b5  (Test Updated Name)
+  component:  17bc7586-0472-4bf0-baa3-32f72e8415a4
+  item:       None
+  assignment: d14d0952-8a37-4216-93a6-ad4718249b5b
+.\venv\Scripts\python.exe : 
+Traceback (most recent call 
+last):
+At line:1 char:1
++ .\venv\Scripts\python.exe 
+test_apis.py 2>&1 | 
+Out-File -FilePath test ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~
+    + CategoryInfo          
+    : NotSpecified: (Trace  
+  back (most recent call    
+ last)::String) [], Remo    
+teException
+    + FullyQualifiedErrorId 
+    : NativeCommandError
+ 
+  File "C:\Users\pranavnath\
+OneDrive\Desktop\CLAP\django
+-backend\test_apis.py", 
+line 252, in <module>
+    section("1. HEALTH 
+CHECK")
+  File "C:\Users\pranavnath\
+OneDrive\Desktop\CLAP\django
+-backend\test_apis.py", 
+line 183, in section
+    
+print(f"\n{'\u2500'*60}")
+  File "C:\Users\pranavnath\
+OneDrive\Desktop\CLAP\django
+-backend\venv\Lib\site-packa
+ges\colorama\ansitowin32.py"
+, line 47, in write
+    
+self.__convertor.write(text)
+  File "C:\Users\pranavnath\
+OneDrive\Desktop\CLAP\django
+-backend\venv\Lib\site-packa
+ges\colorama\ansitowin32.py"
+, line 177, in write
+    
+self.write_and_convert(text)
+  File "C:\Users\pranavnath\
+OneDrive\Desktop\CLAP\django
+-backend\venv\Lib\site-packa
+ges\colorama\ansitowin32.py"
+, line 205, in 
+write_and_convert
+    
+self.write_plain_text(text, 
+cursor, len(text))
+  File "C:\Users\pranavnath\
+OneDrive\Desktop\CLAP\django
+-backend\venv\Lib\site-packa
+ges\colorama\ansitowin32.py"
+, line 210, in 
+write_plain_text
+    self.wrapped.write(text[
+start:end])
+  File "C:\Users\pranavnath\
+AppData\Local\Programs\Pytho
+n\Python312\Lib\encodings\cp
+1252.py", line 19, in encode
+    return codecs.charmap_en
+code(input,self.errors,encod
+ing_table)[0]
+           ^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^
+UnicodeEncodeError: 
+'charmap' codec can't 
+encode characters in 
+position 2-61: character 
+maps to <undefined>
