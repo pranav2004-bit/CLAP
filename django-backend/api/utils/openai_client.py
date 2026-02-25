@@ -110,9 +110,18 @@ def transcribe_audio(audio_file, mime_type: str = 'audio/mp3') -> str:
     """
     def make_request():
         client = _get_client()
+        # Normalize Django UploadedFile to its underlying file handle for OpenAI
+        file_obj = audio_file
+        if hasattr(audio_file, "file"):
+            file_obj = audio_file.file
+        if hasattr(file_obj, "seek"):
+            try:
+                file_obj.seek(0)
+            except Exception:
+                pass
         response = client.audio.transcriptions.create(
             model='whisper-1',
-            file=audio_file,
+            file=file_obj,
             response_format='text',
         )
         return response

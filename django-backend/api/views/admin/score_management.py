@@ -42,6 +42,13 @@ def scores_by_submission(request, submission_id):
             'llm_request_id': score.llm_request_id,
         })
 
+    assessment = submission.assessment
+    assessment_title = (
+        getattr(assessment, 'title', None)
+        or getattr(assessment, 'name', None)
+        or str(assessment)
+    )
+
     return JsonResponse({
         'submission': {
             'id': str(submission.id),
@@ -49,7 +56,7 @@ def scores_by_submission(request, submission_id):
             'student_id': str(submission.user_id),
             'student_email': submission.user.email,
             'assessment_id': str(submission.assessment_id),
-            'assessment_title': submission.assessment.title,
+            'assessment_title': assessment_title,
         },
         'scores': rows,
     })
@@ -203,10 +210,16 @@ def export_scores(request):
 
     for sub in qs[:5000]:
         score_map = {s.domain: float(s.score) for s in SubmissionScore.objects.filter(submission=sub)}
+        assessment = sub.assessment
+        assessment_title = (
+            getattr(assessment, 'title', None)
+            or getattr(assessment, 'name', None)
+            or str(assessment)
+        )
         writer.writerow([
             str(sub.id),
             str(sub.assessment_id),
-            sub.assessment.title,
+            assessment_title,
             str(sub.user_id),
             sub.user.email,
             sub.status,

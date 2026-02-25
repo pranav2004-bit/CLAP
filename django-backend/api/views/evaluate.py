@@ -14,6 +14,18 @@ from api.models import TestAttempt
 from api.utils import success_response, error_response
 from api.utils.openai_client import transcribe_audio, evaluate_speaking, evaluate_writing
 
+try:
+    from openai import RateLimitError, APIError, APITimeoutError, APIConnectionError
+except Exception:  # openai may not be installed in some environments
+    RateLimitError = APIError = APITimeoutError = APIConnectionError = ()
+
+
+def _is_openai_unavailable(error: Exception) -> bool:
+    if isinstance(error, (RateLimitError, APIError, APITimeoutError, APIConnectionError)):
+        return True
+    msg = str(error).lower()
+    return 'insufficient_quota' in msg or 'rate limit' in msg or 'openai' in msg
+
 logger = logging.getLogger(__name__)
 
 
@@ -88,6 +100,8 @@ def evaluate_speaking_test(request):
         
     except Exception as error:
         logger.error(f'Speaking evaluation error: {error}', exc_info=True)
+        if _is_openai_unavailable(error):
+            return error_response('OpenAI service unavailable', status=503)
         return error_response('Failed to evaluate speaking test', status=500)
 
 
@@ -156,4 +170,6 @@ def evaluate_writing_test(request):
         
     except Exception as error:
         logger.error(f'Writing evaluation error: {error}', exc_info=True)
+        if _is_openai_unavailable(error):
+            return error_response('OpenAI service unavailable', status=503)
         return error_response('Failed to evaluate writing test', status=500)
