@@ -10,7 +10,7 @@ Storage routing (controlled by STORAGE_PROVIDER env var):
 import os
 from datetime import datetime
 from django.conf import settings
-from django.http import JsonResponse
+from django.http import JsonResponse, FileResponse, HttpResponseRedirect
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from api.models import ClapTestItem, AdminAudioFile
@@ -194,10 +194,11 @@ def upload_audio_file(request, item_id):
 
 
 @csrf_exempt
-@require_http_methods(["DELETE"])
-def delete_audio_file(request, item_id):
+@require_http_methods(["GET", "DELETE"])
+def handle_audio_file(request, item_id):
     """
-    Delete audio file for audio_block item.
+    Handle GET and DELETE requests for audio_block items.
+    GET /api/admin/clap-items/{item_id}/audio
     DELETE /api/admin/clap-items/{item_id}/audio
     """
     # Authentication
@@ -220,14 +221,53 @@ def delete_audio_file(request, item_id):
     except AdminAudioFile.DoesNotExist:
         return JsonResponse({'error': 'No audio file found for this item'}, status=404)
 
-    # Delete physical file (handles both S3 and local via model method)
-    admin_audio.delete_file()
+    if request.method == "GET":
+        # Check storage implementation
+        if admin_audio.file_path.startswith('s3://'):
+            from api.utils.storage import get_s3_client
+            client = get_s3_client()
+            if not client:
+                return JsonResponse({'error': 'S3 client not configured'}, status=503)
+            try:
+                without_scheme = admin_audio.file_path[len('s3://'):]
+                bucket, _, key = without_scheme.partition('/')
+                presigned_url = client.generate_presigned_url(
+                    ClientMethod='get_object',
+                    Params={'Bucket': bucket, 'Key': key},
+                    ExpiresIn=900,
+                )
+                redirect = HttpResponseRedirect(presigned_url)
+                redirect['Cache-Control'] = 'no-store'
+                return redirect
+            except Exception as exc:
+                return JsonResponse({'error': f'Failed to generate audio URL: {exc}'}, status=500)
 
-    # Delete database record
-    admin_audio.delete()
+        # Local filesystem
+        file_path = os.path.join(settings.MEDIA_ROOT, admin_audio.file_path)
+        if not os.path.exists(file_path):
+            return JsonResponse({'error': 'Audio file not found on server'}, status=404)
 
-    # Mark item as no longer having an audio file
-    item.content['has_audio_file'] = False
-    item.save()
+        fh = None
+        try:
+            fh = open(file_path, 'rb')
+            response = FileResponse(fh, content_type=admin_audio.mime_type)
+            response['Content-Disposition'] = 'inline'
+            response['Cache-Control'] = 'public, max-age=86400'
+            return response
+        except Exception as exc:
+            if fh is not None:
+                fh.close()
+            return JsonResponse({'error': f'Failed to serve file: {exc}'}, status=500)
 
-    return JsonResponse({'success': True, 'message': 'Audio file deleted'}, status=200)
+    elif request.method == "DELETE":
+        # Delete physical file
+        admin_audio.delete_file()
+
+        # Delete database record
+        admin_audio.delete()
+
+        # Mark item as no longer having an audio file
+        item.content['has_audio_file'] = False
+        item.save()
+
+        return JsonResponse({'success': True, 'message': 'Audio file deleted'}, status=200)

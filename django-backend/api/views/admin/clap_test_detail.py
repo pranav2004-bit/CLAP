@@ -173,17 +173,19 @@ def delete_clap_test(request, test_id):
         except ClapTest.DoesNotExist:
             return error_response('CLAP test not found', status=404)
         
-        # Soft delete: Update status to 'deleted'
-        ClapTest.objects.filter(id=test_id).update(
-            status='deleted',
-            updated_at=timezone.now()
-        )
-        
-        # Update student assignments to mark them as from deleted test
-        StudentClapAssignment.objects.filter(
-            clap_test_id=test_id,
-            status__in=['assigned', 'started']
-        ).update(status='test_deleted')
+        # Soft delete in a transaction
+        with transaction.atomic():
+            # Soft delete: Update status to 'deleted'
+            ClapTest.objects.filter(id=test_id).update(
+                status='deleted',
+                updated_at=timezone.now()
+            )
+            
+            # Update student assignments to mark them as from deleted test
+            StudentClapAssignment.objects.filter(
+                clap_test_id=test_id,
+                status__in=['assigned', 'started']
+            ).update(status='test_deleted')
         
         return JsonResponse({
             'message': 'CLAP test deleted successfully',

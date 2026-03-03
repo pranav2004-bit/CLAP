@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { getApiUrl } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
 import {
   AlertTriangle,
   RefreshCw,
@@ -43,7 +43,7 @@ export function DLQManagement() {
   const fetchEntries = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch(getApiUrl('admin/dlq'))
+      const res = await fetch(getApiUrl('admin/dlq'), { headers: getAuthHeaders() })
       if (res.ok) {
         const data = await res.json()
         setEntries(data.entries || data.rows || [])
@@ -63,6 +63,7 @@ export function DLQManagement() {
     try {
       const res = await fetch(getApiUrl(`admin/dlq/${id}/retry`), {
         method: 'POST',
+        headers: getAuthHeaders()
       })
       if (res.ok) {
         toast.success('DLQ entry retry triggered')
@@ -83,6 +84,7 @@ export function DLQManagement() {
     try {
       const res = await fetch(getApiUrl(`admin/dlq/${id}/resolve`), {
         method: 'POST',
+        headers: getAuthHeaders()
       })
       if (res.ok) {
         toast.success('DLQ entry marked as resolved')
@@ -104,6 +106,7 @@ export function DLQManagement() {
     try {
       const res = await fetch(getApiUrl('admin/dlq/bulk-retry'), {
         method: 'POST',
+        headers: getAuthHeaders()
       })
       if (res.ok) {
         const data = await res.json()
@@ -122,7 +125,7 @@ export function DLQManagement() {
 
   const fetchDetail = async (id: number) => {
     try {
-      const res = await fetch(getApiUrl(`admin/dlq/${id}`))
+      const res = await fetch(getApiUrl(`admin/dlq/${id}`), { headers: getAuthHeaders() })
       if (res.ok) {
         setSelectedEntry(await res.json())
       }

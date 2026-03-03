@@ -14,13 +14,35 @@ Open PowerShell in the project root and run:
 .\start-app.ps1
 ```
 
-**What it does**:
+**What it does (Development Mode Only)**:
 - ✅ Starts Django backend (Port 8000)
 - ✅ Starts Next.js frontend (Port 3000)
-- ✅ Opens browser automatically
-- ✅ Opens two separate windows for each server
+- ❌ **Does NOT start Celery or Redis** (Test evaluations will stay stuck processing!)
 
-**That's it!** Your application will be running at `http://localhost:3000`
+### **Full Production-Ready Way (Required for LLM Evaluation processing)**
+
+If you want the students to take a test, **and have their speaking/writing actually evaluated by AI**, you must run the background workers.
+
+Open PowerShell in the project root and run:
+
+```powershell
+docker compose up --build
+```
+*(Wait a minute or two for all containers to boot)*
+
+Then in a **second** terminal, start your Next.js frontend:
+```powershell
+npm run dev
+```
+
+**What it does**:
+- ✅ Starts Redis (Message broker)
+- ✅ Starts Django API
+- ✅ Starts Celery LLM Worker (Evaluates speaking & writing using OpenAI)
+- ✅ Starts Celery Reports Worker (Generates PDF reports)
+- ✅ Starts Celery Beat (Scheduled tasks like retry sweepers)
+
+**That's it!** Your full-stack application with evaluation grading will be running at `http://localhost:3000`
 
 ---
 

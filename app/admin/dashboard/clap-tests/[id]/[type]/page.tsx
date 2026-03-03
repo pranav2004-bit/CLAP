@@ -12,7 +12,7 @@ import { toast } from 'sonner'
 import { getApiUrl } from '@/lib/api-config'
 import { TestPreviewModal } from '@/components/admin/TestPreviewModal'
 
-// Question classification helper - only MCQ and subjective count as questions
+// Question classification helper
 const isQuestion = (itemType: string): boolean => {
     return itemType === 'mcq' || itemType === 'subjective'
 }
@@ -105,7 +105,7 @@ function ClapTestEditorContent() {
             const newItem = {
                 item_type: type,
                 order_index: items.length + 1,
-                points: 1,
+                points: type === 'mcq' ? 1 : 0,
                 content: getDefaultContent(type)
             }
 
@@ -382,7 +382,7 @@ function ClapTestEditorContent() {
                     <div>
                         <h1 className="text-xl font-bold capitalize">{params.type} Test Editor</h1>
                         <p className="text-sm text-gray-500 mb-1">
-                            Total Marks: <span className="font-bold text-indigo-600">{items.filter(item => isQuestion(item.item_type)).reduce((sum, item) => sum + (item.points || 0), 0)}</span>
+                            Total Marks: <span className="font-bold text-indigo-600">{items.reduce((sum, item) => sum + (item.item_type === 'mcq' ? (item.points || 0) : 0), 0)}</span>
                         </p>
                         <p className="text-xs text-gray-400">{items.length} items • {items.filter(item => isQuestion(item.item_type)).length} questions • {component?.title}</p>
                     </div>
@@ -486,17 +486,17 @@ function ClapTestEditorContent() {
                                     </span>
 
                                     <div className="flex items-center ml-auto gap-2">
-                                        <div className="flex items-center gap-2 mr-4">
-                                            <Label className={`text-xs ${isQuestion(item.item_type) ? 'text-gray-500' : 'text-gray-300'}`}>Points:</Label>
-                                            <Input
-                                                type="number"
-                                                className="w-16 h-7 text-xs"
-                                                value={item.points}
-                                                onChange={(e) => handleUpdateItem(item.id, { points: parseInt(e.target.value) })}
-                                                disabled={!isQuestion(item.item_type)}
-                                                title={!isQuestion(item.item_type) ? 'Only questions (MCQ) have points' : ''}
-                                            />
-                                        </div>
+                                        {item.item_type === 'mcq' && (
+                                            <div className="flex items-center gap-2 mr-4">
+                                                <Label className="text-xs text-gray-500">Points:</Label>
+                                                <Input
+                                                    type="number"
+                                                    className="w-16 h-7 text-xs"
+                                                    value={item.points || 0}
+                                                    onChange={(e) => handleUpdateItem(item.id, { points: parseInt(e.target.value) })}
+                                                />
+                                            </div>
+                                        )}
 
                                         <div className="h-6 w-px bg-gray-300 mx-1"></div>
 

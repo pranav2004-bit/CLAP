@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { getApiUrl } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
 import {
   Mail,
   RefreshCw,
@@ -58,8 +58,8 @@ export function EmailManagement() {
     setLoading(true)
     try {
       const [statusRes, logsRes] = await Promise.allSettled([
-        fetch(getApiUrl('admin/emails/status')),
-        fetch(getApiUrl('admin/emails/logs')),
+        fetch(getApiUrl('admin/emails/status'), { headers: getAuthHeaders() }),
+        fetch(getApiUrl('admin/emails/logs'), { headers: getAuthHeaders() }),
       ])
 
       if (statusRes.status === 'fulfilled' && statusRes.value.ok) {
@@ -84,6 +84,7 @@ export function EmailManagement() {
     try {
       const res = await fetch(getApiUrl(`admin/emails/submissions/${submissionId}/resend`), {
         method: 'POST',
+        headers: getAuthHeaders()
       })
       if (res.ok) {
         toast.success('Email resend triggered')
@@ -105,7 +106,10 @@ export function EmailManagement() {
       const failedEmails = emailStatus?.recent_emails?.filter(e => e.status === 'failed' || e.status === 'bounced') || []
       const res = await fetch(getApiUrl('admin/emails/bulk-resend'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders()
+        },
         body: JSON.stringify({
           submission_ids: failedEmails.map(e => e.submission_id),
         }),
@@ -217,7 +221,7 @@ export function EmailManagement() {
           className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'status'
             ? 'border-indigo-600 text-indigo-700'
             : 'border-transparent text-gray-500 hover:text-gray-700'
-          }`}
+            }`}
         >
           Recent Emails
         </button>
@@ -226,7 +230,7 @@ export function EmailManagement() {
           className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'logs'
             ? 'border-indigo-600 text-indigo-700'
             : 'border-transparent text-gray-500 hover:text-gray-700'
-          }`}
+            }`}
         >
           Bounce/Complaint Logs ({bounceLogs.length})
         </button>

@@ -49,7 +49,8 @@ def list_batches(request):
         if batch_ids:
             students = User.objects.filter(
                 batch_id__in=batch_ids,
-                role='student'
+                role='student',
+                is_active=True
             ).values('batch_id').annotate(count=Count('id'))
             
             student_counts = {str(s['batch_id']): s['count'] for s in students}

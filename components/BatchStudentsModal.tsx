@@ -23,7 +23,7 @@ import {
     ChevronLeft,
     ChevronRight
 } from 'lucide-react'
-import { API_BASE_URL } from '@/lib/api-config'
+import { API_BASE_URL, getAuthHeaders } from '@/lib/api-config'
 import { feedback } from '@/lib/user-feedback'
 import { toast } from 'sonner'
 
@@ -100,7 +100,9 @@ export function BatchStudentsModal({ batch, onClose }: BatchStudentsModalProps) 
             setLoading(true)
             const loadingToast = feedback.loadingData(`students in ${batch.batch_name}`)
 
-            const response = await fetch(`${API_BASE_URL}/admin/students?batch_id=${batch.id}`)
+            const response = await fetch(`${API_BASE_URL}/admin/students?batch_id=${batch.id}`, {
+                headers: getAuthHeaders()
+            })
             const data = await response.json()
 
             toast.dismiss(loadingToast)
@@ -160,6 +162,7 @@ export function BatchStudentsModal({ batch, onClose }: BatchStudentsModalProps) 
                 method: 'PATCH',
                 headers: {
                     'Content-Type': 'application/json',
+                    ...getAuthHeaders()
                 },
                 body: JSON.stringify({
                     full_name: editFormData.full_name,
@@ -219,7 +222,8 @@ export function BatchStudentsModal({ batch, onClose }: BatchStudentsModalProps) 
 
         try {
             const response = await fetch(`${API_BASE_URL}/admin/students/${student.id}/toggle-active`, {
-                method: 'PATCH'
+                method: 'PATCH',
+                headers: getAuthHeaders()
             })
 
             const data = await response.json()
@@ -256,7 +260,8 @@ export function BatchStudentsModal({ batch, onClose }: BatchStudentsModalProps) 
         try {
             const loadingToast = feedback.processing('password reset')
             const response = await fetch(`${API_BASE_URL}/admin/students/${student.id}/reset-password`, {
-                method: 'POST'
+                method: 'POST',
+                headers: getAuthHeaders()
             })
 
             const data = await response.json()
@@ -297,7 +302,8 @@ export function BatchStudentsModal({ batch, onClose }: BatchStudentsModalProps) 
 
         try {
             const response = await fetch(`${API_BASE_URL}/admin/students/${student.id}`, {
-                method: 'DELETE'
+                method: 'DELETE',
+                headers: getAuthHeaders()
             })
 
             const data = await response.json()
@@ -319,7 +325,7 @@ export function BatchStudentsModal({ batch, onClose }: BatchStudentsModalProps) 
     }
 
     return (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[70] p-4">
             <Card className="w-full max-w-6xl max-h-[90vh] flex flex-col">
                 <CardHeader className="border-b flex-shrink-0 p-4">
                     <div className="flex items-center justify-between">

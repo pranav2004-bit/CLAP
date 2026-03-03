@@ -23,7 +23,7 @@ import {
   Hash
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { getApiUrl } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
 
 interface StudentFormData {
   id?: string
@@ -112,7 +112,9 @@ export function EnhancedStudentManagementModal({
   const fetchBatches = async () => {
     try {
       setLoadingBatches(true)
-      const response = await fetch(getApiUrl('admin/batches'))
+      const response = await fetch(getApiUrl('admin/batches'), {
+        headers: getAuthHeaders()
+      })
       const data = await response.json()
 
       if (data.batches) {

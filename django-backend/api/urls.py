@@ -28,7 +28,7 @@ from api.views.admin import (
     notifications,
 )
 from api.views.student import profile, clap_attempt, audio_upload, audio_playback
-from api.views import evaluate, legacy_tests, legacy_attempts, submissions, email_webhooks
+from api.views import evaluate, legacy_tests, legacy_attempts, submissions, email_webhooks, auth
 from api.views.health import health_check
 
 app_name = 'api'
@@ -37,6 +37,9 @@ urlpatterns = [
     # D5: Public health endpoint (no auth, no rate limit, used by Docker/LB)
     path('health/', health_check, name='health'),
     path('health', health_check, name='health_no_slash'),
+
+    # Auth
+    path('auth/login', auth.login, name='auth_login'),
 
     # ============================================
     # ADMIN - BATCH MANAGEMENT (5 endpoints)
@@ -70,7 +73,7 @@ urlpatterns = [
 
     # Audio Block File Upload
     path('admin/clap-items/<uuid:item_id>/upload-audio', admin_audio_upload.upload_audio_file, name='admin_upload_audio'),
-    path('admin/clap-items/<uuid:item_id>/audio', admin_audio_upload.delete_audio_file, name='admin_delete_audio'),
+    path('admin/clap-items/<uuid:item_id>/audio', admin_audio_upload.handle_audio_file, name='admin_delete_audio'),
 
     # Submission Pipeline Monitor
     path('admin/submissions/overview', submissions_monitor.submission_status_overview, name='admin_submissions_overview'),

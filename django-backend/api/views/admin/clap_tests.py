@@ -50,7 +50,9 @@ def list_clap_tests(request):
                     'id': str(comp.id),
                     'name': comp.title,
                     'type': comp.test_type,
-                    'status': comp.status
+                    'status': comp.status,
+                    'duration': comp.duration_minutes,
+                    'max_marks': comp.max_marks
                 })
             
             transformed_tests.append(test_dict)
@@ -142,10 +144,12 @@ def create_clap_test(request):
             'created_at': clap_test.created_at.isoformat(),
             'tests': [
                 {
-                    'id': comp.test_type,
+                    'id': str(comp.id),
                     'name': comp.title,
                     'type': comp.test_type,
-                    'status': comp.status
+                    'status': comp.status,
+                    'duration': comp.duration_minutes,
+                    'max_marks': comp.max_marks
                 }
                 for comp in components
             ]

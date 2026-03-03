@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { getApiUrl } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
 import {
   Brain,
   RefreshCw,
@@ -56,7 +56,7 @@ export function LLMControls() {
   const fetchAnalytics = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch(getApiUrl('admin/llm/analytics'))
+      const res = await fetch(getApiUrl('admin/llm/analytics'), { headers: getAuthHeaders() })
       if (res.ok) {
         setAnalytics(await res.json())
       }
@@ -74,7 +74,7 @@ export function LLMControls() {
     if (!submissionId.trim()) return
     setTraceLoading(true)
     try {
-      const res = await fetch(getApiUrl(`admin/llm/submissions/${submissionId}/trace`))
+      const res = await fetch(getApiUrl(`admin/llm/submissions/${submissionId}/trace`), { headers: getAuthHeaders() })
       if (res.ok) {
         setTrace(await res.json())
       } else {
@@ -94,6 +94,7 @@ export function LLMControls() {
     try {
       const res = await fetch(getApiUrl(`admin/llm/submissions/${sid}/retrigger`), {
         method: 'POST',
+        headers: getAuthHeaders()
       })
       if (res.ok) {
         toast.success('LLM evaluation re-triggered successfully')

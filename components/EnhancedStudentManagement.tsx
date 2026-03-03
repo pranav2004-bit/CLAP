@@ -22,7 +22,7 @@ import {
   ChevronRight
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { API_BASE_URL } from '@/lib/api-config'
+import { API_BASE_URL, getAuthHeaders } from '@/lib/api-config'
 import { feedback } from '@/lib/user-feedback'
 
 interface Student {
@@ -103,7 +103,9 @@ export function EnhancedStudentManagement({ refreshKey = 0 }: EnhancedStudentMan
     try {
       setLoading(true)
       const loadingToast = feedback.loadingData('students')
-      const response = await fetch(`${API_BASE_URL}/admin/students`)
+      const response = await fetch(`${API_BASE_URL}/admin/students`, {
+        headers: getAuthHeaders()
+      })
       const data = await response.json()
 
       toast.dismiss(loadingToast)
@@ -153,7 +155,8 @@ export function EnhancedStudentManagement({ refreshKey = 0 }: EnhancedStudentMan
       const response = await fetch(`${API_BASE_URL}/admin/students/${editingStudent.id}`, {
         method: 'PUT',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          ...getAuthHeaders()
         },
         body: JSON.stringify({
           full_name: editFormData.full_name,
@@ -221,7 +224,8 @@ export function EnhancedStudentManagement({ refreshKey = 0 }: EnhancedStudentMan
     try {
       // Use toggle-active endpoint
       const response = await fetch(`${API_BASE_URL}/admin/students/${studentId}/toggle-active`, {
-        method: 'PATCH'
+        method: 'PATCH',
+        headers: getAuthHeaders()
       })
 
       const data = await response.json()
@@ -258,7 +262,8 @@ export function EnhancedStudentManagement({ refreshKey = 0 }: EnhancedStudentMan
     try {
       // Make API call in background
       const response = await fetch(`${API_BASE_URL}/admin/students/${studentId}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        headers: getAuthHeaders()
       })
 
       const data = await response.json()
@@ -299,7 +304,8 @@ export function EnhancedStudentManagement({ refreshKey = 0 }: EnhancedStudentMan
     try {
       const loadingToast = feedback.processing('password reset')
       const response = await fetch(`${API_BASE_URL}/admin/students/${studentId}/reset-password`, {
-        method: 'POST'
+        method: 'POST',
+        headers: getAuthHeaders()
       })
 
       const data = await response.json()

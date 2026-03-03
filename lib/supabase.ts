@@ -80,75 +80,35 @@ export const getUser = async () => {
   return user
 }
 
-export const signIn = async (email: string, password: string, role: 'student' | 'admin' = 'student') => {
+export const signIn = async (identifier: string, password: string, role: 'student' | 'admin' = 'student') => {
   try {
-    console.log('SignIn attempt:', { email, role }); // Debug log
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api'
+    const response = await fetch(`${apiBase}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identifier, password, role })
+    })
 
-    // Try actual database connection - no demo mode fallback
-    console.log('Attempting database connection...');
-
-    // Log Supabase configuration
-    console.log('Supabase config - URL:', supabaseUrl);
-
-    // First check our custom users table
-    console.log('Making query with:', { email, role });
-
-    let query = supabase
-      .from('users')
-      .select('id, email, full_name, role, password_hash, is_active, profile_completed')
-      .eq('role', role);
-
-    if (role === 'student') {
-      // Allow login with email, username, or student_id
-      query = query.or(`email.eq.${email},username.eq.${email},student_id.eq.${email}`);
-    } else {
-      query = query.eq('email', email);
+    const data = await response.json()
+    if (!response.ok) {
+      return { data: null, error: { message: data.error || 'Invalid credentials' } }
     }
 
-    const { data: user, error: userError } = await query.single();
-
-    console.log('Database query result:', { user, userError }); // Debug log
-
-    if (userError || !user) {
-      console.log('User not found or error:', userError); // Debug log
-      return { data: null, error: { message: 'Invalid credentials' } }
-    }
-
-    // Check if account is active
-    if (!user.is_active) {
-      console.log('Account disabled'); // Debug log
-      return { data: null, error: { message: 'This account is disabled by admin' } }
-    }
-
-    console.log('Stored hash:', user.password_hash); // Debug log
-    console.log('Input password:', password); // Debug log
-
-    // Verify password
-    const isValidPassword = await bcrypt.compare(password, user.password_hash)
-
-    console.log('Password valid:', isValidPassword); // Debug log
-
-    if (!isValidPassword) {
-      return { data: null, error: { message: 'Invalid credentials' } }
-    }
-
-    // Return user data (simulate Supabase auth response)
     return {
       data: {
         user: {
-          id: user.id,
-          email: user.email,
+          id: data.user.id,
+          email: data.user.email,
           user_metadata: {
-            full_name: user.full_name,
-            role: user.role,
-            profile_completed: user.profile_completed
+            full_name: data.user.full_name,
+            role: data.user.role,
+            profile_completed: data.user.profile_completed
           }
         }
       },
       error: null
     }
   } catch (error: any) {
-    console.log('SignIn error:', error); // Debug log
     return { data: null, error: { message: error.message || 'Authentication failed' } }
   }
 }

@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { getApiUrl } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
 import {
   FileText,
   RefreshCw,
@@ -43,7 +43,7 @@ export function ReportManagement() {
   const fetchReports = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch(getApiUrl('admin/reports'))
+      const res = await fetch(getApiUrl('admin/reports'), { headers: getAuthHeaders() })
       if (res.ok) {
         const data = await res.json()
         setReports(data.reports || data.rows || [])
@@ -63,6 +63,7 @@ export function ReportManagement() {
     try {
       const res = await fetch(getApiUrl(`admin/reports/submissions/${submissionId}/regenerate`), {
         method: 'POST',
+        headers: getAuthHeaders()
       })
       if (res.ok) {
         toast.success('Report regeneration triggered')

@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { getApiUrl } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
 import {
   RefreshCw,
   Activity,
@@ -71,9 +71,9 @@ export function SubmissionMonitor() {
     setLoading(true)
     try {
       const [overviewRes, listRes, healthRes] = await Promise.allSettled([
-        fetch(getApiUrl('admin/submissions/overview')),
-        fetch(getApiUrl(`admin/submissions${statusFilter ? `?status=${statusFilter}` : ''}`)),
-        fetch(getApiUrl('admin/submissions/health')),
+        fetch(getApiUrl('admin/submissions/overview'), { headers: getAuthHeaders() }),
+        fetch(getApiUrl(`admin/submissions${statusFilter ? `?status=${statusFilter}` : ''}`), { headers: getAuthHeaders() }),
+        fetch(getApiUrl('admin/submissions/health'), { headers: getAuthHeaders() }),
       ])
 
       if (overviewRes.status === 'fulfilled' && overviewRes.value.ok) {
@@ -99,7 +99,7 @@ export function SubmissionMonitor() {
   const fetchDetail = async (submissionId: string) => {
     setDetailLoading(true)
     try {
-      const res = await fetch(getApiUrl(`admin/submissions/${submissionId}`))
+      const res = await fetch(getApiUrl(`admin/submissions/${submissionId}`), { headers: getAuthHeaders() })
       if (res.ok) {
         setSelectedSubmission(await res.json())
       }

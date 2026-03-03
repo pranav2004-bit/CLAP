@@ -11,3 +11,9 @@ export const getApiUrl = (endpoint: string) => {
 
     return `${API_BASE_URL}/${finalEndpoint}`
 }
+
+export const getAuthHeaders = (): Record<string, string> => {
+    if (typeof window === 'undefined') return {}
+    const userId = localStorage.getItem('user_id')
+    return userId ? { 'x-user-id': userId } : {}
+}

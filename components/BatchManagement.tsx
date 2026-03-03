@@ -15,7 +15,7 @@ import {
   Trash2
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { API_BASE_URL } from '@/lib/api-config'
+import { API_BASE_URL, getAuthHeaders } from '@/lib/api-config'
 import { feedback } from '@/lib/user-feedback'
 import { BatchStudentsModal } from './BatchStudentsModal'
 
@@ -51,7 +51,9 @@ export function BatchManagement() {
     try {
       setLoading(true)
       const loadingToast = feedback.loadingData('batches')
-      const response = await fetch(`${API_BASE_URL}/admin/batches`)
+      const response = await fetch(`${API_BASE_URL}/admin/batches`, {
+        headers: getAuthHeaders()
+      })
       const data = await response.json()
 
       toast.dismiss(loadingToast)
@@ -139,7 +141,8 @@ export function BatchManagement() {
       const response = await fetch(`${API_BASE_URL}/admin/batches`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          ...getAuthHeaders()
         },
         body: JSON.stringify({
           batch_name: batchName,
@@ -190,7 +193,8 @@ export function BatchManagement() {
       const response = await fetch(`${API_BASE_URL}/admin/batches/${batchId}`, {
         method: 'PATCH',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          ...getAuthHeaders()
         },
         body: JSON.stringify({
           is_active: false
@@ -232,7 +236,8 @@ export function BatchManagement() {
       const response = await fetch(`${API_BASE_URL}/admin/batches/${batchId}`, {
         method: 'PATCH',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          ...getAuthHeaders()
         },
         body: JSON.stringify({
           is_active: true

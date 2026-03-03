@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { getApiUrl } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
 import {
   Bell,
   RefreshCw,
@@ -39,7 +39,7 @@ export function AdminNotifications() {
   const fetchAlerts = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch(getApiUrl('admin/notifications/alerts'))
+      const res = await fetch(getApiUrl('admin/notifications/alerts'), { headers: getAuthHeaders() })
       if (res.ok) {
         const data = await res.json()
         setAlerts(data.alerts || data.rows || [])
@@ -59,6 +59,7 @@ export function AdminNotifications() {
     try {
       const res = await fetch(getApiUrl('admin/notifications/daily-summary'), {
         method: 'POST',
+        headers: getAuthHeaders()
       })
       if (res.ok) {
         toast.success('Daily summary email sent')

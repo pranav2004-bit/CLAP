@@ -4,7 +4,7 @@ import { useState, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { getApiUrl } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
 import {
   Search,
   Download,
@@ -56,7 +56,7 @@ export function ScoreManagement() {
           break
       }
 
-      const res = await fetch(url)
+      const res = await fetch(url, { headers: getAuthHeaders() })
       if (res.ok) {
         const data = await res.json()
         setScores(data.scores || data.rows || [])
@@ -79,12 +79,15 @@ export function ScoreManagement() {
     try {
       const res = await fetch(getApiUrl(`admin/scores/submissions/${submissionId}/override`), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders()
+        },
         body: JSON.stringify({
-          domain,
-          score: parseFloat(editScore),
-          reason: editReason || 'Admin override',
-        }),
+          domain: editingDomain,
+          new_score: parseFloat(editScore),
+          reason: editReason
+        })
       })
 
       if (res.ok) {
