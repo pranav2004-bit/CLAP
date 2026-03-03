@@ -26,6 +26,7 @@ from api.views.admin import (
     report_management,
     email_management,
     notifications,
+    student_bulk_import,
 )
 from api.views.student import profile, clap_attempt, audio_upload, audio_playback
 from api.views import evaluate, legacy_tests, legacy_attempts, submissions, email_webhooks, auth
@@ -52,6 +53,8 @@ urlpatterns = [
     # ADMIN - STUDENT MANAGEMENT (7 endpoints)
     # ============================================
     path('admin/students', students.students_handler, name='admin_students'),
+    path('admin/students/bulk-import', student_bulk_import.bulk_import_students, name='admin_students_bulk_import'),
+    path('admin/students/bulk-template', student_bulk_import.bulk_import_template, name='admin_students_bulk_template'),
     path('admin/students/<uuid:student_id>', student_detail.student_detail_handler, name='admin_student_detail'),
     path('admin/students/<uuid:student_id>/toggle-active', student_toggle_active.toggle_student_active, name='admin_student_toggle_active'),
     path('admin/students/<uuid:student_id>/reset-password', student_password.reset_student_password, name='admin_student_reset_password'),
