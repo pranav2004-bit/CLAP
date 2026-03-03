@@ -277,13 +277,37 @@ def pipeline_health(request):
     if oldest and oldest.created_at:
         oldest_age_seconds = int((timezone.now() - oldest.created_at).total_seconds())
 
+    # Check actual Redis connection connection
+    redis_connected = False
+    if redis_client:
+        try:
+            redis_client.ping()
+            redis_connected = True
+        except Exception:
+            redis_connected = False
+
+    # Check actual Celery workers
+    celery_active = False
+    if find_spec('celery') is not None:
+        try:
+            from clap_backend.celery import app as celery_app
+            i = celery_app.control.inspect()
+            active_workers = i.ping()
+            celery_active = bool(active_workers)
+        except Exception:
+            celery_active = False
+
     return JsonResponse({
         'queue_depths': queue_depths,
+        'queue_depth': sum(q['depth'] for q in queue_depths if q['depth'] is not None),
         'dlq': {
             'unresolved_count': unresolved_dlq,
             'oldest_entry_id': oldest.id if oldest else None,
             'oldest_age_seconds': oldest_age_seconds,
         },
+        'dlq_count': unresolved_dlq,
         'celery_available': find_spec('celery') is not None,
+        'celery_active': celery_active,
         'redis_available': redis_client is not None,
+        'redis_connected': redis_connected,
     })

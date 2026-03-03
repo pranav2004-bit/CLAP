@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useTransition } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
@@ -28,6 +28,7 @@ type AdminLayoutProps = {
 
 export default function AdminLayout({ children }: AdminLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [isPending, startTransition] = useTransition()
   const pathname = usePathname()
   const router = useRouter()
 
@@ -43,8 +44,10 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
   }
 
   const goTo = (route: string) => {
-    router.push(route)
     setSidebarOpen(false)
+    startTransition(() => {
+      router.push(route)
+    })
   }
 
   return (

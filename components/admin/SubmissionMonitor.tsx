@@ -71,9 +71,9 @@ export function SubmissionMonitor() {
     setLoading(true)
     try {
       const [overviewRes, listRes, healthRes] = await Promise.allSettled([
-        fetch(getApiUrl('admin/submissions/overview'), { headers: getAuthHeaders() }),
-        fetch(getApiUrl(`admin/submissions${statusFilter ? `?status=${statusFilter}` : ''}`), { headers: getAuthHeaders() }),
-        fetch(getApiUrl('admin/submissions/health'), { headers: getAuthHeaders() }),
+        fetch(getApiUrl('admin/submissions/overview'), { headers: getAuthHeaders(), cache: 'no-store' }),
+        fetch(getApiUrl(`admin/submissions${statusFilter ? `?status=${statusFilter}` : ''}`), { headers: getAuthHeaders(), cache: 'no-store' }),
+        fetch(getApiUrl('admin/submissions/health'), { headers: getAuthHeaders(), cache: 'no-store' }),
       ])
 
       if (overviewRes.status === 'fulfilled' && overviewRes.value.ok) {
