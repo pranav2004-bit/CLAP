@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 
 from celery import shared_task
 from celery.exceptions import SoftTimeLimitExceeded
+from openai import RateLimitError as OpenAIRateLimitError
 from django.conf import settings
 from django.db import transaction, connection
 from django.db.models import F, Sum
@@ -386,7 +387,7 @@ def score_rule_based(self, submission_id):
         connection.close()
 
 
-@shared_task(bind=True, max_retries=3, autoretry_for=(TimeoutError, ConnectionError), retry_backoff=True, retry_backoff_max=300, retry_jitter=True, acks_late=True, reject_on_worker_lost=True, time_limit=180, soft_time_limit=160)
+@shared_task(bind=True, max_retries=3, autoretry_for=(TimeoutError, ConnectionError, OpenAIRateLimitError), retry_backoff=True, retry_backoff_max=300, retry_jitter=True, acks_late=True, reject_on_worker_lost=True, time_limit=180, soft_time_limit=160)
 def evaluate_writing(self, submission_id):
     if _task_already_processed(self.request.id):
         return {'status': 'skipped', 'reason': 'task already processed', 'task_id': self.request.id}
@@ -428,7 +429,7 @@ def evaluate_writing(self, submission_id):
         connection.close()
 
 
-@shared_task(bind=True, max_retries=3, autoretry_for=(TimeoutError, ConnectionError), retry_backoff=True, retry_backoff_max=300, retry_jitter=True, acks_late=True, reject_on_worker_lost=True, time_limit=180, soft_time_limit=160)
+@shared_task(bind=True, max_retries=3, autoretry_for=(TimeoutError, ConnectionError, OpenAIRateLimitError), retry_backoff=True, retry_backoff_max=300, retry_jitter=True, acks_late=True, reject_on_worker_lost=True, time_limit=180, soft_time_limit=160)
 def evaluate_speaking(self, submission_id):
     if _task_already_processed(self.request.id):
         return {'status': 'skipped', 'reason': 'task already processed', 'task_id': self.request.id}
