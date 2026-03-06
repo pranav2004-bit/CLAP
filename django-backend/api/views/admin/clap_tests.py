@@ -21,30 +21,54 @@ logger = logging.getLogger(__name__)
 def list_clap_tests(request):
     """
     GET /api/admin/clap-tests
-    Matches Next.js GET function behavior
+    Supports optional pagination and filtering query parameters:
+      ?page=1&page_size=20&status=draft&batch_id=<uuid>
+    Returns all tests when no pagination params are provided (backward-compatible).
     """
     try:
-        # Fetch CLAP tests with related data
-        clap_tests = ClapTest.objects.filter(
-            ~Q(status='deleted')
-        ).select_related('batch').prefetch_related('components__items').order_by('-created_at')
-        
+        # Optional pagination parameters
+        page_str = request.GET.get('page')
+        page_size_str = request.GET.get('page_size')
+        status_filter = request.GET.get('status')
+        batch_filter = request.GET.get('batch_id')
+
+        paginated = page_str is not None  # Only paginate when explicitly requested
+
+        qs = ClapTest.objects.filter(~Q(status='deleted'))
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        if batch_filter:
+            qs = qs.filter(batch_id=batch_filter)
+        qs = qs.select_related('batch').prefetch_related('components').order_by('-created_at')
+
+        total = None
+        if paginated:
+            try:
+                page = max(1, int(page_str))
+                page_size = min(max(1, int(page_size_str or 20)), 100)
+            except (ValueError, TypeError):
+                page, page_size = 1, 20
+            total = qs.count()
+            offset = (page - 1) * page_size
+            clap_tests = list(qs[offset: offset + page_size])
+        else:
+            clap_tests = list(qs)
+
         # Transform data to match frontend expectations
         transformed_tests = []
         for test in clap_tests:
             test_dict = {
                 'id': str(test.id),
-                'test_id': test.test_id,  # Add custom ID
+                'test_id': test.test_id,
                 'name': test.name,
                 'batch_id': str(test.batch_id) if test.batch_id else None,
                 'batch_name': test.batch.batch_name if test.batch else 'Unknown Batch',
                 'status': test.status,
                 'is_assigned': bool(test.batch_id),
                 'created_at': test.created_at.isoformat() if test.created_at else None,
-                'global_duration_minutes': test.global_duration_minutes,
                 'tests': []
             }
-            
+
             # Transform components
             for comp in test.components.all():
                 test_dict['tests'].append({
@@ -53,15 +77,22 @@ def list_clap_tests(request):
                     'type': comp.test_type,
                     'status': comp.status,
                     'duration': comp.duration_minutes,
-                    'max_marks': comp.max_marks,
-                    'timer_enabled': comp.timer_enabled,
-                    'item_count': comp.items.count(),
+                    'max_marks': comp.max_marks
                 })
-            
+
             transformed_tests.append(test_dict)
-        
-        return JsonResponse({'clapTests': transformed_tests})
-        
+
+        response_data = {'clapTests': transformed_tests}
+        if paginated and total is not None:
+            response_data['pagination'] = {
+                'page': page,
+                'page_size': page_size,
+                'total': total,
+                'total_pages': (total + page_size - 1) // page_size,
+            }
+
+        return JsonResponse(response_data)
+
     except Exception as error:
         logger.error(f'Server error: {error}', exc_info=True)
         return error_response('Internal server error', status=500)

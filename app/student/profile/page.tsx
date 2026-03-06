@@ -17,7 +17,7 @@ import {
   CheckCircle,
   ArrowLeft
 } from 'lucide-react'
-import { getApiUrl } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders, apiFetch } from '@/lib/api-config'
 
 interface StudentProfile {
   id: string
@@ -73,10 +73,8 @@ export default function StudentProfilePage() {
         return
       }
 
-      const response = await fetch(getApiUrl('student/profile'), {
-        headers: {
-          'x-user-id': userId
-        }
+      const response = await apiFetch(getApiUrl('student/profile'), {
+        headers: getAuthHeaders()
       })
 
       if (!response.ok) {
@@ -121,11 +119,11 @@ export default function StudentProfilePage() {
       setSaving(true)
       const userId = localStorage.getItem('user_id')
 
-      const response = await fetch(getApiUrl('student/profile'), {
+      const response = await apiFetch(getApiUrl('student/profile'), {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'x-user-id': userId || ''
+          ...getAuthHeaders()
         },
         body: JSON.stringify({
           username: formData.username.trim(),
@@ -183,11 +181,11 @@ export default function StudentProfilePage() {
     try {
       const userId = localStorage.getItem('user_id')
 
-      const response = await fetch(getApiUrl('student/change-password'), {
+      const response = await apiFetch(getApiUrl('student/change-password'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-user-id': userId || ''
+          ...getAuthHeaders()
         },
         body: JSON.stringify({
           currentPassword: passwordData.currentPassword,

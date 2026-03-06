@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ArrowLeft, Headphones, Mic, BookOpen, PenTool, Brain, CheckCircle, PlayCircle, Loader2, Download, Clock, AlertTriangle, LogOut } from 'lucide-react'
 import { toast } from 'sonner'
-import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders, apiFetch } from '@/lib/api-config'
 import { useAntiCheat } from '@/hooks/useAntiCheat'
 
 const STATUS_STEPS = [
@@ -84,7 +84,7 @@ export default function StudentClapTestDetailPage() {
   useEffect(() => {
     const fetchAssignment = async () => {
       try {
-        const response = await fetch(getApiUrl('student/clap-assignments'), {
+        const response = await apiFetch(getApiUrl('student/clap-assignments'), {
           headers: getAuthHeaders()
         })
         const data = await response.json()
@@ -103,7 +103,7 @@ export default function StudentClapTestDetailPage() {
 
             // If not yet submitted, call /start to get a server-anchored start time
             if (found.status !== 'completed') {
-              const startResp = await fetch(getApiUrl(`student/clap-assignments/${params.assignment_id}/start`), {
+              const startResp = await apiFetch(getApiUrl(`student/clap-assignments/${params.assignment_id}/start`), {
                 method: 'POST',
                 headers: getAuthHeaders()
               })
@@ -148,7 +148,7 @@ export default function StudentClapTestDetailPage() {
     if (!autoSubmit && !confirm('Are you sure you want to submit the ENTIRE assessment? You will not be able to make changes.')) return;
     try {
       const idempotencyKey = crypto.randomUUID();
-      const submitResp = await fetch(getApiUrl('submissions'), {
+      const submitResp = await apiFetch(getApiUrl('submissions'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -199,7 +199,7 @@ export default function StudentClapTestDetailPage() {
     if (isAutoSubmitRef.current) return  // already submitting — stop polling
 
     try {
-      const res = await fetch(getApiUrl(`student/clap-assignments/${params.assignment_id}/global-timer`), {
+      const res = await apiFetch(getApiUrl(`student/clap-assignments/${params.assignment_id}/global-timer`), {
         headers: getAuthHeaders()
       })
 
@@ -345,8 +345,7 @@ export default function StudentClapTestDetailPage() {
     const poll = async () => {
       try {
         setPolling(true)
-        const userId = localStorage.getItem('user_id') || ''
-        const resp = await fetch(getApiUrl(`submissions/${submissionId}/status`), {
+        const resp = await apiFetch(getApiUrl(`submissions/${submissionId}/status`), {
           headers: getAuthHeaders(),
         })
 
@@ -380,8 +379,7 @@ export default function StudentClapTestDetailPage() {
 
     const fetchResults = async () => {
       try {
-        const userId = localStorage.getItem('user_id') || ''
-        const resp = await fetch(getApiUrl(`submissions/${submissionId}/results`), {
+        const resp = await apiFetch(getApiUrl(`submissions/${submissionId}/results`), {
           headers: getAuthHeaders(),
         })
         if (!resp.ok) return
@@ -398,10 +396,9 @@ export default function StudentClapTestDetailPage() {
   useEffect(() => {
     const fetchHistory = async () => {
       try {
-        const userId = localStorage.getItem('user_id') || ''
         const assessmentId = assignment?.test_id || assignment?.clap_test_id || assignment?.id || ''
         const url = assessmentId ? getApiUrl(`submissions/history?assessment_id=${assessmentId}`) : getApiUrl('submissions/history')
-        const resp = await fetch(url, { headers: getAuthHeaders() })
+        const resp = await apiFetch(url, { headers: getAuthHeaders() })
         if (!resp.ok) return
         const data = await resp.json()
         setHistory(Array.isArray(data.rows) ? data.rows : [])

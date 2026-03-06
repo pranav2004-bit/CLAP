@@ -393,6 +393,55 @@ class StudentClapAssignment(models.Model):
         return f"{self.student.email} - {self.clap_test.name}{set_info} (attempt {self.attempt_number})"
 
 
+class ComponentAttempt(models.Model):
+    """
+    Tracks per-component attempt timing for server-side deadline enforcement.
+    One row is created when a student first fetches items for a component.
+    deadline = started_at + component.duration_minutes.
+    Server validates all submissions against this deadline.
+    """
+    STATUS_CHOICES = [
+        ('active', 'Active'),
+        ('completed', 'Completed'),
+        ('expired', 'Expired'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    assignment = models.ForeignKey(
+        StudentClapAssignment,
+        on_delete=models.CASCADE,
+        db_column='assignment_id',
+        related_name='component_attempts'
+    )
+    component = models.ForeignKey(
+        ClapTestComponent,
+        on_delete=models.CASCADE,
+        db_column='component_id',
+        related_name='attempts'
+    )
+    started_at = models.DateTimeField(default=timezone.now)
+    deadline = models.DateTimeField()
+    completed_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
+    auto_submitted = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = 'component_attempts'
+        managed = True
+        unique_together = [['assignment', 'component']]
+        indexes = [
+            models.Index(fields=['assignment', 'component'], name='idx_comp_attempt_asgn_comp'),
+            models.Index(fields=['deadline'], name='idx_comp_attempt_deadline'),
+            models.Index(fields=['status'], name='idx_comp_attempt_status'),
+        ]
+
+    def is_expired(self):
+        return timezone.now() > self.deadline
+
+    def __str__(self):
+        return f"Attempt: {self.assignment.student.email} - {self.component.title}"
+
+
 class ClapTestItem(models.Model):
     """Maps to 'clap_test_items' table in Supabase"""
     

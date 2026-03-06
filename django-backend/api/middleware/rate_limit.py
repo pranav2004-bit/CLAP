@@ -90,8 +90,11 @@ class ApiRateLimitMiddleware:
     /api/ endpoints using Redis counters.
     """
 
-    # Paths exempt from rate limiting
-    EXEMPT_PATHS = {'/api/health/', '/api/health'}
+    # Paths exempt from the global IP rate limit.
+    # /api/auth/login has its own dedicated per-identifier lockout and per-IP
+    # limit (200/min) implemented directly in api/views/auth.py, which is
+    # appropriate for school networks where many students share one public IP.
+    EXEMPT_PATHS = {'/api/health/', '/api/health', '/api/auth/login'}
 
     def __init__(self, get_response):
         self.get_response = get_response

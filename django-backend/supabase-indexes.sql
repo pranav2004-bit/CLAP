@@ -57,6 +57,11 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_clap_tests_batch_id
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_clap_tests_status
     ON clap_tests (status);
 
+-- Composite index for admin list: filter by status, sort by created_at DESC
+-- Used by the paginated admin /admin/tests endpoint with status filters
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_clap_tests_status_created
+    ON clap_tests (status, created_at DESC);
+
 
 -- ── clap_test_components ─────────────────────────────────────────
 -- Lookup components by parent test — CELERY TASK CRITICAL PATH

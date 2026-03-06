@@ -189,6 +189,7 @@ def login(request):
             )
 
         # ── Per-IP rate limit for login ───────────────────────────────────────
+        # Extracts the real client IP, respecting reverse proxy X-Forwarded-For.
         forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR', '')
         ip = forwarded_for.split(',')[0].strip() if forwarded_for else request.META.get('REMOTE_ADDR', 'unknown')
         if _check_login_ip_limit(redis_client, ip):

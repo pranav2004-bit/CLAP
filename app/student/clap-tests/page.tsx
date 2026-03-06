@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { FileText, Clock, CheckCircle } from 'lucide-react'
 import { toast } from 'sonner'
-import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders, apiFetch } from '@/lib/api-config'
 
 export default function StudentClapTestsPage() {
     const router = useRouter()
@@ -17,7 +17,7 @@ export default function StudentClapTestsPage() {
     useEffect(() => {
         const fetchAssignments = async () => {
             try {
-                const response = await fetch(getApiUrl('student/clap-assignments'), {
+                const response = await apiFetch(getApiUrl('student/clap-assignments'), {
                     headers: getAuthHeaders()
                 })
                 const data = await response.json()

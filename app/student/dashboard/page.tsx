@@ -136,13 +136,44 @@ export default function StudentDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Dashboard stats are driven by the CLAP assignments page (/student/clap-tests).
-  // The legacy useStudentDashboard hook called old Supabase-era endpoints
-  // (/tests, /attempts) that no longer exist in the Django backend — removed
-  // to stop the 400 Bad Request flood. Students see live data when they
-  // navigate to /student/clap-tests after clicking "Start Assessment Session".
+  // Real-time assignment stats — fetched from /student/clap-assignments.
+  // Drives the dashboard stat cards and overall progress bar.
+  const [assignmentStats, setAssignmentStats] = useState({
+    total: 0,
+    completed: 0,
+    started: 0,
+    assigned: 0,
+  })
+  const [statsLoading, setStatsLoading] = useState(true)
+
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const res = await apiFetch(getApiUrl('student/clap-assignments'), {
+          headers: getAuthHeaders()
+        })
+        if (res.ok) {
+          const data = await res.json()
+          const list: any[] = data.assignments || []
+          setAssignmentStats({
+            total: list.length,
+            completed: list.filter((a: any) => a.status === 'completed').length,
+            started: list.filter((a: any) => a.status === 'started').length,
+            assigned: list.filter((a: any) => a.status === 'assigned').length,
+          })
+        }
+      } catch (e) {
+        console.error('Stats fetch error:', e)
+      } finally {
+        setStatsLoading(false)
+      }
+    }
+    fetchStats()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Stubs kept for JSX compatibility (guarded sections use `dashboardData &&`)
   const dashboardData = null as any
-  const isLoading = false
   const error = null as string | null
   const lastUpdated = null as Date | null
   const refresh = () => {}
@@ -167,14 +198,16 @@ export default function StudentDashboard() {
     router.push('/login')
   }
 
-  // Use real data when available, fallback to mock data
-  const completedTests = dashboardData?.stats.completed_tests || 0
-  const totalTests = dashboardData?.stats.total_tests || tests.length
+  // Real stats from clap-assignments — fallback to mock counts when no assignments yet
+  const completedTests = assignmentStats.completed
+  const totalTests = assignmentStats.total || tests.length
   const overallProgress = totalTests > 0 ? (completedTests / totalTests) * 100 : 0
+  const isLoading = statsLoading
 
-  const totalDuration = dashboardData?.tests.reduce((acc: number, t: any) => acc + t.duration_minutes, 0) || 0
-  const totalMarks = dashboardData?.tests.reduce((acc: number, t: any) => acc + (t.score || 0), 0) || 0
-  const maxMarks = dashboardData?.tests.reduce((acc: number, t: any) => acc + (t.max_score || 0), 0) || 50
+  // Duration / marks shown on stat cards (real values come from the test detail page)
+  const totalDuration = 0
+  const totalMarks = 0
+  const maxMarks = 50
 
   return (
     <div className="min-h-dvh bg-background">
