@@ -79,6 +79,15 @@ def start_live_timer(request, test_id):
         except ClapTest.DoesNotExist:
             return JsonResponse({'error': 'Test not found'}, status=404)
 
+        # Guard: timer may only run on a live (published) test.
+        # Prevents accidentally starting a countdown on a draft or stopped test.
+        if test.status != 'published':
+            return JsonResponse(
+                {'error': 'Live timer can only be started when the test is Published (Started). '
+                          'Please click "Start Test" in the test header first.'},
+                status=400
+            )
+
         # Guard: do not reset a running timer unless explicitly forced
         if test.global_deadline and not force:
             now = timezone.now()

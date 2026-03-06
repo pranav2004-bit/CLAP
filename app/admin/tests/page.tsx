@@ -729,90 +729,84 @@ export default function AdminTestsPage() {
 
   const handleAssignClapTest = async (clapTest: any) => {
     try {
-      // Optimistically update UI first
+      // Optimistically update UI — status and is_assigned update together so the
+      // header badge switches from Draft → Published on the spot (Fix #2)
       setClapTests(prevTests =>
         prevTests.map(test =>
           test.id === clapTest.id
-            ? { ...test, is_assigned: true }
+            ? { ...test, is_assigned: true, status: 'published' }
             : test
         )
       );
-
-      // Update selected test if it's the same one
       if (selectedClapTest && selectedClapTest.id === clapTest.id) {
-        setSelectedClapTest((prev: any) => ({ ...prev, is_assigned: true }));
+        setSelectedClapTest((prev: any) => ({ ...prev, is_assigned: true, status: 'published' }));
       }
 
-      // Make API call to assign the test
+      // batch_id is intentionally omitted — backend uses the test's existing batch (Fix #3)
       const response = await apiFetch(getApiUrl(`admin/clap-tests/${clapTest.id}/assign`), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...getAuthHeaders()
-        },
-        body: JSON.stringify({
-          batch_id: clapTest.batch_id
-        })
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({})
       });
 
       const data = await response.json();
 
       if (response.ok) {
         feedback.assigned('CLAP Test', clapTest.name, 'selected batch');
-        // Refresh to ensure data consistency
+        // Re-fetch to ensure full server-side consistency (batch_name, student counts, etc.)
         fetchClapTests();
       } else {
-        // Rollback optimistic update on error
+        // Rollback both is_assigned AND status on error
         setClapTests(prevTests =>
           prevTests.map(test =>
             test.id === clapTest.id
-              ? { ...test, is_assigned: false }
+              ? { ...test, is_assigned: false, status: 'draft' }
               : test
           )
         );
-
         if (selectedClapTest && selectedClapTest.id === clapTest.id) {
-          setSelectedClapTest((prev: any) => ({ ...prev, is_assigned: false }));
+          setSelectedClapTest((prev: any) => ({ ...prev, is_assigned: false, status: 'draft' }));
         }
-
-        feedback.error(data.error || 'Failed to assign CLAP test');
+        feedback.error(data.error || 'Failed to start CLAP test');
       }
     } catch (error) {
       console.error('Error assigning CLAP test:', error);
-      // Rollback optimistic update on error
+      // Rollback on network error
       setClapTests(prevTests =>
         prevTests.map(test =>
           test.id === clapTest.id
-            ? { ...test, is_assigned: false }
+            ? { ...test, is_assigned: false, status: 'draft' }
             : test
         )
       );
-
       if (selectedClapTest && selectedClapTest.id === clapTest.id) {
-        setSelectedClapTest((prev: any) => ({ ...prev, is_assigned: false }));
+        setSelectedClapTest((prev: any) => ({ ...prev, is_assigned: false, status: 'draft' }));
       }
-
-      toast.error('Failed to assign CLAP test');
+      toast.error('Failed to start CLAP test');
     }
   };
 
   const handleUnassignClapTest = async (clapTest: any) => {
     try {
-      // Optimistically update UI first
+      // Optimistically update UI — status and is_assigned together so badge
+      // switches Published → Draft on the spot (Fix #2).
+      // batch_id / batch_name are intentionally kept — batch is preserved (Fix #3).
       setClapTests(prevTests =>
         prevTests.map(test =>
           test.id === clapTest.id
-            ? { ...test, is_assigned: false }
+            ? { ...test, is_assigned: false, status: 'draft' }
             : test
         )
       );
-
-      // Update selected test if it's the same one
       if (selectedClapTest && selectedClapTest.id === clapTest.id) {
-        setSelectedClapTest((prev: any) => ({ ...prev, is_assigned: false }));
+        setSelectedClapTest((prev: any) => ({ ...prev, is_assigned: false, status: 'draft' }));
       }
 
-      // Make API call to unassign the test
+      // Clear live-timer display immediately — backend will clear global_deadline
+      setLiveTimer(null)
+      setLiveTimerTimeLeft(null)
+      if (liveTimerPollRef.current) clearInterval(liveTimerPollRef.current)
+
       const response = await apiFetch(getApiUrl(`admin/clap-tests/${clapTest.id}/unassign`), {
         method: 'POST',
         headers: getAuthHeaders()
@@ -822,42 +816,35 @@ export default function AdminTestsPage() {
 
       if (response.ok) {
         feedback.unassigned('CLAP Test', clapTest.name);
-        // Refresh to ensure data consistency
         fetchClapTests();
       } else {
-        // Rollback optimistic update on error - revert to unassigned state
+        // Rollback both is_assigned AND status on error
         setClapTests(prevTests =>
           prevTests.map(test =>
             test.id === clapTest.id
-              ? { ...test, is_assigned: false }
+              ? { ...test, is_assigned: true, status: 'published' }
               : test
           )
         );
-
         if (selectedClapTest && selectedClapTest.id === clapTest.id) {
-          setSelectedClapTest((prev: any) => ({ ...prev, is_assigned: false }));
+          setSelectedClapTest((prev: any) => ({ ...prev, is_assigned: true, status: 'published' }));
         }
-
-        feedback.error(data.error || 'Failed to unassign CLAP test');
+        feedback.error(data.error || 'Failed to stop CLAP test');
       }
     } catch (error) {
       console.error('Error unassigning CLAP test:', error);
-      // Rollback optimistic update on error - revert to unassigned state
+      // Rollback on network error
       setClapTests(prevTests =>
         prevTests.map(test =>
           test.id === clapTest.id
-            ? { ...test, is_assigned: false }
+            ? { ...test, is_assigned: true, status: 'published' }
             : test
         )
       );
-
       if (selectedClapTest && selectedClapTest.id === clapTest.id) {
-        setSelectedClapTest((prev: any) => ({ ...prev, is_assigned: false }));
+        setSelectedClapTest((prev: any) => ({ ...prev, is_assigned: true, status: 'published' }));
       }
-
-      feedback.error('Failed to unassign CLAP test', {
-        description: 'Please try again'
-      });
+      feedback.error('Failed to stop CLAP test', { description: 'Please try again' });
     }
   };
 
@@ -1704,8 +1691,19 @@ export default function AdminTestsPage() {
                         {isNotStarted && (
                           <Button
                             onClick={() => handleStartLiveTimer(false)}
-                            disabled={startLoading || !selectedClapTest?.global_duration_minutes}
-                            className="bg-indigo-600 hover:bg-indigo-700 text-white"
+                            disabled={
+                              startLoading ||
+                              !selectedClapTest?.global_duration_minutes ||
+                              selectedClapTest?.status !== 'published'
+                            }
+                            title={
+                              selectedClapTest?.status !== 'published'
+                                ? 'Click "Start Test" in the header first'
+                                : !selectedClapTest?.global_duration_minutes
+                                ? 'Set a duration in the Configure tab first'
+                                : 'Start the live countdown for all students'
+                            }
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             {startLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Zap className="w-4 h-4 mr-2" />}
                             Start Live Timer
@@ -1852,6 +1850,18 @@ export default function AdminTestsPage() {
                             </div>
                           ))}
                         </div>
+                      </div>
+                    )}
+
+                    {/* Locked warning — shown when test is not yet Published */}
+                    {isNotStarted && !liveTimerLoading && selectedClapTest?.status !== 'published' && (
+                      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800 flex items-start gap-3">
+                        <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
+                        <p>
+                          <strong>Live Timer is locked.</strong>{' '}
+                          The test must be <strong>Published</strong> (Started) before you can use the live timer.
+                          Click <strong>&ldquo;Start Test&rdquo;</strong> in the header above, then return here to start the countdown.
+                        </p>
                       </div>
                     )}
 
