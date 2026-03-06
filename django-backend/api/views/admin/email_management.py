@@ -187,6 +187,10 @@ def bulk_resend_email(request):
 
     only_failed = bool(payload.get('only_failed', False))
 
+    # H3: Safety guard — default to dry_run=True so admins must explicitly opt-in.
+    # This prevents accidental bulk-spam on 500 students from a single API call.
+    dry_run = bool(payload.get('dry_run', True))
+
     qs = AssessmentSubmission.objects.select_related('user').filter(report_url__isnull=False)
     if batch_id:
         qs = qs.filter(user__batch_id=batch_id)
@@ -195,6 +199,16 @@ def bulk_resend_email(request):
 
     rows = list(qs.order_by('-updated_at')[:500])
     latest_events = _latest_email_event_map([s.id for s in rows])
+
+    # H3: dry_run preview — return what would be dispatched without actually sending
+    if dry_run:
+        would_dispatch = [str(s.id) for s in rows]
+        return JsonResponse({
+            'status': 'dry_run',
+            'would_dispatch_count': len(would_dispatch),
+            'would_dispatch': would_dispatch[:20],  # Preview first 20
+            'note': 'No emails sent. Pass dry_run=false to execute.',
+        }, status=200)
 
     dispatched = []
     skipped = []

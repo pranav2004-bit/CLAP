@@ -53,6 +53,7 @@ def evaluate_speaking(transcript: str, prompt: str) -> Dict[str, Any]:
             ],
             temperature=0.3,
             response_format={'type': 'json_object'},
+            timeout=30,
         )
         content = response.choices[0].message.content
         if not content:
@@ -85,6 +86,7 @@ def evaluate_writing(essay: str, prompt: str) -> Dict[str, Any]:
             ],
             temperature=0.3,
             response_format={'type': 'json_object'},
+            timeout=30,
         )
         content = response.choices[0].message.content
         if not content:
@@ -123,6 +125,7 @@ def transcribe_audio(audio_file, mime_type: str = 'audio/mp3') -> str:
             model='whisper-1',
             file=file_obj,
             response_format='text',
+            timeout=60,
         )
         return response
 

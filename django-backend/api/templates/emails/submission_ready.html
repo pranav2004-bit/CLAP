@@ -2,7 +2,7 @@
 <html>
   <body style="font-family: Arial, sans-serif; color: #222;">
     <h2>Your CLAP Assessment Results Are Ready</h2>
-    <p>Hello {{ student_name }},</p>
+    <p>Hello {{ student_name|escape }},</p>
     <p>Your assessment report has been generated successfully.</p>
     <table style="border-collapse: collapse; width: 100%; max-width: 520px;">
       <thead>

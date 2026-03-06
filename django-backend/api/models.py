@@ -571,6 +571,7 @@ class AssessmentSubmission(models.Model):
     STATUS_RULES_COMPLETE = 'RULES_COMPLETE'
     STATUS_LLM_PROCESSING = 'LLM_PROCESSING'
     STATUS_LLM_COMPLETE = 'LLM_COMPLETE'
+    STATUS_LLM_FAILED = 'LLM_FAILED'
     STATUS_REPORT_GENERATING = 'REPORT_GENERATING'
     STATUS_REPORT_READY = 'REPORT_READY'
     STATUS_EMAIL_SENDING = 'EMAIL_SENDING'
@@ -581,6 +582,7 @@ class AssessmentSubmission(models.Model):
         (STATUS_RULES_COMPLETE, 'Rules Complete'),
         (STATUS_LLM_PROCESSING, 'LLM Processing'),
         (STATUS_LLM_COMPLETE, 'LLM Complete'),
+        (STATUS_LLM_FAILED, 'LLM Failed'),
         (STATUS_REPORT_GENERATING, 'Report Generating'),
         (STATUS_REPORT_READY, 'Report Ready'),
         (STATUS_EMAIL_SENDING, 'Email Sending'),

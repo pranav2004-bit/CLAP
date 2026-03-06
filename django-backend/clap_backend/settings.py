@@ -270,6 +270,13 @@ RATE_LIMIT_ENABLED         = config('RATE_LIMIT_ENABLED', default=True, cast=boo
 RATE_LIMIT_ANON_PER_MINUTE = config('RATE_LIMIT_ANON_PER_MINUTE', default=60, cast=int)
 RATE_LIMIT_AUTH_PER_MINUTE = config('RATE_LIMIT_AUTH_PER_MINUTE', default=300, cast=int)
 
+# ── Submission pipeline rate limits (enterprise: 500 per user/hr, 5000 global/hr) ─
+SUBMISSION_RATE_LIMIT_PER_USER_PER_HOUR = config('SUBMISSION_RATE_LIMIT_PER_USER_PER_HOUR', default=500, cast=int)
+SUBMISSION_RATE_LIMIT_GLOBAL_PER_INSTITUTION_PER_HOUR = config('SUBMISSION_RATE_LIMIT_GLOBAL_PER_INSTITUTION_PER_HOUR', default=5000, cast=int)
+
+# ── Email webhook HMAC secret (set in .env for SendGrid/SES signature verification) ─
+EMAIL_WEBHOOK_SECRET = config('EMAIL_WEBHOOK_SECRET', default='')
+
 # ── E2: x-user-id header trust ───────────────────────────────────────────────
 # When True (default), the x-user-id request header is trusted as a direct
 # user identity shortcut (matches current frontend behaviour).

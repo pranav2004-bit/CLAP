@@ -386,7 +386,7 @@ def score_rule_based(self, submission_id):
         connection.close()
 
 
-@shared_task(bind=True, max_retries=3, autoretry_for=(TimeoutError, ConnectionError, ValueError), retry_backoff=True, retry_backoff_max=300, retry_jitter=True, acks_late=True, reject_on_worker_lost=True, time_limit=180, soft_time_limit=160)
+@shared_task(bind=True, max_retries=3, autoretry_for=(TimeoutError, ConnectionError), retry_backoff=True, retry_backoff_max=300, retry_jitter=True, acks_late=True, reject_on_worker_lost=True, time_limit=180, soft_time_limit=160)
 def evaluate_writing(self, submission_id):
     if _task_already_processed(self.request.id):
         return {'status': 'skipped', 'reason': 'task already processed', 'task_id': self.request.id}
@@ -414,15 +414,21 @@ def evaluate_writing(self, submission_id):
         _record_dlq('evaluate_writing', submission_id, {'submission_id': str(submission_id)},
                     RuntimeError('SoftTimeLimitExceeded'), self.request.retries)
         raise
+    except ValueError as exc:
+        # H4: LLM response parse errors are not transient — DLQ immediately, no retry
+        _record_dlq('evaluate_writing', submission_id, {'submission_id': str(submission_id)}, exc, self.request.retries)
+        _transition_submission_status(submission, AssessmentSubmission.STATUS_LLM_FAILED)
     except Exception as exc:
         if self.request.retries >= self.max_retries:
             _record_dlq('evaluate_writing', submission_id, {'submission_id': str(submission_id)}, exc, self.request.retries)
+            # C3: surface permanent failure — student sees error, not endless spinner
+            _transition_submission_status(submission, AssessmentSubmission.STATUS_LLM_FAILED)
         raise
     finally:
         connection.close()
 
 
-@shared_task(bind=True, max_retries=3, autoretry_for=(TimeoutError, ConnectionError, ValueError), retry_backoff=True, retry_backoff_max=300, retry_jitter=True, acks_late=True, reject_on_worker_lost=True, time_limit=180, soft_time_limit=160)
+@shared_task(bind=True, max_retries=3, autoretry_for=(TimeoutError, ConnectionError), retry_backoff=True, retry_backoff_max=300, retry_jitter=True, acks_late=True, reject_on_worker_lost=True, time_limit=180, soft_time_limit=160)
 def evaluate_speaking(self, submission_id):
     if _task_already_processed(self.request.id):
         return {'status': 'skipped', 'reason': 'task already processed', 'task_id': self.request.id}
@@ -497,9 +503,15 @@ def evaluate_speaking(self, submission_id):
         _record_dlq('evaluate_speaking', submission_id, {'submission_id': str(submission_id)},
                     RuntimeError('SoftTimeLimitExceeded'), self.request.retries)
         raise
+    except ValueError as exc:
+        # H4: LLM response parse errors are not transient — DLQ immediately, no retry
+        _record_dlq('evaluate_speaking', submission_id, {'submission_id': str(submission_id)}, exc, self.request.retries)
+        _transition_submission_status(submission, AssessmentSubmission.STATUS_LLM_FAILED)
     except Exception as exc:
         if self.request.retries >= self.max_retries:
             _record_dlq('evaluate_speaking', submission_id, {'submission_id': str(submission_id)}, exc, self.request.retries)
+            # C3: surface permanent failure — student sees error, not endless spinner
+            _transition_submission_status(submission, AssessmentSubmission.STATUS_LLM_FAILED)
         raise
     finally:
         connection.close()
@@ -675,6 +687,12 @@ def send_email_report(self, submission_id):
         )
 
         return {'status': 'ok', 'task': 'send_email_report', 'submission_id': submission_id}
+    except SoftTimeLimitExceeded:
+        # C7: explicit handler prevents submission staying stuck in EMAIL_SENDING forever
+        log_event('error', 'send_email_report_soft_time_limit', submission_id=str(submission_id))
+        _record_dlq('send_email_report', submission_id, {'submission_id': str(submission_id)},
+                    RuntimeError('SoftTimeLimitExceeded'), self.request.retries)
+        raise
     except Exception as exc:
         if self.request.retries >= self.max_retries:
             _record_dlq('send_email_report', submission_id, {'submission_id': str(submission_id)}, exc, self.request.retries)

@@ -75,8 +75,8 @@ def _check_rate_limit(user, redis_client):
         logger.warning('Redis unavailable — rate limiting fail-closed, rejecting submission')
         return False, _RATE_LIMIT_UNAVAILABLE
 
-    user_limit = getattr(settings, 'SUBMISSION_RATE_LIMIT_PER_USER_PER_HOUR', 10)
-    global_limit = getattr(settings, 'SUBMISSION_RATE_LIMIT_GLOBAL_PER_INSTITUTION_PER_HOUR', 100)
+    user_limit = getattr(settings, 'SUBMISSION_RATE_LIMIT_PER_USER_PER_HOUR', 500)
+    global_limit = getattr(settings, 'SUBMISSION_RATE_LIMIT_GLOBAL_PER_INSTITUTION_PER_HOUR', 5000)
 
     user_key, global_key = _rate_limit_keys(user)
 
