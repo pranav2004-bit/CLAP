@@ -19,7 +19,30 @@ export const getAuthHeaders = (): Record<string, string> => {
     if (accessToken) {
         return { 'Authorization': `Bearer ${accessToken}` }
     }
-    // Fallback to x-user-id for backward compatibility
+    // Fallback to x-user-id for backward compatibility during migration
     const userId = localStorage.getItem('user_id')
     return userId ? { 'x-user-id': userId } : {}
+}
+
+/**
+ * Handle a 401 Unauthorized response from the API.
+ * Clears auth state and redirects to the appropriate login page.
+ * Call this whenever an API response returns status 401.
+ *
+ * Usage:
+ *   const res = await fetch(...)
+ *   if (res.status === 401) { handle401(); return; }
+ */
+export const handle401 = () => {
+    if (typeof window === 'undefined') return
+    const role = localStorage.getItem('user_role')
+    // Clear all auth tokens — the session has expired
+    localStorage.removeItem('access_token')
+    localStorage.removeItem('user_id')
+    localStorage.removeItem('user_email')
+    localStorage.removeItem('user_role')
+    localStorage.removeItem('user_name')
+    // Redirect to the correct login page
+    const loginPath = role === 'admin' ? '/admin-login' : '/login'
+    window.location.href = `${loginPath}?reason=session_expired`
 }

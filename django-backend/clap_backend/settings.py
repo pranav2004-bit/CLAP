@@ -286,7 +286,7 @@ EMAIL_WEBHOOK_SECRET = config('EMAIL_WEBHOOK_SECRET', default='')
 TRUST_X_USER_ID_HEADER = config('TRUST_X_USER_ID_HEADER', default=False, cast=bool)
 
 # JWT settings (architecture target: 15 minute access, 7 day refresh)
-JWT_ACCESS_TOKEN_MINUTES = config('JWT_ACCESS_TOKEN_MINUTES', default=60, cast=int)
+JWT_ACCESS_TOKEN_MINUTES = config('JWT_ACCESS_TOKEN_MINUTES', default=480, cast=int)  # 8 hours — admin sessions are long
 JWT_REFRESH_TOKEN_DAYS = config('JWT_REFRESH_TOKEN_DAYS', default=7, cast=int)
 JWT_ROTATE_REFRESH_TOKENS = config('JWT_ROTATE_REFRESH_TOKENS', default=True, cast=bool)
 JWT_BLACKLIST_AFTER_ROTATION = config('JWT_BLACKLIST_AFTER_ROTATION', default=True, cast=bool)
