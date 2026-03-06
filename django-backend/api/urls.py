@@ -27,8 +27,13 @@ from api.views.admin import (
     email_management,
     notifications,
     student_bulk_import,
+    retest_management,
+    clap_test_sets,      # Sets feature
+    set_distribution,    # Sets distribution
+    timer_management,    # Live timer management
 )
 from api.views.student import profile, clap_attempt, audio_upload, audio_playback
+from api.views.student import timer_status as student_timer_status
 from api.views import evaluate, legacy_tests, legacy_attempts, submissions, email_webhooks, auth
 from api.views.health import health_check
 
@@ -67,6 +72,30 @@ urlpatterns = [
     path('admin/clap-tests/<uuid:test_id>/assign', clap_test_assignment.assign_clap_test, name='admin_clap_test_assign'),
     path('admin/clap-tests/<uuid:test_id>/unassign', clap_test_assignment.unassign_clap_test, name='admin_clap_test_unassign'),
     path('admin/clap-tests/<uuid:test_id>/results', clap_test_results.clap_test_results_handler, name='admin_clap_test_results'),
+    path('admin/clap-tests/<uuid:test_id>/retest-candidates', retest_management.list_retest_candidates, name='admin_retest_candidates'),
+    path('admin/assignments/<uuid:assignment_id>/grant-retest', retest_management.grant_retest, name='admin_grant_retest'),
+
+    # ── Sets Feature (8 endpoints) ──────────────────────────────────────────
+    path('admin/clap-tests/<uuid:test_id>/sets', clap_test_sets.sets_handler, name='admin_clap_test_sets'),
+    path('admin/clap-tests/<uuid:test_id>/sets/validate', clap_test_sets.validate_sets, name='admin_clap_test_sets_validate'),
+    path('admin/clap-tests/<uuid:test_id>/sets/import-from-components', clap_test_sets.import_from_components, name='admin_clap_test_sets_import'),
+    path('admin/clap-tests/<uuid:test_id>/sets/<uuid:set_id>', clap_test_sets.set_detail_handler, name='admin_clap_test_set_detail'),
+    path('admin/sets/<uuid:set_id>/components', clap_test_sets.set_components_handler, name='admin_set_components'),
+    path('admin/set-components/<uuid:component_id>', clap_test_sets.set_component_detail_handler, name='admin_set_component_detail'),
+    path('admin/set-components/<uuid:component_id>/items', clap_test_sets.set_items_handler, name='admin_set_items'),
+    path('admin/set-items/<uuid:item_id>', clap_test_sets.set_item_detail_handler, name='admin_set_item_detail'),
+    path('admin/set-components/<uuid:component_id>/reorder-items', clap_test_sets.set_reorder_items_handler, name='admin_set_reorder_items'),
+    path('admin/clap-tests/<uuid:test_id>/distribute-sets', set_distribution.distribute_sets, name='admin_distribute_sets'),
+    path('admin/clap-tests/<uuid:test_id>/distribution-status', set_distribution.distribution_status, name='admin_distribution_status'),
+    path('admin/clap-tests/<uuid:test_id>/clear-distribution', set_distribution.clear_distribution, name='admin_clear_distribution'),
+
+    # Timer force-sync (propagates master Configure settings to all set components)
+    path('admin/clap-tests/<uuid:test_id>/sync-timers', clap_components.force_sync_timers, name='admin_sync_timers'),
+
+    # ── Live Timer Management (admin controls for real-time deadline changes) ─
+    path('admin/clap-tests/<uuid:test_id>/start-live-timer',  timer_management.start_live_timer,  name='admin_start_live_timer'),
+    path('admin/clap-tests/<uuid:test_id>/extend-timer',      timer_management.extend_timer,       name='admin_extend_timer'),
+    path('admin/clap-tests/<uuid:test_id>/live-timer-status', timer_management.live_timer_status,  name='admin_live_timer_status'),
 
     # CLAP Test Items (Content)
     path('admin/clap-components/<uuid:component_id>', clap_components.clap_component_detail_handler, name='admin_clap_component_detail'),
@@ -77,6 +106,8 @@ urlpatterns = [
     # Audio Block File Upload
     path('admin/clap-items/<uuid:item_id>/upload-audio', admin_audio_upload.upload_audio_file, name='admin_upload_audio'),
     path('admin/clap-items/<uuid:item_id>/audio', admin_audio_upload.handle_audio_file, name='admin_delete_audio'),
+    path('admin/set-items/<uuid:item_id>/upload-audio', admin_audio_upload.upload_set_audio_file, name='admin_set_upload_audio'),
+    path('admin/set-items/<uuid:item_id>/audio', admin_audio_upload.handle_set_audio_file, name='admin_set_delete_audio'),
 
     # Submission Pipeline Monitor
     path('admin/submissions/overview', submissions_monitor.submission_status_overview, name='admin_submissions_overview'),
@@ -132,6 +163,9 @@ urlpatterns = [
 
     # CLAP Test Taking
     path('student/clap-assignments', clap_attempt.list_assigned_tests, name='student_list_assignments'),
+    path('student/clap-assignments/<uuid:assignment_id>/start', clap_attempt.start_assignment, name='student_start_assignment'),
+    # Live timer — server-authoritative deadline polling (every 5-30 s, adaptive)
+    path('student/clap-assignments/<uuid:assignment_id>/global-timer', student_timer_status.global_timer_status, name='student_global_timer'),
     path('student/clap-assignments/<uuid:assignment_id>/components/<uuid:component_id>/items', clap_attempt.student_test_items, name='student_test_items'),
     path('student/clap-assignments/<uuid:assignment_id>/submit', clap_attempt.submit_response, name='student_submit_response'),
     path('student/clap-assignments/<uuid:assignment_id>/components/<uuid:component_id>/finish', clap_attempt.finish_component, name='student_finish_component'),

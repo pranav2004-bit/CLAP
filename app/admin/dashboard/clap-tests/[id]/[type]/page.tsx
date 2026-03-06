@@ -82,7 +82,7 @@ function ClapTestEditorContent() {
                 const itemsData = await itemsResponse.json()
 
                 if (itemsResponse.ok) {
-                    setItems(itemsData.items)
+                    setItems(itemsData.items || [])
                 }
 
             } catch (error: any) {
@@ -122,14 +122,14 @@ function ClapTestEditorContent() {
             })
 
             const data = await response.json()
-            if (response.ok) {
-                // Replace temp item with real item
-                setItems(prev => prev.map(item => item.id.startsWith('temp-') ? data.item : item))
+            if (response.ok && data.item) {
+                // Replace temp item with real item from server
+                setItems(prev => prev.map(item => item?.id?.startsWith('temp-') ? data.item : item).filter(Boolean))
                 toast.success('Item added')
                 setShowAddMenu(false)
             } else {
-                toast.error('Failed to add item')
-                setItems(prev => prev.filter(item => !item.id.startsWith('temp-')))
+                toast.error(data.error || 'Failed to add item')
+                setItems(prev => prev.filter(item => item && !item.id?.startsWith('temp-')))
             }
         } catch (error) {
             toast.error('Network error')
@@ -382,16 +382,12 @@ function ClapTestEditorContent() {
                     <div>
                         <h1 className="text-xl font-bold capitalize">{params.type} Test Editor</h1>
                         <p className="text-sm text-gray-500 mb-1">
-                            Total Marks: <span className="font-bold text-indigo-600">{items.reduce((sum, item) => sum + (item.item_type === 'mcq' ? (item.points || 0) : 0), 0)}</span>
+                            Total Marks: <span className="font-bold text-indigo-600">{items.reduce((sum, item) => sum + (item?.item_type === 'mcq' ? (item.points || 0) : 0), 0)}</span>
                         </p>
-                        <p className="text-xs text-gray-400">{items.length} items • {items.filter(item => isQuestion(item.item_type)).length} questions • {component?.title}</p>
+                        <p className="text-xs text-gray-400">{items.length} items • {items.filter(item => item && isQuestion(item.item_type)).length} questions • {component?.title}</p>
                     </div>
                 </div>
                 <div className="flex gap-2">
-                    <Button size="sm" variant="outline" onClick={() => setShowSettings(true)}>
-                        <Settings className="w-4 h-4 mr-2" />
-                        Settings
-                    </Button>
                     <Button size="sm" variant="outline" onClick={() => setShowPreview(true)}>
                         <Eye className="w-4 h-4 mr-2" />
                         Preview
@@ -474,7 +470,7 @@ function ClapTestEditorContent() {
 
                 {/* Items List */}
                 <div className="space-y-6">
-                    {items.map((item, index) => (
+                    {items.filter(Boolean).map((item, index) => (
                         <Card key={item.id} className="relative group hover:shadow-md transition-shadow">
                             <CardHeader className="bg-gray-50/50 border-b pb-3 pt-3 px-4">
                                 <div className="flex items-center gap-3">

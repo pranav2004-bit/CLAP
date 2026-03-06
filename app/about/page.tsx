@@ -71,7 +71,7 @@ export default function AboutPage() {
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between">
             <Link href="/" className="flex items-center gap-2">
-              <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={128} height={52} className="w-auto h-12 object-contain" priority />
+              <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={128} height={52} className="w-auto h-12 object-contain" priority style={{ width: 'auto', height: 'auto' }} />
             </Link>
             <div className="hidden md:flex items-center gap-8">
               <Link href="/#features" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Features</Link>
@@ -115,39 +115,32 @@ export default function AboutPage() {
       <section className="py-16 bg-secondary/30">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="max-w-4xl mx-auto">
-            <div className="grid md:grid-cols-2 gap-12 items-center">
-              <div>
-                <h2 className="text-display-sm mb-6">Our Mission</h2>
-                <p className="text-lg text-muted-foreground mb-6">
+            <div>
+              <h2 className="text-display-sm mb-6 text-center">Our Mission</h2>
+              <div className="max-w-3xl mx-auto space-y-6">
+                <p className="text-lg text-muted-foreground">
                   We believe every language learner deserves access to high-quality, affordable assessment
                   that provides meaningful feedback for improvement.
                 </p>
-                <p className="text-muted-foreground mb-6">
+                <p className="text-muted-foreground">
                   Traditional language testing is expensive, time-consuming, and often inaccessible.
                   CLAP changes this by leveraging AI to deliver instant, accurate evaluations at scale.
                 </p>
-                <ul className="space-y-3">
-                  <li className="flex items-start gap-3">
-                    <CheckCircle className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
-                    <span>Democratize access to quality language assessment</span>
-                  </li>
-                  <li className="flex items-start gap-3">
-                    <CheckCircle className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
-                    <span>Provide immediate, actionable feedback</span>
-                  </li>
-                  <li className="flex items-start gap-3">
-                    <CheckCircle className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
-                    <span>Support continuous learning and improvement</span>
-                  </li>
-                </ul>
-              </div>
-              <div className="bg-card rounded-2xl p-8 border border-border">
-                <div className="text-center">
-                  <Star className="w-12 h-12 text-yellow-500 mx-auto mb-4" />
-                  <h3 className="text-2xl font-bold mb-2">Trusted by 10,000+ Learners</h3>
-                  <p className="text-muted-foreground">
-                    Join our growing community of language enthusiasts who trust CLAP for accurate assessment
-                  </p>
+                <div className="bg-card rounded-2xl p-6 border border-border mt-8">
+                  <ul className="space-y-4">
+                    <li className="flex items-start gap-3">
+                      <CheckCircle className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
+                      <span>Democratize access to quality language assessment</span>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <CheckCircle className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
+                      <span>Provide immediate, actionable feedback</span>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <CheckCircle className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
+                      <span>Support continuous learning and improvement</span>
+                    </li>
+                  </ul>
                 </div>
               </div>
             </div>
@@ -244,9 +237,9 @@ export default function AboutPage() {
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-2">
-              <Image src="/images/clap-logo.png" alt="CLAP Logo" width={32} height={32} className="rounded-lg" />
+              <Image src="/images/clap-logo.png" alt="CLAP Logo" width={32} height={32} className="rounded-lg" style={{ width: 'auto', height: 'auto' }} />
               <span className="font-semibold">CLAP</span>
-              <span className="text-sm text-muted-foreground">by SANJIVO</span>
+              <span className="text-sm text-muted-foreground ml-2">A SANJIVO Product</span>
             </div>
             <p className="text-sm text-muted-foreground">
               © 2026 CLAP. All rights reserved.

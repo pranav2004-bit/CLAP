@@ -43,7 +43,7 @@ def get_clap_test(request, test_id):
     try:
         # Fetch CLAP test with related data
         try:
-            clap_test = ClapTest.objects.select_related('batch').prefetch_related('components').get(id=test_id)
+            clap_test = ClapTest.objects.select_related('batch').prefetch_related('components__items').get(id=test_id)
         except ClapTest.DoesNotExist:
             logger.error('Error fetching CLAP test: not found')
             return error_response('CLAP test not found', status=404)
@@ -57,14 +57,17 @@ def get_clap_test(request, test_id):
             'status': clap_test.status,
             'is_assigned': bool(clap_test.batch_id),
             'created_at': clap_test.created_at.isoformat() if clap_test.created_at else None,
+            'global_duration_minutes': clap_test.global_duration_minutes,
             'tests': [
                 {
-                    'id': str(comp.id),  # Return actual component UUID
+                    'id': str(comp.id),
                     'name': comp.title,
                     'type': comp.test_type,
                     'status': comp.status,
                     'duration': comp.duration_minutes,
-                    'max_marks': comp.max_marks
+                    'max_marks': comp.max_marks,
+                    'timer_enabled': comp.timer_enabled,
+                    'item_count': comp.items.count(),
                 }
                 for comp in clap_test.components.all()
             ]
@@ -111,6 +114,10 @@ def update_clap_test(request, test_id):
             update_data['batch_id'] = batch_id
         if 'status' in body:
             update_data['status'] = body.get('status')
+        if 'global_duration_minutes' in body:
+            # Accept null (to revert to auto) or an integer value
+            gdm = body.get('global_duration_minutes')
+            update_data['global_duration_minutes'] = int(gdm) if gdm is not None else None
         
         # Update the test
         ClapTest.objects.filter(id=test_id).update(**update_data)

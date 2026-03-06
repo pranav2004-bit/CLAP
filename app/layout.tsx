@@ -41,18 +41,19 @@ export default function RootLayout({
         </AuthProvider>
 
         {/* Company Footer Branding */}
-        <footer className="fixed bottom-0 left-0 right-0 bg-background/80 backdrop-blur-sm border-t border-border py-2 px-6 text-xs text-muted-foreground z-50">
-          <div className="max-w-7xl mx-auto flex items-center justify-between">
-            <div className="flex-1"></div> {/* Left spacer */}
+        <footer className="fixed bottom-0 left-0 right-0 bg-background/95 backdrop-blur-md border-t border-border/40 py-1.5 md:py-2 px-4 md:px-6 text-[10px] md:text-xs text-muted-foreground z-50 flex items-center transition-all">
+          <div className="w-full max-w-7xl mx-auto flex items-center justify-center md:justify-between">
+            <div className="hidden md:block flex-1"></div> {/* Left spacer for desktop symmetry */}
 
-            <div className="flex-1 flex justify-center items-center gap-1.5">
-              <span>Product by</span>
-              <span className="font-bold text-primary tracking-wide">SANJIVO</span>
+            <div className="flex justify-center items-baseline gap-2 flex-none md:flex-1 w-full md:w-auto">
+              <span className="uppercase tracking-[0.15em] font-medium opacity-70 text-[9px] md:text-[10px]">A</span>
+              <span className="font-black text-primary tracking-[0.2em] text-[11px] md:text-[13px] uppercase antialiased">SANJIVO</span>
+              <span className="tracking-[0.15em] font-medium opacity-70 text-[9px] md:text-[10px]">Product</span>
             </div>
 
-            <div className="flex-1 flex justify-end items-center gap-1.5 opacity-80">
-              <span className="italic">Co-Powered by</span>
-              <span className="font-semibold text-foreground/90">Aura-Tech-Vision</span>
+            <div className="hidden md:flex flex-1 justify-end items-center gap-1.5 opacity-80">
+              <span className="italic font-light">Co-Powered by</span>
+              <span className="font-semibold text-foreground/90 tracking-wide">Aura-Tech-Vision</span>
             </div>
           </div>
         </footer>

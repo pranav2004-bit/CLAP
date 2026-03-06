@@ -3,14 +3,14 @@ import type { NextRequest } from 'next/server'
 
 export async function middleware(req: NextRequest) {
   const res = NextResponse.next()
-  
+
   // For now, we'll handle authentication in the client-side
   // The middleware will primarily handle routing logic
   const { pathname } = req.nextUrl
 
   // Define public paths that don't require authentication
-  const publicPaths = ['/login', '/', '/api']
-  const isPublicPath = publicPaths.some(path => 
+  const publicPaths = ['/login', '/admin-login', '/', '/api']
+  const isPublicPath = publicPaths.some(path =>
     pathname === path || pathname.startsWith(`${path}/`)
   )
 
@@ -19,7 +19,7 @@ export async function middleware(req: NextRequest) {
 
   // For now, we'll handle authentication redirects in client components
   // This middleware focuses on basic routing protection
-  
+
   // You can add more sophisticated logic here as needed
 
   return res

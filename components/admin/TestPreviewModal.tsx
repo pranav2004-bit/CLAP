@@ -42,9 +42,10 @@ type TestPreviewModalProps = {
     items: any[]
     testTitle: string
     duration?: number
+    globalTimeLeft?: number | null
 }
 
-export function TestPreviewModal({ isOpen, onClose, testType, items, testTitle, duration = 0 }: TestPreviewModalProps) {
+export function TestPreviewModal({ isOpen, onClose, testType, items, testTitle, duration = 0, globalTimeLeft }: TestPreviewModalProps) {
     // --- State Management ---
     const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0)
     const [answers, setAnswers] = useState<{ [itemId: string]: any }>({})
@@ -53,6 +54,7 @@ export function TestPreviewModal({ isOpen, onClose, testType, items, testTitle, 
     const [timeLeft, setTimeLeft] = useState((duration || 60) * 60)
     const [showSubmitModal, setShowSubmitModal] = useState(false)
     const [isSubmitted, setIsSubmitted] = useState(false)
+    const [isTimedOut, setIsTimedOut] = useState(false)  // true = expired by clock (not manual)
     const [isPaletteOpen, setIsPaletteOpen] = useState(false)
 
     const timerRef = useRef<NodeJS.Timeout | null>(null)
@@ -69,6 +71,7 @@ export function TestPreviewModal({ isOpen, onClose, testType, items, testTitle, 
         setMarked(new Set())
         setTimeLeft(duration > 0 ? duration * 60 : 60 * 60)
         setIsSubmitted(false)
+        setIsTimedOut(false)
         setShowSubmitModal(false)
         setIsPaletteOpen(false)
 
@@ -154,7 +157,7 @@ export function TestPreviewModal({ isOpen, onClose, testType, items, testTitle, 
 
     const handleTimeUp = () => {
         setIsSubmitted(true)
-        setShowSubmitModal(true)
+        setIsTimedOut(true)   // show the non-dismissible TIME'S UP overlay
     }
 
     const handleSubmitClick = () => {
@@ -231,13 +234,17 @@ export function TestPreviewModal({ isOpen, onClose, testType, items, testTitle, 
 
                 <div className="flex items-center gap-2 sm:gap-4 shrink-0">
                     {/* Timer */}
-                    {duration > 0 && (
+                    {(globalTimeLeft !== undefined && globalTimeLeft !== null) ? (
+                        <div className={`flex items-center gap-1 sm:gap-2 text-base sm:text-xl font-mono font-bold ${globalTimeLeft < 300 ? 'text-red-400 animate-pulse' : 'text-white'}`}>
+                            <Clock className="w-4 h-4 sm:w-5 sm:h-5" />
+                            {Math.floor(globalTimeLeft / 60).toString().padStart(2, '0')}:{(globalTimeLeft % 60).toString().padStart(2, '0')}
+                        </div>
+                    ) : duration > 0 ? (
                         <div className={`flex items-center gap-1 sm:gap-2 text-base sm:text-xl font-mono font-bold ${timeLeft < 300 ? 'text-red-400 animate-pulse' : 'text-white'}`}>
                             <Clock className="w-4 h-4 sm:w-5 sm:h-5" />
                             {Math.floor(timeLeft / 60).toString().padStart(2, '0')}:{(timeLeft % 60).toString().padStart(2, '0')}
                         </div>
-                    )}
-                    {!duration && (
+                    ) : (
                         <div className="hidden sm:block text-sm text-gray-400 font-mono">No Time Limit</div>
                     )}
 
@@ -486,6 +493,31 @@ export function TestPreviewModal({ isOpen, onClose, testType, items, testTitle, 
             </div>
 
             {/* 3. Submit Modal */}
+            {/* TIME'S UP overlay — shown when timer expires (not dismissible — mirrors what students see) */}
+            {isTimedOut && (
+                <div className="fixed inset-0 z-[75] flex flex-col items-center justify-center bg-black/80 backdrop-blur-md p-6 text-center">
+                    <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 space-y-5">
+                        <div className="w-16 h-16 rounded-full bg-red-100 border-2 border-red-400 flex items-center justify-center mx-auto">
+                            <Clock className="w-8 h-8 text-red-500" />
+                        </div>
+                        <div>
+                            <h2 className="text-2xl font-bold text-gray-900">Time Is Up</h2>
+                            <p className="text-gray-500 mt-1 text-sm">
+                                In the live exam, students&apos; module is auto-submitted and they are redirected back to the dashboard.
+                            </p>
+                        </div>
+                        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800 text-left space-y-1">
+                            <p className="font-bold">Admin Preview Note</p>
+                            <p>Timer was set to <strong>{duration} minutes</strong> as configured in the Configure tab.</p>
+                            <p>This timer enforces auto-submission for students in real exams.</p>
+                        </div>
+                        <Button onClick={onClose} className="w-full bg-slate-800 hover:bg-slate-700 text-white">
+                            Close Preview
+                        </Button>
+                    </div>
+                </div>
+            )}
+
             {showSubmitModal && (
                 <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
                     <div className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
@@ -554,38 +586,19 @@ function AdminPreviewAudioPlayer({ item }: { item: any }) {
     const limitReached = hasLimit && playCount >= playLimit
 
     useEffect(() => {
-        let objectUrl = ''
+        const userId = typeof window !== 'undefined' ? localStorage.getItem('user_id') : null
 
-        const loadAudio = async () => {
-            setIsLoadingAudio(true)
-            try {
-                if (item.content?.has_audio_file) {
-                    const response = await fetch(getApiUrl(`admin/clap-items/${item.id}/audio`), {
-                        headers: getAuthHeaders()
-                    })
-                    if (response.ok) {
-                        const blob = await response.blob()
-                        objectUrl = URL.createObjectURL(blob)
-                        setAudioSrc(objectUrl)
-                    } else {
-                        console.error('Failed to fetch authorized audio file')
-                    }
-                } else if (item.content?.url) {
-                    setAudioSrc(item.content.url)
-                }
-            } catch (error) {
-                console.error('Error loading audio:', error)
-            } finally {
-                setIsLoadingAudio(false)
-            }
-        }
-
-        loadAudio()
-
-        return () => {
-            if (objectUrl) {
-                URL.revokeObjectURL(objectUrl)
-            }
+        if (item.content?.has_audio_file) {
+            const baseUrl = getApiUrl(`admin/clap-items/${item.id}/audio`)
+            const separator = baseUrl.includes('?') ? '&' : '?'
+            setAudioSrc(`${baseUrl}${separator}user_id=${userId || ''}`)
+            setIsLoadingAudio(false)
+        } else if (item.content?.url) {
+            setAudioSrc(item.content.url)
+            setIsLoadingAudio(false)
+        } else {
+            setAudioSrc('')
+            setIsLoadingAudio(false)
         }
     }, [item.id, item.content?.has_audio_file, item.content?.url])
 
@@ -593,12 +606,16 @@ function AdminPreviewAudioPlayer({ item }: { item: any }) {
         if (!audioRef.current) return
         if (limitReached) return
 
-        if (isPlaying) {
-            audioRef.current.pause()
+        if (audioRef.current.paused) {
+            audioRef.current.play().catch(err => {
+                console.error('Play error:', err)
+                setIsPlaying(false)
+            })
+            setIsPlaying(true)
         } else {
-            audioRef.current.play().catch(console.error)
+            audioRef.current.pause()
+            setIsPlaying(false)
         }
-        setIsPlaying(!isPlaying)
     }
 
     const handleEnded = () => {
@@ -635,6 +652,13 @@ function AdminPreviewAudioPlayer({ item }: { item: any }) {
     const visualizerHeights = useMemo(() => {
         return Array.from({ length: 40 }).map(() => Math.floor(Math.random() * 20) + 12)
     }, [])
+
+    const [hasError, setHasError] = useState(false)
+
+    const handleAudioError = (e: any) => {
+        console.error('Audio element error:', e)
+        setHasError(true)
+    }
 
     if (isLoadingAudio) {
         return (
@@ -675,8 +699,19 @@ function AdminPreviewAudioPlayer({ item }: { item: any }) {
                 onPause={() => setIsPlaying(false)}
                 onTimeUpdate={handleTimeUpdate}
                 onLoadedMetadata={handleLoadedMetadata}
+                onError={handleAudioError}
                 className="hidden"
             />
+
+            {hasError && (
+                <div className="mb-6 w-full p-4 bg-red-50 border border-red-200 rounded-xl flex items-center gap-3 text-red-600">
+                    <AlertCircle className="w-5 h-5 shrink-0" />
+                    <div className="text-sm">
+                        <p className="font-bold text-base">Playback Error</p>
+                        <p>The audio file could not be loaded. Please check your internet connection or try re-uploading the file.</p>
+                    </div>
+                </div>
+            )}
 
             {/* Audio Visualizer & Timestamps */}
             <div className="w-full max-w-sm mb-8">

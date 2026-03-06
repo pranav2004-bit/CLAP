@@ -64,7 +64,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
       <aside className={`fixed left-0 top-0 z-[60] h-[100dvh] w-64 bg-white border-r border-gray-200 transform transition-transform duration-300 ease-in-out flex flex-col ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}>
         {/* Logo Header */}
         <div className="flex flex-col items-center gap-1 px-6 py-5 border-b border-gray-200 text-center shrink-0">
-          <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={113} height={46} className="w-auto h-10 object-contain" priority />
+          <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={113} height={46} className="w-auto h-10 object-contain" priority style={{ width: 'auto', height: 'auto' }} />
           <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mt-1">Admin Portal</p>
         </div>
 
@@ -211,7 +211,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
               document.cookie.split(";").forEach((c) => {
                 document.cookie = c.replace(/^ +/, "").replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/");
               });
-              window.location.href = '/login';
+              window.location.href = '/admin-login';
             }}
             className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 transition-colors"
           >

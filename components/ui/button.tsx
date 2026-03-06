@@ -7,16 +7,26 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground hover:bg-primary/90 shadow-md hover:shadow-lg",
-        destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90 shadow-md hover:shadow-lg",
-        outline: "border-2 border-primary bg-transparent text-primary hover:bg-primary hover:text-primary-foreground",
-        secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
-        ghost: "hover:bg-accent/10 hover:text-accent",
-        link: "text-primary underline-offset-4 hover:underline",
-        success: "bg-success text-success-foreground hover:bg-success/90 shadow-md hover:shadow-lg",
-        warning: "bg-warning text-warning-foreground hover:bg-warning/90 shadow-md hover:shadow-lg",
-        hero: "bg-gradient-primary text-primary-foreground shadow-lg hover:shadow-glow hover:scale-[1.02] active:scale-[0.98]",
-        "hero-outline": "border-2 border-primary-foreground/30 bg-primary-foreground/10 text-primary-foreground hover:bg-primary-foreground/20 backdrop-blur-sm",
+        default:
+          "bg-primary text-primary-foreground hover:bg-primary/90 shadow-md hover:shadow-lg",
+        destructive:
+          "bg-destructive text-destructive-foreground hover:bg-destructive/90 shadow-md hover:shadow-lg",
+        outline:
+          "border border-input bg-transparent hover:bg-accent/10 text-foreground hover:text-foreground",
+        secondary:
+          "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+        ghost:
+          "hover:bg-accent/10 hover:text-foreground",
+        link:
+          "text-primary underline-offset-4 hover:underline",
+        success:
+          "bg-success text-success-foreground hover:bg-success/90 shadow-md hover:shadow-lg",
+        warning:
+          "bg-warning text-warning-foreground hover:bg-warning/90 shadow-md hover:shadow-lg",
+        hero:
+          "bg-gradient-primary text-primary-foreground shadow-lg hover:shadow-glow hover:scale-[1.02] active:scale-[0.98]",
+        "hero-outline":
+          "border-2 border-primary-foreground/30 bg-primary-foreground/10 text-primary-foreground hover:bg-primary-foreground/20 backdrop-blur-sm",
       },
       size: {
         default: "h-10 px-4 py-2",

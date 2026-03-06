@@ -136,7 +136,7 @@ export default function ClapTestResultsPage() {
         setTotalCount(data.pagination.total_count)
       } else if (response.status === 401) {
         toast.error('Unauthorized. Please log in again.')
-        router.push('/login')
+        router.push('/admin-login')
       } else {
         setError(data.error || 'Failed to load results')
       }

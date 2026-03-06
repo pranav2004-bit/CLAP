@@ -43,7 +43,7 @@ services:
       - redis_data:/data
     command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -71,9 +71,9 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - media_files:/app/media
+      - ./django-backend/media:/app/media
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health/')\" 2>/dev/null || exit 1"]
+      test: [ "CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health/')\" 2>/dev/null || exit 1" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -100,7 +100,7 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - media_files:/app/media
+      - ./django-backend/media:/app/media
     command: >
       python -m celery -A clap_backend worker
         --loglevel=info
@@ -129,7 +129,7 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - media_files:/app/media
+      - ./django-backend/media:/app/media
     command: >
       python -m celery -A clap_backend worker
         --loglevel=info
@@ -158,7 +158,7 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - media_files:/app/media
+      - ./django-backend/media:/app/media
     command: >
       python -m celery -A clap_backend worker
         --loglevel=info
@@ -191,10 +191,7 @@ services:
         --loglevel=info
         --scheduler celery.beat:PersistentScheduler
 
-
 # ── Named volumes ────────────────────────────────────────────────
 volumes:
   redis_data:
-    driver: local
-  media_files:
     driver: local

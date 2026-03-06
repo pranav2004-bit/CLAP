@@ -3,10 +3,10 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
-import { 
-  BookOpen, 
-  CheckCircle, 
-  PlayCircle, 
+import {
+  BookOpen,
+  CheckCircle,
+  PlayCircle,
   Circle,
   TrendingUp,
   Target,
@@ -99,7 +99,7 @@ export function StatsOverview({ stats }: StatsOverviewProps) {
             </div>
             <Progress value={getCompletionPercentage()} className="h-3" />
           </div>
-          
+
           <div className="grid grid-cols-2 gap-4 text-sm">
             <div className="flex items-center gap-2">
               <CheckCircle className="w-4 h-4 text-success" />
@@ -122,17 +122,17 @@ export function StatsOverview({ stats }: StatsOverviewProps) {
       </Card>
 
       {/* Statistics Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-3 gap-3 sm:gap-4">
         {statItems.map((item) => (
           <Card key={item.title} className="hover:shadow-md transition-shadow">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
+            <CardContent className="p-3 sm:p-4">
+              <div className="flex flex-col-reverse sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-0">
                 <div>
-                  <p className="text-sm text-muted-foreground">{item.title}</p>
-                  <p className="text-2xl font-bold mt-1">{item.value}</p>
+                  <p className="text-xs sm:text-sm text-muted-foreground line-clamp-1">{item.title}</p>
+                  <p className="text-lg sm:text-2xl font-bold mt-0.5 sm:mt-1">{item.value}</p>
                 </div>
-                <div className={`p-3 rounded-full ${item.bgColor}`}>
-                  <item.icon className={`w-6 h-6 ${item.color}`} />
+                <div className={`p-2 sm:p-3 rounded-full self-end sm:self-auto ${item.bgColor}`}>
+                  <item.icon className={`w-5 h-5 sm:w-6 sm:h-6 ${item.color}`} />
                 </div>
               </div>
             </CardContent>

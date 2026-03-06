@@ -249,22 +249,24 @@ export default function StudentProfilePage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-8">
       <div className="container mx-auto px-4 max-w-4xl">
-        <Button
-          variant="ghost"
-          className="mb-6 pl-0 hover:bg-transparent hover:text-indigo-600 transition-colors"
-          onClick={() => router.push('/student/dashboard')}
-        >
-          <ArrowLeft className="w-4 h-4 mr-2" />
-          Back to Dashboard
-        </Button>
-        <div className="flex items-center justify-between mb-8">
+        {profile.profile_completed && (
+          <Button
+            variant="ghost"
+            className="mb-6 pl-0 hover:bg-transparent hover:text-indigo-600 transition-colors"
+            onClick={() => router.push('/student/dashboard')}
+          >
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Back to Dashboard
+          </Button>
+        )}
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8">
           <div>
-            <h1 className="text-3xl font-bold text-gray-800">My Profile</h1>
-            <p className="text-gray-600 mt-2">Complete your profile to access all features</p>
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-800">My Profile</h1>
+            <p className="text-sm sm:text-base text-gray-600 mt-1 sm:mt-2">Complete your profile to access all features</p>
           </div>
           <Badge
             variant={profile.profile_completed ? "default" : "secondary"}
-            className={profile.profile_completed ? "bg-green-100 text-green-800" : "bg-yellow-100 text-yellow-800"}
+            className={profile.profile_completed ? "bg-green-100 text-green-800 whitespace-nowrap" : "bg-yellow-100 text-yellow-800 whitespace-nowrap"}
           >
             {profile.profile_completed ? (
               <>

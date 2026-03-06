@@ -35,15 +35,19 @@ def get_user_from_request(request):
 
     Returns a User instance on success, or None if authentication fails.
     """
-    # ── Method 1: x-user-id header ───────────────────────────────
+    # ── Method 1: x-user-id header or query param ───────────────────────────────
     trust_header = getattr(settings, 'TRUST_X_USER_ID_HEADER', True)
     if trust_header:
         user_id = request.headers.get('x-user-id', '').strip()
+        # Also allow query param for GET requests (needed for <audio>/<img> tags)
+        if not user_id and request.method == 'GET':
+            user_id = request.GET.get('user_id', '').strip()
+
         if user_id:
             try:
                 return User.objects.get(id=user_id)
-            except User.DoesNotExist:
-                logger.warning('x-user-id header: user not found (id=%s)', user_id)
+            except (User.DoesNotExist, ValueError):
+                logger.warning('User ID authentication failed (id=%s)', user_id)
                 # Fall through to JWT check
 
     # ── Method 2: JWT Bearer token ────────────────────────────────

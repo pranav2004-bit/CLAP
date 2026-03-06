@@ -150,7 +150,7 @@ export default function AudioBlockPlayer({
 
         <audio
           ref={audioRef}
-          src={getApiUrl(`student/clap-items/${itemId}/audio?assignment_id=${assignmentId}`)}
+          src={`${getApiUrl(`student/clap-items/${itemId}/audio?assignment_id=${assignmentId}`)}&user_id=${localStorage.getItem('user_id') || ''}`}
           onEnded={handleEnded}
           onPlay={() => setIsPlaying(true)}
           onPause={() => setIsPlaying(false)}

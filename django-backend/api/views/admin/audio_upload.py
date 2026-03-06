@@ -13,7 +13,7 @@ from django.conf import settings
 from django.http import JsonResponse, FileResponse, HttpResponseRedirect
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
-from api.models import ClapTestItem, AdminAudioFile
+from api.models import ClapTestItem, ClapSetItem, AdminAudioFile
 from api.utils.jwt_utils import get_user_from_request
 from api.utils.storage import upload_to_storage
 
@@ -43,9 +43,34 @@ def upload_audio_file(request, item_id):
     # Verify item exists and is audio_block type
     try:
         item = ClapTestItem.objects.get(id=item_id)
+        is_set_item = False
     except ClapTestItem.DoesNotExist:
         return JsonResponse({'error': 'Test item not found'}, status=404)
 
+    return _process_audio_upload(request, item, is_set_item, user)
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def upload_set_audio_file(request, item_id):
+    """
+    Upload audio file for audio_block set item.
+    POST /api/admin/set-items/{item_id}/upload-audio
+    """
+    user = get_user_from_request(request)
+    if not user:
+        return JsonResponse({'error': 'Authentication required'}, status=401)
+    if user.role != 'admin':
+        return JsonResponse({'error': 'Admin access required'}, status=403)
+
+    try:
+        item = ClapSetItem.objects.get(id=item_id)
+        is_set_item = True
+    except ClapSetItem.DoesNotExist:
+        return JsonResponse({'error': 'Set item not found'}, status=404)
+
+    return _process_audio_upload(request, item, is_set_item, user)
+
+def _process_audio_upload(request, item, is_set_item, user):
     if item.item_type != 'audio_block':
         return JsonResponse({'error': 'Item must be of type audio_block'}, status=400)
 
@@ -98,7 +123,10 @@ def upload_audio_file(request, item_id):
 
     # Delete old audio file if one exists for this item
     try:
-        old_audio = AdminAudioFile.objects.get(item=item)
+        if is_set_item:
+            old_audio = AdminAudioFile.objects.get(set_item=item)
+        else:
+            old_audio = AdminAudioFile.objects.get(item=item)
         old_audio.delete_file()   # Handles both S3 and local via model method
         old_audio.delete()
     except AdminAudioFile.DoesNotExist:
@@ -150,15 +178,19 @@ def upload_audio_file(request, item_id):
 
     # ── Create database record ────────────────────────────────────
     try:
-        admin_audio = AdminAudioFile.objects.create(
-            item=item,
-            uploaded_by=user.id,
+        admin_audio = AdminAudioFile(
+            uploaded_by=user.id if user else None,
             file_path=file_path,           # 's3://bucket/key' or relative local path
             file_size=audio_file.size,
             mime_type=mime_type,
             duration_seconds=duration_seconds,
             original_filename=original_filename,
         )
+        if is_set_item:
+            admin_audio.set_item = item
+        else:
+            admin_audio.item = item
+        admin_audio.save()
 
         # Mark item as having an audio file
         item.content['has_audio_file'] = True
@@ -212,12 +244,36 @@ def handle_audio_file(request, item_id):
     # Verify item exists
     try:
         item = ClapTestItem.objects.get(id=item_id)
+        is_set_item = False
     except ClapTestItem.DoesNotExist:
         return JsonResponse({'error': 'Test item not found'}, status=404)
 
+    return _process_handle_audio(request, item, is_set_item)
+
+@csrf_exempt
+@require_http_methods(["GET", "DELETE"])
+def handle_set_audio_file(request, item_id):
+    user = get_user_from_request(request)
+    if not user:
+        return JsonResponse({'error': 'Authentication required'}, status=401)
+    if user.role != 'admin':
+        return JsonResponse({'error': 'Admin access required'}, status=403)
+
+    try:
+        item = ClapSetItem.objects.get(id=item_id)
+        is_set_item = True
+    except ClapSetItem.DoesNotExist:
+        return JsonResponse({'error': 'Set item not found'}, status=404)
+
+    return _process_handle_audio(request, item, is_set_item)
+
+def _process_handle_audio(request, item, is_set_item):
     # Get audio file record
     try:
-        admin_audio = AdminAudioFile.objects.get(item=item)
+        if is_set_item:
+            admin_audio = AdminAudioFile.objects.get(set_item=item)
+        else:
+            admin_audio = AdminAudioFile.objects.get(item=item)
     except AdminAudioFile.DoesNotExist:
         return JsonResponse({'error': 'No audio file found for this item'}, status=404)
 

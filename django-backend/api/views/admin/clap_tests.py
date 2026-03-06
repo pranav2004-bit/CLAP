@@ -27,7 +27,7 @@ def list_clap_tests(request):
         # Fetch CLAP tests with related data
         clap_tests = ClapTest.objects.filter(
             ~Q(status='deleted')
-        ).select_related('batch').prefetch_related('components').order_by('-created_at')
+        ).select_related('batch').prefetch_related('components__items').order_by('-created_at')
         
         # Transform data to match frontend expectations
         transformed_tests = []
@@ -41,6 +41,7 @@ def list_clap_tests(request):
                 'status': test.status,
                 'is_assigned': bool(test.batch_id),
                 'created_at': test.created_at.isoformat() if test.created_at else None,
+                'global_duration_minutes': test.global_duration_minutes,
                 'tests': []
             }
             
@@ -52,7 +53,9 @@ def list_clap_tests(request):
                     'type': comp.test_type,
                     'status': comp.status,
                     'duration': comp.duration_minutes,
-                    'max_marks': comp.max_marks
+                    'max_marks': comp.max_marks,
+                    'timer_enabled': comp.timer_enabled,
+                    'item_count': comp.items.count(),
                 })
             
             transformed_tests.append(test_dict)

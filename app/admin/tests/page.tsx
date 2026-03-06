@@ -1,6 +1,6 @@
 ﻿'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import {
   BookOpen,
   Brain,
+  Clock,
   Edit,
   FileText,
   Headphones,
@@ -17,12 +18,21 @@ import {
   PenTool,
   Play,
   Plus,
+  RotateCcw,
   Save,
   Settings,
+  ShieldAlert,
   Square,
   ArrowLeft,
   ArrowRight,
-  TrendingUp
+  Timer,
+  TrendingUp,
+  Zap,
+  Users,
+  History,
+  AlertTriangle,
+  CheckCircle2,
+  ChevronRight,
 } from 'lucide-react'
 import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
 import { feedback } from '@/lib/user-feedback'
@@ -33,7 +43,18 @@ export default function AdminTestsPage() {
   const [showEditClapTestModal, setShowEditClapTestModal] = useState(false)
   const [showClapTestDetails, setShowClapTestDetails] = useState(false)
   const [selectedClapTest, setSelectedClapTest] = useState<any>(null)
-  const [activeDetailTab, setActiveDetailTab] = useState<'overview' | 'configure' | 'results'>('overview')
+  const [activeDetailTab, setActiveDetailTab] = useState<'overview' | 'configure' | 'results' | 'retest' | 'sets' | 'live-timer'>('overview')
+
+  // ── Live Timer state ──────────────────────────────────────────────────────
+  const [liveTimer, setLiveTimer]               = useState<any>(null)  // status from API
+  const [liveTimerLoading, setLiveTimerLoading] = useState(false)
+  const [extendMinutes, setExtendMinutes]       = useState(10)
+  const [extendReason, setExtendReason]         = useState('')
+  const [extendLoading, setExtendLoading]       = useState(false)
+  const [startLoading, setStartLoading]         = useState(false)
+  const [liveTimerTimeLeft, setLiveTimerTimeLeft] = useState<number | null>(null)
+  const liveTimerPollRef  = useRef<ReturnType<typeof setInterval> | null>(null)
+  const liveClockOffsetRef = useRef(0)   // ms: server_time - client_time
   const [clapTests, setClapTests] = useState<any[]>([])
   const [batches, setBatches] = useState<any[]>([])
 
@@ -54,6 +75,87 @@ export default function AdminTestsPage() {
   const [configStatus, setConfigStatus] = useState('draft')
   const [configComponents, setConfigComponents] = useState<any[]>([])
   const [navigatingTo, setNavigatingTo] = useState<string | null>(null)
+
+  const [retestCandidates, setRetestCandidates] = useState<any[]>([])
+  const [retestLoading, setRetestLoading] = useState(false)
+  const [retestGranting, setRetestGranting] = useState<string | null>(null)
+  const [retestReason, setRetestReason] = useState('')
+  const [retestModalAssignment, setRetestModalAssignment] = useState<any>(null)
+
+  // --- Sets State ---
+  const [sets, setSets] = useState<any[]>([])
+  const [setsLoading, setSetsLoading] = useState(false)
+  const [setsCanDistribute, setSetsCanDistribute] = useState(false)
+  const [distributeStrategy, setDistributeStrategy] = useState<'round_robin' | 'latin_square' | 'manual'>('round_robin')
+  const [distributeRows, setDistributeRows] = useState(5)
+  const [distributeCols, setDistributeCols] = useState(8)
+  const [distributing, setDistributing] = useState(false)
+  const [distributionStatus, setDistributionStatus] = useState<any>(null)
+  const [distributionStatusLoading, setDistributionStatusLoading] = useState(false)
+  const [setsValidation, setSetsValidation] = useState<any>(null)
+  const [creatingSet, setCreatingSet] = useState(false)
+  const [cloneSourceSetId, setCloneSourceSetId] = useState('')
+
+  // --- Import from Components State ---
+  const [importPreview, setImportPreview] = useState<any>(null)
+  const [importing, setImporting] = useState(false)
+  const [importDryRunLoading, setImportDryRunLoading] = useState(false)
+
+  // --- Retest Pagination ---
+  const [retestPage, setRetestPage] = useState(1)
+  const retestPageSize = 10
+
+  // --- Sets Dist Pagination ---
+  const [setsDistPage, setSetsDistPage] = useState(1)
+  const setsDistPageSize = 10
+
+  const fetchRetestCandidates = async (testId: string) => {
+    setRetestLoading(true)
+    try {
+      const res = await fetch(getApiUrl(`admin/clap-tests/${testId}/retest-candidates`), {
+        headers: getAuthHeaders(),
+        cache: 'no-store'
+      })
+      if (!res.ok) { toast.error('Failed to load retest candidates'); return }
+      const data = await res.json()
+      setRetestCandidates(data.candidates || [])
+      setRetestPage(1)
+    } catch {
+      toast.error('Network error loading retest candidates')
+    } finally {
+      setRetestLoading(false)
+    }
+  }
+
+  const handleGrantRetest = async () => {
+    if (!retestModalAssignment) return
+    if (!retestReason.trim()) { toast.error('Please enter a reason for the retest.'); return }
+    setRetestGranting(retestModalAssignment.assignment_id)
+    try {
+      const res = await fetch(
+        getApiUrl(`admin/assignments/${retestModalAssignment.assignment_id}/grant-retest`),
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          body: JSON.stringify({ reason: retestReason.trim() })
+        }
+      )
+      const data = await res.json()
+      if (res.ok) {
+        toast.success(`Retest granted to ${retestModalAssignment.student_name}! Their previous data has been cleared.`)
+        setRetestModalAssignment(null)
+        setRetestReason('')
+        if (selectedClapTest) fetchRetestCandidates(selectedClapTest.id)
+      } else {
+        toast.error(data.error || 'Failed to grant retest.')
+      }
+    } catch {
+      toast.error('Network error. Retest was NOT granted.')
+    } finally {
+      setRetestGranting(null)
+    }
+  }
+
   const router = useRouter()
 
   const fetchBatches = async () => {
@@ -76,7 +178,10 @@ export default function AdminTestsPage() {
   const fetchClapTests = async () => {
     try {
       const loadingToast = feedback.loadingData('CLAP tests')
-      const response = await fetch(getApiUrl('admin/clap-tests'), { headers: getAuthHeaders() });
+      const response = await fetch(getApiUrl('admin/clap-tests'), {
+        headers: getAuthHeaders(),
+        cache: 'no-store'
+      });
 
       toast.dismiss(loadingToast)
 
@@ -132,6 +237,211 @@ export default function AdminTestsPage() {
     }
   };
 
+  // ── Sets Feature Handlers ────────────────────────────────────────────────
+
+  const fetchSets = async (testId: string) => {
+    setSetsLoading(true)
+    setSetsValidation(null)
+    try {
+      const res = await fetch(getApiUrl(`admin/clap-tests/${testId}/sets`), {
+        headers: getAuthHeaders(), cache: 'no-store'
+      })
+      if (!res.ok) { toast.error('Failed to load sets'); return }
+      const data = await res.json()
+      setSets(data.sets || [])
+      setSetsCanDistribute(data.can_distribute || false)
+    } catch {
+      toast.error('Network error loading sets')
+    } finally {
+      setSetsLoading(false)
+    }
+  }
+
+  const fetchDistributionStatus = async (testId: string) => {
+    setDistributionStatusLoading(true)
+    try {
+      const res = await fetch(getApiUrl(`admin/clap-tests/${testId}/distribution-status`), {
+        headers: getAuthHeaders(), cache: 'no-store'
+      })
+      if (!res.ok) { toast.error('Failed to load distribution status'); return }
+      const data = await res.json()
+      setDistributionStatus(data)
+      setSetsDistPage(1)
+    } catch {
+      toast.error('Network error loading distribution status')
+    } finally {
+      setDistributionStatusLoading(false)
+    }
+  }
+
+  const handleCreateSet = async (cloneFromId?: string) => {
+    if (!selectedClapTest) return
+    setCreatingSet(true)
+    try {
+      const body: any = {}
+      if (cloneFromId) body.clone_from_set_id = cloneFromId
+      const res = await fetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}/sets`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify(body)
+      })
+      const data = await res.json()
+      if (res.ok) {
+        toast.success(cloneFromId ? `Set ${data.label} cloned successfully!` : `Set ${data.label} created!`)
+        fetchSets(selectedClapTest.id)
+        setCloneSourceSetId('')
+      } else {
+        toast.error(data.error || 'Failed to create set')
+      }
+    } catch {
+      toast.error('Network error creating set')
+    } finally {
+      setCreatingSet(false)
+    }
+  }
+
+  const handleDeleteSet = async (setId: string, setLabel: string, assignedCount: number) => {
+    if (!selectedClapTest) return
+    if (assignedCount > 0) {
+      toast.error(`Cannot delete Set ${setLabel}: ${assignedCount} student(s) are actively assigned to it.`)
+      return
+    }
+    if (!confirm(`Delete Set ${setLabel}? All items in this set will be permanently removed.`)) return
+    try {
+      const res = await fetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}/sets/${setId}`), {
+        method: 'DELETE', headers: getAuthHeaders()
+      })
+      const data = await res.json()
+      if (res.ok) {
+        toast.success(`Set ${setLabel} deleted.`)
+        fetchSets(selectedClapTest.id)
+      } else {
+        toast.error(data.error || 'Failed to delete set')
+      }
+    } catch {
+      toast.error('Network error deleting set')
+    }
+  }
+
+  const handleValidateSets = async () => {
+    if (!selectedClapTest) return
+    try {
+      const res = await fetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}/sets/validate`), {
+        headers: getAuthHeaders()
+      })
+      const data = await res.json()
+      setSetsValidation(data)
+      if (data.valid) {
+        toast.success('All sets are valid and balanced!')
+      } else {
+        toast.warning(`Validation found ${data.issues.length} issue(s). Check the validation panel.`)
+      }
+    } catch {
+      toast.error('Network error validating sets')
+    }
+  }
+
+  /**
+   * Import the existing ClapTestComponents as Set A.
+   * Step 1 (dry_run=true):  fetch preview → show breakdown to admin.
+   * Step 2 (dry_run=false): commit on admin confirmation.
+   * All guards are enforced server-side; we surface the error messages verbatim.
+   */
+  const handleImportFromComponents = async (dryRun: boolean) => {
+    if (!selectedClapTest) return
+    if (dryRun) {
+      setImportDryRunLoading(true)
+    } else {
+      setImporting(true)
+    }
+    try {
+      const res = await fetch(
+        getApiUrl(`admin/clap-tests/${selectedClapTest.id}/sets/import-from-components`),
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          body: JSON.stringify({ dry_run: dryRun }),
+        }
+      )
+      const data = await res.json()
+      if (!res.ok) {
+        toast.error(data.error || 'Import failed')
+        return
+      }
+      if (dryRun) {
+        // Show the preview panel — admin must confirm before committing
+        setImportPreview(data.will_create)
+        toast.info(
+          `Preview ready: ${data.will_create.components} components, ` +
+          `${data.will_create.total_items} questions will be imported as Set A.`
+        )
+      } else {
+        // Committed — refresh sets list and clear preview
+        toast.success(data.message)
+        setImportPreview(null)
+        fetchSets(selectedClapTest.id)
+        fetchDistributionStatus(selectedClapTest.id)
+      }
+    } catch {
+      toast.error('Network error during import. No data was written.')
+    } finally {
+      setImportDryRunLoading(false)
+      setImporting(false)
+    }
+  }
+
+  const handleDistribute = async (dryRun = false) => {
+    if (!selectedClapTest) return
+    setDistributing(true)
+    try {
+      const body: any = { strategy: distributeStrategy, dry_run: dryRun }
+      if (distributeStrategy === 'latin_square') {
+        body.rows = distributeRows
+        body.cols = distributeCols
+      }
+      const res = await fetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}/distribute-sets`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify(body)
+      })
+      const data = await res.json()
+      if (res.ok) {
+        if (dryRun) {
+          toast.info(`Dry run: ${data.student_count} students, ${data.sequential_collisions} collision(s). Ready to distribute.`)
+        } else {
+          toast.success(`Sets distributed! ${data.student_count} students assigned. Collisions: ${data.sequential_collisions}`)
+          fetchDistributionStatus(selectedClapTest.id)
+        }
+      } else {
+        toast.error(data.error || 'Distribution failed')
+      }
+    } catch {
+      toast.error('Network error during distribution')
+    } finally {
+      setDistributing(false)
+    }
+  }
+
+  const handleClearDistribution = async () => {
+    if (!selectedClapTest) return
+    if (!confirm('Clear all set assignments? Students will go back to the default question paper.')) return
+    try {
+      const res = await fetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}/clear-distribution`), {
+        method: 'POST', headers: getAuthHeaders()
+      })
+      const data = await res.json()
+      if (res.ok) {
+        toast.success(data.message)
+        fetchDistributionStatus(selectedClapTest.id)
+        setSets(prev => prev.map(s => ({ ...s, assigned_student_count: 0 })))
+      } else {
+        toast.error(data.error || 'Failed to clear distribution')
+      }
+    } catch {
+      toast.error('Network error clearing distribution')
+    }
+  }
+
   // Fetch data on component mount
   useEffect(() => {
     fetchClapTests();
@@ -150,10 +460,113 @@ export default function AdminTestsPage() {
     setNewClapTestBatchId('');
   };
 
+  // ── Live Timer helpers ────────────────────────────────────────────────────
+
+  const fetchLiveTimerStatus = useCallback(async (testId: string) => {
+    if (!testId) return
+    setLiveTimerLoading(true)
+    try {
+      const res = await fetch(getApiUrl(`admin/clap-tests/${testId}/live-timer-status`), {
+        headers: getAuthHeaders(),
+      })
+      const serverTimeStr = res.headers.get('X-Server-Time')
+      if (serverTimeStr) {
+        liveClockOffsetRef.current = new Date(serverTimeStr).getTime() - Date.now()
+      }
+      if (!res.ok) { toast.error('Failed to fetch live timer status'); return }
+      const data = await res.json()
+      setLiveTimer(data)
+      if (data.remaining_seconds !== null) {
+        setLiveTimerTimeLeft(data.remaining_seconds)
+      }
+    } catch {
+      toast.error('Network error fetching timer status')
+    } finally {
+      setLiveTimerLoading(false)
+    }
+  }, [])
+
+  const handleStartLiveTimer = async (force = false) => {
+    if (!selectedClapTest) return
+    setStartLoading(true)
+    try {
+      const res = await fetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}/start-live-timer`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({ force, reason: 'Started from Live Timer panel' }),
+      })
+      const data = await res.json()
+      if (!res.ok) { toast.error(data.error || 'Failed to start timer'); return }
+      if (data.already_started) {
+        toast.info('Timer is already running.')
+      } else {
+        toast.success(`Live timer started! Ends at ${new Date(data.deadline_utc).toLocaleTimeString()}`)
+      }
+      fetchLiveTimerStatus(selectedClapTest.id)
+    } catch {
+      toast.error('Network error starting timer')
+    } finally {
+      setStartLoading(false)
+    }
+  }
+
+  const handleExtendTimer = async () => {
+    if (!selectedClapTest || extendMinutes < 1) return
+    setExtendLoading(true)
+    try {
+      const res = await fetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}/extend-timer`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({ extend_minutes: extendMinutes, reason: extendReason || 'Extended from Live Timer panel' }),
+      })
+      const data = await res.json()
+      if (!res.ok) { toast.error(data.error || 'Failed to extend timer'); return }
+      toast.success(`Timer extended by ${extendMinutes} min! New deadline: ${new Date(data.new_deadline_utc).toLocaleTimeString()}`)
+      setExtendReason('')
+      fetchLiveTimerStatus(selectedClapTest.id)
+    } catch {
+      toast.error('Network error extending timer')
+    } finally {
+      setExtendLoading(false)
+    }
+  }
+
+  // Admin-side live countdown (local tick, re-synced by fetchLiveTimerStatus)
+  useEffect(() => {
+    if (activeDetailTab !== 'live-timer' || !liveTimer?.global_deadline) {
+      if (liveTimerPollRef.current) clearInterval(liveTimerPollRef.current)
+      return
+    }
+    const deadline    = new Date(liveTimer.global_deadline)
+    const tick = () => {
+      const adjusted  = Date.now() + liveClockOffsetRef.current
+      const remaining = Math.max(0, Math.floor((deadline.getTime() - adjusted) / 1000))
+      setLiveTimerTimeLeft(remaining)
+    }
+    tick()
+    liveTimerPollRef.current = setInterval(tick, 1000)
+    // Re-fetch status every 15 s to stay in sync
+    const pollInterval = setInterval(() => {
+      if (selectedClapTest) fetchLiveTimerStatus(selectedClapTest.id)
+    }, 15000)
+    return () => {
+      clearInterval(liveTimerPollRef.current!)
+      clearInterval(pollInterval)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeDetailTab, liveTimer?.global_deadline])
+
   const handleViewClapTest = (clapTest: any) => {
     setSelectedClapTest(clapTest);
     setShowClapTestDetails(true);
     setActiveDetailTab('overview');
+    // Pre-fetch sets so Overview and Configure tabs can show global scope indicators
+    setSets([])
+    fetchSets(clapTest.id)
+    // Reset live timer state for the new test
+    setLiveTimer(null)
+    setLiveTimerTimeLeft(null)
+    if (liveTimerPollRef.current) clearInterval(liveTimerPollRef.current)
   };
 
   const handlePreviewComponent = async (compType: string) => {
@@ -481,18 +894,20 @@ export default function AdminTestsPage() {
 
   return (
     <div className="bg-white p-0 border-b border-gray-200">
-      <div className="py-4 px-6 bg-gray-50 border-b border-gray-200">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">CLAP Test Management</h1>
-            <p className="text-sm text-gray-600 mt-1">Create and manage comprehensive CLAP assessments</p>
+      {!showClapTestDetails && (
+        <div className="py-4 px-6 bg-gray-50 border-b border-gray-200">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900">CLAP Test Management</h1>
+              <p className="text-sm text-gray-600 mt-1">Create and manage comprehensive CLAP assessments</p>
+            </div>
+            <Button onClick={handleCreateClapTest}>
+              <Plus className="w-4 h-4 mr-2" />
+              Add CLAP Test
+            </Button>
           </div>
-          <Button onClick={handleCreateClapTest}>
-            <Plus className="w-4 h-4 mr-2" />
-            Add CLAP Test
-          </Button>
         </div>
-      </div>
+      )}
       <div className="p-6">
         {showClapTestDetails && selectedClapTest ? (
           <div className="space-y-6">
@@ -517,8 +932,19 @@ export default function AdminTestsPage() {
                 <Badge variant={selectedClapTest.status === 'published' ? 'default' : 'secondary'}>
                   {selectedClapTest.status === 'published' ? 'Published' : 'Draft'}
                 </Badge>
+
+                {/* Preview Bundle is ALWAYS available */}
+                <Button
+                  variant="outline"
+                  className="border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800"
+                  onClick={() => router.push(`/admin/dashboard/clap-tests/${selectedClapTest.id}/bundle-preview`)}
+                >
+                  <Play className="w-4 h-4 mr-2" />
+                  Preview Bundle
+                </Button>
+
                 {selectedClapTest.is_assigned ? (
-                  <Button variant="outline" className="text-red-600 border-red-200 hover:bg-red-50" onClick={() => handleUnassignClapTest(selectedClapTest)}>
+                  <Button variant="outline" className="text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700" onClick={() => handleUnassignClapTest(selectedClapTest)}>
                     <Square className="w-4 h-4 mr-2" />
                     Stop Test
                   </Button>
@@ -546,206 +972,530 @@ export default function AdminTestsPage() {
                 Configure
               </button>
               <button
+                className={`py-2 px-6 font-medium text-sm transition-colors flex items-center gap-1.5 ${activeDetailTab === 'sets' ? 'border-b-2 border-violet-600 text-violet-700' : 'text-gray-500 hover:text-gray-700'}`}
+                onClick={() => {
+                  setActiveDetailTab('sets')
+                  if (selectedClapTest) {
+                    fetchSets(selectedClapTest.id)
+                    fetchDistributionStatus(selectedClapTest.id)
+                  }
+                }}
+              >
+                <FileText className="w-3.5 h-3.5" /> Sets
+                {sets.length > 0 && (
+                  <span className="ml-1 bg-violet-100 text-violet-700 text-xs font-bold px-1.5 py-0.5 rounded-full">{sets.length}</span>
+                )}
+              </button>
+              <button
                 className={`py-2 px-6 font-medium text-sm transition-colors ${activeDetailTab === 'results' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
-                onClick={() => setActiveDetailTab('results')}
+                onClick={() => { setActiveDetailTab('results') }}
               >
                 Results
+              </button>
+              <button
+                className={`py-2 px-6 font-medium text-sm transition-colors flex items-center gap-1.5 ${activeDetailTab === 'retest' ? 'border-b-2 border-amber-500 text-amber-600' : 'text-gray-500 hover:text-gray-700'}`}
+                onClick={() => { setActiveDetailTab('retest'); if (selectedClapTest) fetchRetestCandidates(selectedClapTest.id) }}
+              >
+                <RotateCcw className="w-3.5 h-3.5" /> Retest
+              </button>
+              <button
+                className={`py-2 px-6 font-medium text-sm transition-colors flex items-center gap-1.5 ${activeDetailTab === 'live-timer' ? 'border-b-2 border-red-500 text-red-600' : 'text-gray-500 hover:text-gray-700'}`}
+                onClick={() => {
+                  setActiveDetailTab('live-timer')
+                  if (selectedClapTest) fetchLiveTimerStatus(selectedClapTest.id)
+                }}
+              >
+                <Zap className="w-3.5 h-3.5" /> Live Timer
+                {liveTimer?.timer_started && !liveTimer?.is_expired && (
+                  <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse ml-0.5" />
+                )}
               </button>
             </div>
 
             {/* Tab Content */}
             <div className="mt-6">
-              {activeDetailTab === 'overview' && (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {/* Individual Test Cards (Mocking 5 components) */}
-                  {[
-                    { name: 'Listening', type: 'listening', icon: Headphones, color: 'blue' },
-                    { name: 'Speaking', type: 'speaking', icon: Mic, color: 'purple' },
-                    { name: 'Reading', type: 'reading', icon: BookOpen, color: 'green' },
-                    { name: 'Writing', type: 'writing', icon: PenTool, color: 'orange' },
-                    { name: 'Vocabulary', type: 'vocabulary', icon: Brain, color: 'indigo' },
-                  ].map((comp) => {
-                    const stats = (selectedClapTest.tests || []).find((t: any) => t.type === comp.type) || {};
-                    return (
-                      <Card key={comp.type} className="hover:shadow-md transition-shadow">
-                        <CardHeader className="pb-2">
-                          <div className="flex items-center justify-between">
-                            <div className={`p-2 rounded-lg bg-${comp.color}-100`}>
-                              <comp.icon className={`w-5 h-5 text-${comp.color}-600`} />
-                            </div>
-                            <Badge variant="outline">Included</Badge>
-                          </div>
-                          <CardTitle className="text-lg mt-3">{comp.name} Test</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                          <div className="space-y-2 text-sm text-gray-600">
-                            <div className="flex justify-between">
-                              <span>Duration</span>
-                              <span className="font-medium">{stats.duration || 0} mins</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span>Max Marks</span>
-                              <span className="font-medium">{stats.max_marks || 10}</span>
-                            </div>
-                          </div>
-                          <div className="flex gap-2 mt-4">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="flex-1 text-indigo-600 hover:bg-indigo-50 border border-indigo-100"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handlePreviewComponent(comp.type);
-                              }}
-                            >
-                              <Play className="w-3.5 h-3.5 mr-1" />
-                              Preview
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              disabled={navigatingTo === `overview-${comp.type}`}
-                              className="flex-1 border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800 disabled:opacity-50"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setNavigatingTo(`overview-${comp.type}`);
-                                router.push(`/admin/dashboard/clap-tests/${selectedClapTest.id}/${comp.type}`);
-                              }}
-                            >
-                              {navigatingTo === `overview-${comp.type}` ? (
-                                <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
-                              ) : (
-                                <Edit className="w-3.5 h-3.5 mr-1" />
-                              )}
-                              {navigatingTo === `overview-${comp.type}` ? 'Loading...' : 'Edit Questions'}
-                            </Button>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    );
-                  })}
-                </div>
-              )}
+              {activeDetailTab === 'overview' && (() => {
+                const COMPONENTS = [
+                  { name: 'Listening', type: 'listening', icon: Headphones, color: 'blue' },
+                  { name: 'Speaking', type: 'speaking', icon: Mic, color: 'purple' },
+                  { name: 'Reading', type: 'reading', icon: BookOpen, color: 'green' },
+                  { name: 'Writing', type: 'writing', icon: PenTool, color: 'orange' },
+                  { name: 'Vocabulary', type: 'vocabulary', icon: Brain, color: 'indigo' },
+                ];
+                const testMap: Record<string, any> = {};
+                for (const t of (selectedClapTest.tests || [])) testMap[t.type] = t;
+
+                // Readiness counters
+                const configured = COMPONENTS.filter(c => testMap[c.type]).length;
+                const ready = COMPONENTS.filter(c => (testMap[c.type]?.item_count || 0) > 0).length;
+                const allReady = ready === COMPONENTS.length;
+
+                return (
+                  <div className="space-y-6">
+                    {/* ── Enterprise Global Template Header ────────────── */}
+                    <div className="flex items-center gap-4 p-4 rounded-xl bg-gradient-to-r from-slate-800 to-slate-700 text-white border border-slate-600 shadow-md">
+                      <div className="p-2 bg-white/10 rounded-lg shrink-0">
+                        <ShieldAlert className="w-5 h-5 text-white" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-bold text-sm tracking-wide">Master Paper Template</p>
+                        <p className="text-xs text-slate-300 mt-0.5">
+                          Global blueprint — all question paper sets inherit this structure. Edits here define the canonical content base for the entire assessment.
+                        </p>
+                      </div>
+                      <div className="shrink-0 text-center bg-white/10 px-4 py-2 rounded-lg border border-white/20">
+                        {setsLoading ? (
+                          <Loader2 className="w-5 h-5 animate-spin text-slate-300 mx-auto" />
+                        ) : (
+                          <>
+                            <span className="text-2xl font-bold leading-none">{sets.length}</span>
+                            <p className="text-[10px] text-slate-300 mt-0.5 uppercase tracking-wide">
+                              {sets.length === 1 ? 'Set Active' : 'Sets Active'}
+                            </p>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* ── Top Summary Bar ──────────────────────────────── */}
+                    <div className={`rounded-xl border px-5 py-4 flex items-center justify-between gap-4 ${allReady
+                      ? 'bg-green-50 border-green-200'
+                      : ready > 0
+                        ? 'bg-amber-50 border-amber-200'
+                        : 'bg-gray-50 border-gray-200'
+                      }`}>
+                      <div className="flex items-center gap-3">
+                        <div className={`w-9 h-9 rounded-lg flex items-center justify-center text-lg ${allReady ? 'bg-green-100' : ready > 0 ? 'bg-amber-100' : 'bg-gray-100'
+                          }`}>
+                          {allReady ? '✅' : ready > 0 ? '⚠️' : '⏳'}
+                        </div>
+                        <div>
+                          <p className={`font-semibold text-sm ${allReady ? 'text-green-800' : ready > 0 ? 'text-amber-800' : 'text-gray-700'}`}>
+                            {allReady
+                              ? 'All components ready — global blueprint complete'
+                              : ready > 0
+                                ? `${ready} of ${COMPONENTS.length} master components have questions`
+                                : 'No questions added yet — build the master paper (all sets inherit this)'}
+                          </p>
+                          <p className={`text-xs mt-0.5 ${allReady ? 'text-green-600' : ready > 0 ? 'text-amber-600' : 'text-gray-500'}`}>
+                            {configured} configured · {ready} ready · {COMPONENTS.length - ready} incomplete
+                            {sets.length > 0 && ` · propagates to ${sets.length} ${sets.length === 1 ? 'set' : 'sets'}`}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <div className="text-xs text-right">
+                          <span className={`font-bold text-lg ${allReady ? 'text-green-700' : 'text-amber-600'}`}>{ready}</span>
+                          <span className="text-gray-400">/{COMPONENTS.length}</span>
+                        </div>
+                        {/* Mini progress bar */}
+                        <div className="w-20 h-2 bg-gray-200 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all ${allReady ? 'bg-green-500' : 'bg-amber-400'}`}
+                            style={{ width: `${(ready / COMPONENTS.length) * 100}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* ── Component Cards Grid ─────────────────────────── */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                      {COMPONENTS.map((comp) => {
+                        const stats = testMap[comp.type];
+                        const itemCount: number = stats?.item_count ?? 0;
+                        const isConfigured = !!stats;
+                        const isReady = itemCount > 0;
+
+                        // Badge colour & label
+                        const badge = isReady
+                          ? { label: 'Ready', cls: 'bg-green-100 text-green-700 border-green-200' }
+                          : isConfigured
+                            ? { label: 'No Questions', cls: 'bg-amber-100 text-amber-700 border-amber-200' }
+                            : { label: 'Not Configured', cls: 'bg-gray-100 text-gray-500 border-gray-200' };
+
+                        return (
+                          <Card
+                            key={comp.type}
+                            className={`hover:shadow-md transition-all ${!isConfigured ? 'opacity-60' : ''}`}
+                          >
+                            <CardHeader className="pb-2">
+                              <div className="flex items-center justify-between">
+                                <div className={`p-2 rounded-lg bg-${comp.color}-100`}>
+                                  <comp.icon className={`w-5 h-5 text-${comp.color}-600`} />
+                                </div>
+                                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${badge.cls}`}>
+                                  {badge.label}
+                                </span>
+                              </div>
+                              <CardTitle className="text-lg mt-3">{comp.name} Test</CardTitle>
+                            </CardHeader>
+
+                            <CardContent>
+                              <div className="space-y-2 text-sm text-gray-600">
+                                {/* Questions count */}
+                                <div className="flex justify-between items-center">
+                                  <span className="flex items-center gap-1">
+                                    Master Questions
+                                  </span>
+                                  <span className={`font-bold tabular-nums ${isReady ? 'text-green-700' : isConfigured ? 'text-amber-600' : 'text-gray-400'
+                                    }`}>
+                                    {isConfigured ? itemCount : '—'}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span>Duration</span>
+                                  <span className="font-medium">{stats?.duration ?? '—'} {stats ? 'mins' : ''}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span>Max Marks</span>
+                                  <span className="font-medium">{stats?.max_marks ?? '—'}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span>Timer</span>
+                                  <span className={`font-medium text-xs px-1.5 py-0.5 rounded ${stats?.timer_enabled ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-500'
+                                    }`}>
+                                    {isConfigured ? (stats?.timer_enabled ? 'Enabled' : 'Disabled') : '—'}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="flex gap-2 mt-4">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="flex-1 text-indigo-600 hover:bg-indigo-50 border border-indigo-100"
+                                  disabled={!isConfigured}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handlePreviewComponent(comp.type);
+                                  }}
+                                >
+                                  <Play className="w-3.5 h-3.5 mr-1" />
+                                  Preview
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={navigatingTo === `overview-${comp.type}`}
+                                  className="flex-1 border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800 disabled:opacity-50"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setNavigatingTo(`overview-${comp.type}`);
+                                    router.push(`/admin/dashboard/clap-tests/${selectedClapTest.id}/${comp.type}`);
+                                  }}
+                                >
+                                  {navigatingTo === `overview-${comp.type}` ? (
+                                    <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+                                  ) : (
+                                    <Edit className="w-3.5 h-3.5 mr-1" />
+                                  )}
+                                  {navigatingTo === `overview-${comp.type}` ? 'Loading...' : isReady ? 'Edit' : 'Add Questions'}
+                                </Button>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {activeDetailTab === 'configure' && (
                 <Card>
                   <CardHeader>
-                    <CardTitle>Configure CLAP Test</CardTitle>
-                    <CardDescription>Adjust durations and marks for each component</CardDescription>
+                    <CardTitle className="flex items-center gap-2">
+                      <ShieldAlert className="w-5 h-5 text-indigo-600" />
+                      Global Configuration Rules
+                    </CardTitle>
+                    <CardDescription>
+                      These settings are <strong>binding across ALL question paper sets</strong>. Duration, max marks, and timer settings propagate to every set automatically on save — no per-set overrides allowed.
+                    </CardDescription>
                   </CardHeader>
-                  <CardContent className="space-y-6">
-                    <div className="grid gap-6">
-                      {(selectedClapTest.tests || []).map((comp: any, idx: number) => (
-                        <div key={comp.id} className="p-4 rounded-lg border border-gray-100 bg-gray-50/50 flex flex-col gap-4">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                              <div className="w-10 h-10 rounded-lg bg-white flex items-center justify-center border border-gray-200 shadow-sm">
-                                {comp.type === 'listening' && <Headphones className="w-5 h-5 text-blue-600" />}
-                                {comp.type === 'speaking' && <Mic className="w-5 h-5 text-purple-600" />}
-                                {comp.type === 'reading' && <BookOpen className="w-5 h-5 text-green-600" />}
-                                {comp.type === 'writing' && <PenTool className="w-5 h-5 text-orange-600" />}
-                                {comp.type === 'vocabulary' && <Brain className="w-5 h-5 text-indigo-600" />}
-                              </div>
-                              <div>
-                                <p className="font-semibold text-gray-900">{comp.name}</p>
-                                <p className="text-xs text-gray-500 uppercase">{comp.type}</p>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-4">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="text-xs h-8"
-                                onClick={() => handlePreviewComponent(comp.type)}
-                              >
-                                <Play className="w-3 h-3 mr-1" />
-                                Preview
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                disabled={navigatingTo === `configure-${comp.type}`}
-                                className="text-xs h-8 border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800 disabled:opacity-50"
-                                onClick={() => {
-                                  setNavigatingTo(`configure-${comp.type}`);
-                                  router.push(`/admin/dashboard/clap-tests/${selectedClapTest.id}/${comp.type}`);
-                                }}
-                              >
-                                {navigatingTo === `configure-${comp.type}` ? (
-                                  <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                                ) : (
-                                  <Edit className="w-3 h-3 mr-1" />
-                                )}
-                                {navigatingTo === `configure-${comp.type}` ? 'Loading...' : 'Edit Content'}
-                              </Button>
-                            </div>
-                          </div>
+                  <CardContent className="space-y-8">
 
-                          <div className="grid grid-cols-2 gap-6 pt-2 border-t border-gray-100">
-                            <div className="space-y-1">
-                              <label className="text-[10px] font-bold text-gray-400 uppercase">Duration (Min)</label>
-                              <input
-                                type="number"
-                                value={comp.duration}
-                                onChange={(e) => {
-                                  const newTests = [...selectedClapTest.tests];
-                                  newTests[idx].duration = parseInt(e.target.value) || 0;
-                                  setSelectedClapTest({ ...selectedClapTest, tests: newTests });
-                                }}
-                                className="w-20 p-2 border border-gray-200 rounded text-sm focus:ring-1 focus:ring-indigo-500 outline-none"
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <label className="text-[10px] font-bold text-gray-400 uppercase">Max Marks</label>
-                              <input
-                                type="number"
-                                value={comp.max_marks}
-                                onChange={(e) => {
-                                  const newTests = [...selectedClapTest.tests];
-                                  newTests[idx].max_marks = parseInt(e.target.value) || 0;
-                                  setSelectedClapTest({ ...selectedClapTest, tests: newTests });
-                                }}
-                                className="w-20 p-2 border border-gray-200 rounded text-sm focus:ring-1 focus:ring-indigo-500 outline-none"
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      ))}
+                    {/* ── Enterprise Scope Banner ── */}
+                    <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-slate-900 text-white border border-slate-700">
+                      <ShieldAlert className="w-4 h-4 text-indigo-300 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-semibold text-indigo-100">
+                          Enterprise Global Scope
+                        </p>
+                        {setsLoading ? (
+                          <p className="text-xs text-slate-400 mt-0.5">Loading set coverage...</p>
+                        ) : sets.length > 0 ? (
+                          <p className="text-xs text-slate-300 mt-0.5">
+                            Changes apply to all <span className="font-bold text-white">{sets.length}</span> question paper {sets.length === 1 ? 'set' : 'sets'}: {sets.map((s: any) => `Set ${s.label}`).join(', ')}
+                          </p>
+                        ) : (
+                          <p className="text-xs text-slate-400 mt-0.5">No sets created yet — settings will apply when sets are added</p>
+                        )}
+                      </div>
+                      <span className="shrink-0 text-[10px] font-bold bg-indigo-600 px-2 py-1 rounded uppercase tracking-wider">
+                        {sets.length > 0 ? `${sets.length} ${sets.length === 1 ? 'Set' : 'Sets'}` : 'Global'}
+                      </span>
                     </div>
-                    <div className="flex justify-end gap-3 pt-4 border-t">
-                      <Button variant="outline" onClick={() => setActiveDetailTab('overview')}>Cancel</Button>
-                      <Button
-                        className="bg-indigo-600 hover:bg-indigo-700 text-white"
-                        onClick={async () => {
-                          const loadingToast = toast.loading('Saving configuration...')
-                          try {
-                            // Update name/status first
-                            await fetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}`), {
-                              method: 'PATCH',
-                              headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-                              body: JSON.stringify({ name: selectedClapTest.name, status: selectedClapTest.status })
-                            });
 
-                            // Update components
-                            for (const comp of selectedClapTest.tests) {
-                              await fetch(getApiUrl(`admin/clap-components/${comp.id}`), {
+                    {/* ── Section 1: Global Timer ─────────────────────────────── */}
+                    <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 overflow-hidden">
+                      <div className="flex items-center gap-3 px-5 py-4 border-b border-indigo-100">
+                        <div className="p-2 bg-indigo-600 rounded-lg shrink-0">
+                          <Timer className="w-5 h-5 text-white" />
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-sm font-bold text-indigo-900">Global Test Timer</p>
+                          <p className="text-xs text-indigo-600">
+                            Controls the single countdown shown to students across all 5 modules
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="p-5 space-y-4">
+                        {/* Auto vs Manual toggle */}
+                        <div className="flex items-center gap-4">
+                          <button
+                            onClick={() => setSelectedClapTest({ ...selectedClapTest, global_duration_minutes: null })}
+                            className={`flex-1 py-2.5 px-4 rounded-lg border-2 text-sm font-bold transition-all ${selectedClapTest.global_duration_minutes === null || selectedClapTest.global_duration_minutes === undefined
+                              ? 'border-indigo-500 bg-indigo-600 text-white shadow-md'
+                              : 'border-gray-200 bg-white text-gray-600 hover:border-indigo-300'
+                              }`}
+                          >
+                            ⚡ Auto (Sum of Components)
+                          </button>
+                          <button
+                            onClick={() => setSelectedClapTest({ ...selectedClapTest, global_duration_minutes: selectedClapTest.global_duration_minutes ?? (selectedClapTest.tests || []).reduce((s: number, c: any) => s + (c.duration || 0), 0) })}
+                            className={`flex-1 py-2.5 px-4 rounded-lg border-2 text-sm font-bold transition-all ${selectedClapTest.global_duration_minutes !== null && selectedClapTest.global_duration_minutes !== undefined
+                              ? 'border-indigo-500 bg-indigo-600 text-white shadow-md'
+                              : 'border-gray-200 bg-white text-gray-600 hover:border-indigo-300'
+                              }`}
+                          >
+                            ✏️ Manual Override
+                          </button>
+                        </div>
+
+                        {/* Live display */}
+                        {(selectedClapTest.global_duration_minutes === null || selectedClapTest.global_duration_minutes === undefined) && (
+                          <div className="flex items-center justify-between p-3 bg-white rounded-lg border border-indigo-100">
+                            <span className="text-sm text-gray-500">Computed Global Timer</span>
+                            <div className="flex items-center gap-2">
+                              <Clock className="w-4 h-4 text-indigo-500" />
+                              <span className="font-mono text-lg font-bold text-indigo-700">
+                                {(selectedClapTest.tests || []).reduce((s: number, c: any) => s + (c.duration || 0), 0)} min
+                              </span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Manual input */}
+                        {selectedClapTest.global_duration_minutes !== null && selectedClapTest.global_duration_minutes !== undefined && (
+                          <div className="flex items-center gap-4">
+                            <div className="flex-1">
+                              <label className="text-[10px] font-bold text-gray-400 uppercase block mb-1">
+                                Override Duration (Minutes)
+                              </label>
+                              <div className="flex items-center gap-3">
+                                <input
+                                  type="number"
+                                  min={1}
+                                  value={selectedClapTest.global_duration_minutes}
+                                  onChange={(e) => setSelectedClapTest({ ...selectedClapTest, global_duration_minutes: parseInt(e.target.value) || 0 })}
+                                  className="w-28 p-2.5 border-2 border-indigo-300 rounded-lg text-lg font-mono font-bold text-indigo-700 focus:ring-2 focus:ring-indigo-500 outline-none"
+                                />
+                                <span className="text-sm text-gray-500">minutes = {Math.floor((selectedClapTest.global_duration_minutes || 0) / 60)}h {(selectedClapTest.global_duration_minutes || 0) % 60}m</span>
+                              </div>
+                            </div>
+                            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
+                              ⚠️ This overrides the auto-computed timer.<br />Per-component durations are still used for ordering.
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* ── Section 2: Per-Module Global Rules ─────────────────── */}
+                    <div>
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-sm font-bold text-gray-700 flex items-center gap-2">
+                          <Clock className="w-4 h-4 text-gray-500" />
+                          Per-Module Global Rules
+                        </p>
+                        <span className="text-xs text-gray-400 italic">
+                          Enforced identically across all sets
+                        </span>
+                      </div>
+
+                      <div className="grid gap-4">
+                        {(selectedClapTest.tests || []).map((comp: any, idx: number) => (
+                          <div
+                            key={comp.id}
+                            className={`p-4 rounded-xl border-2 flex flex-col gap-4 transition-all ${comp.timer_enabled === false ? 'border-dashed border-gray-300 bg-gray-50/50 opacity-80' : 'border-gray-200 bg-white'
+                              }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-lg bg-white flex items-center justify-center border border-gray-200 shadow-sm">
+                                  {comp.type === 'listening' && <Headphones className="w-5 h-5 text-blue-600" />}
+                                  {comp.type === 'speaking' && <Mic className="w-5 h-5 text-purple-600" />}
+                                  {comp.type === 'reading' && <BookOpen className="w-5 h-5 text-green-600" />}
+                                  {comp.type === 'writing' && <PenTool className="w-5 h-5 text-orange-600" />}
+                                  {comp.type === 'vocabulary' && <Brain className="w-5 h-5 text-indigo-600" />}
+                                </div>
+                                <div>
+                                  <p className="font-semibold text-gray-900">{comp.name}</p>
+                                  <p className="text-xs text-gray-500 uppercase">{comp.type}</p>
+                                </div>
+                              </div>
+
+                              {/* Timer Enable Toggle */}
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-medium text-gray-500">Timer</span>
+                                <button
+                                  onClick={() => {
+                                    const newTests = [...selectedClapTest.tests];
+                                    newTests[idx] = { ...newTests[idx], timer_enabled: !(newTests[idx].timer_enabled ?? true) };
+                                    setSelectedClapTest({ ...selectedClapTest, tests: newTests });
+                                  }}
+                                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${(comp.timer_enabled ?? true) ? 'bg-indigo-600' : 'bg-gray-300'
+                                    }`}
+                                >
+                                  <span
+                                    className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition-transform ${(comp.timer_enabled ?? true) ? 'translate-x-6' : 'translate-x-1'
+                                      }`}
+                                  />
+                                </button>
+                                <span className={`text-xs font-bold ${(comp.timer_enabled ?? true) ? 'text-indigo-600' : 'text-gray-400'}`}>
+                                  {(comp.timer_enabled ?? true) ? 'ON' : 'OFF'}
+                                </span>
+
+                                {/* Action buttons */}
+                                <div className="ml-2 flex items-center gap-1.5">
+                                  <Button variant="outline" size="sm" className="text-xs h-7 px-2" onClick={() => handlePreviewComponent(comp.type)}>
+                                    <Play className="w-3 h-3 mr-1" />Preview
+                                  </Button>
+                                  <Button
+                                    variant="outline" size="sm"
+                                    disabled={navigatingTo === `configure-${comp.type}`}
+                                    className="text-xs h-7 px-2 border-indigo-200 text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
+                                    onClick={() => { setNavigatingTo(`configure-${comp.type}`); router.push(`/admin/dashboard/clap-tests/${selectedClapTest.id}/${comp.type}`); }}
+                                  >
+                                    {navigatingTo === `configure-${comp.type}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Edit className="w-3 h-3 mr-1" />}
+                                    {navigatingTo === `configure-${comp.type}` ? '' : 'Edit'}
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className={`grid grid-cols-2 gap-6 pt-3 border-t border-gray-100 ${comp.timer_enabled === false ? 'opacity-50' : ''}`}>
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-gray-400 uppercase">
+                                  Duration (Min){comp.timer_enabled === false ? ' — disabled' : ''}
+                                </label>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  value={comp.duration ?? 0}
+                                  disabled={comp.timer_enabled === false}
+                                  onChange={(e) => {
+                                    const newTests = [...selectedClapTest.tests];
+                                    newTests[idx].duration = parseInt(e.target.value) || 0;
+                                    setSelectedClapTest({ ...selectedClapTest, tests: newTests });
+                                  }}
+                                  className="w-20 p-2 border border-gray-200 rounded text-sm focus:ring-1 focus:ring-indigo-500 outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-gray-400 uppercase">Max Marks</label>
+                                <input
+                                  type="number"
+                                  value={comp.max_marks}
+                                  onChange={(e) => {
+                                    const newTests = [...selectedClapTest.tests];
+                                    newTests[idx].max_marks = parseInt(e.target.value) || 0;
+                                    setSelectedClapTest({ ...selectedClapTest, tests: newTests });
+                                  }}
+                                  className="w-20 p-2 border border-gray-200 rounded text-sm focus:ring-1 focus:ring-indigo-500 outline-none"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* ── Save Button ─────────────────────────────────────────── */}
+                    <div className="flex items-center justify-between pt-4 border-t gap-4">
+                      <p className="text-xs text-gray-400 flex items-center gap-1.5">
+                        <ShieldAlert className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                        Saving will propagate these rules to{' '}
+                        {sets.length > 0 ? (
+                          <strong className="text-indigo-600">{sets.length} {sets.length === 1 ? 'set' : 'sets'}</strong>
+                        ) : (
+                          'all sets'
+                        )}{' '}
+                        automatically.
+                      </p>
+                      <div className="flex gap-3 shrink-0">
+                        <Button variant="outline" onClick={() => setActiveDetailTab('overview')}>Cancel</Button>
+                        <Button
+                          className="bg-indigo-600 hover:bg-indigo-700 text-white"
+                          onClick={async () => {
+                            const loadingToast = toast.loading('Applying global rules to all sets...')
+                            try {
+                              // 1. Save ClapTest-level settings (including global_duration_minutes)
+                              await fetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}`), {
                                 method: 'PATCH',
                                 headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-                                body: JSON.stringify({ duration: comp.duration, max_marks: comp.max_marks })
+                                body: JSON.stringify({
+                                  name: selectedClapTest.name,
+                                  status: selectedClapTest.status,
+                                  global_duration_minutes: selectedClapTest.global_duration_minutes ?? null
+                                })
                               });
+
+                              // 2. Save per-component settings (duration + timer_enabled + max_marks)
+                              // Backend auto-syncs these to all matching ClapSetComponents
+                              for (const comp of selectedClapTest.tests) {
+                                await fetch(getApiUrl(`admin/clap-components/${comp.id}`), {
+                                  method: 'PATCH',
+                                  headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                                  body: JSON.stringify({
+                                    duration: comp.duration,
+                                    max_marks: comp.max_marks,
+                                    timer_enabled: comp.timer_enabled ?? true
+                                  })
+                                });
+                              }
+
+                              // 3. Force full-sync as safety net (catches any edge cases)
+                              await fetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}/sync-timers`), {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                              });
+
+                              toast.dismiss(loadingToast)
+                              toast.success(
+                                sets.length > 0
+                                  ? `Global rules saved — synced to all ${sets.length} ${sets.length === 1 ? 'set' : 'sets'} automatically`
+                                  : 'Global configuration saved successfully'
+                              )
+                              fetchClapTests();
+
+                              // Re-apply to local selected test so it updates visually
+                              setSelectedClapTest({
+                                ...selectedClapTest,
+                                global_duration_minutes: selectedClapTest.global_duration_minutes ?? null
+                              });
+
+                            } catch (err) {
+                              toast.dismiss(loadingToast)
+                              toast.error('Failed to save global configuration')
                             }
-                            toast.dismiss(loadingToast)
-                            toast.success('Configuration saved')
-                            fetchClapTests();
-                          } catch (err) {
-                            toast.dismiss(loadingToast)
-                            toast.error('Failed to save configuration')
-                          }
-                        }}
-                      >
-                        <Save className="w-4 h-4 mr-2" />
-                        Save Changes
-                      </Button>
+                          }}
+                        >
+                          <Save className="w-4 h-4 mr-2" />
+                          Save & Sync All Sets
+                        </Button>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
@@ -768,7 +1518,866 @@ export default function AdminTestsPage() {
                   </Button>
                 </div>
               )}
+
+              {activeDetailTab === 'retest' && (
+                <div className="space-y-4">
+                  {/* Header + info callout */}
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex gap-3">
+                    <ShieldAlert className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
+                    <div className="text-sm text-amber-800">
+                      <p className="font-semibold">Retest grants are permanent and irreversible.</p>
+                      <p className="mt-0.5 text-amber-700">Granting a retest <strong>immediately and permanently wipes</strong> all of the student&apos;s previous responses, audio recordings, and submission records for this test. Only their most recent attempt&apos;s data will exist in the system. This action is logged for compliance.</p>
+                    </div>
+                  </div>
+
+                  {retestLoading ? (
+                    <div className="flex items-center justify-center py-12 text-gray-400">
+                      <Loader2 className="w-6 h-6 animate-spin mr-2" /> Loading candidates...
+                    </div>
+                  ) : retestCandidates.length === 0 ? (
+                    <div className="text-center py-12 text-gray-400">
+                      <RotateCcw className="w-10 h-10 mx-auto mb-3 opacity-40" />
+                      <p className="font-medium">No students found for this test.</p>
+                    </div>
+                  ) : (
+                    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-50 border-b border-gray-200">
+                          <tr>
+                            <th className="text-left px-4 py-3 font-semibold text-gray-600">Student</th>
+                            <th className="text-left px-4 py-3 font-semibold text-gray-600">Status</th>
+                            <th className="text-center px-4 py-3 font-semibold text-gray-600">Attempt #</th>
+                            <th className="text-left px-4 py-3 font-semibold text-gray-600">Last Retest By</th>
+                            <th className="text-right px-4 py-3 font-semibold text-gray-600">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {retestCandidates.slice((retestPage - 1) * retestPageSize, retestPage * retestPageSize).map((c: any) => (
+                            <tr key={c.assignment_id} className="hover:bg-gray-50 transition-colors">
+                              <td className="px-4 py-3">
+                                <p className="font-medium text-gray-900">{c.student_name}</p>
+                                <p className="text-xs text-gray-500">{c.student_id}</p>
+                              </td>
+                              <td className="px-4 py-3">
+                                <Badge className={`text-xs ${c.status === 'completed' ? 'bg-green-100 text-green-700 border-green-200' :
+                                  c.status === 'started' ? 'bg-blue-100 text-blue-700 border-blue-200' :
+                                    c.status === 'expired' ? 'bg-red-100 text-red-700 border-red-200' :
+                                      'bg-gray-100 text-gray-600 border-gray-200'
+                                  }`}>
+                                  {c.status}
+                                </Badge>
+                              </td>
+                              <td className="px-4 py-3 text-center">
+                                <span className={`font-bold text-base ${c.attempt_number > 1 ? 'text-amber-600' : 'text-gray-600'}`}>
+                                  {c.attempt_number}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-gray-500 text-xs">
+                                {c.retest_granted_at ? (
+                                  <div>
+                                    <p className="font-medium text-gray-700">{c.retest_granted_by}</p>
+                                    <p>{new Date(c.retest_granted_at).toLocaleString()}</p>
+                                    {c.retest_reason && <p className="italic truncate max-w-[160px]" title={c.retest_reason}>&ldquo;{c.retest_reason}&rdquo;</p>}
+                                  </div>
+                                ) : <span>—</span>}
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                {c.status === 'started' ? (
+                                  <Badge className="bg-blue-50 text-blue-600 border-blue-200 text-xs">Mid-Test — Cannot Grant</Badge>
+                                ) : c.can_grant_retest ? (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="border-amber-300 text-amber-700 hover:bg-amber-50 hover:text-amber-800"
+                                    onClick={() => { setRetestModalAssignment(c); setRetestReason('') }}
+                                    disabled={retestGranting === c.assignment_id}
+                                  >
+                                    {retestGranting === c.assignment_id
+                                      ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Granting...</>
+                                      : <><RotateCcw className="w-3.5 h-3.5 mr-1.5" />Grant Retest</>}
+                                  </Button>
+                                ) : (
+                                  <span className="text-xs text-gray-400">N/A</span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {retestCandidates.length > retestPageSize && (
+                    <div className="flex items-center justify-between bg-white px-4 py-3 border border-gray-200 rounded-xl mt-3">
+                      <div className="text-sm text-gray-500">
+                        Showing <span className="font-medium">{(retestPage - 1) * retestPageSize + 1}</span> to <span className="font-medium">{Math.min(retestPage * retestPageSize, retestCandidates.length)}</span> of <span className="font-medium">{retestCandidates.length}</span> students
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setRetestPage(p => Math.max(1, p - 1))}
+                          disabled={retestPage === 1}
+                        >
+                          Previous
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setRetestPage(p => Math.min(Math.ceil(retestCandidates.length / retestPageSize), p + 1))}
+                          disabled={retestPage === Math.ceil(retestCandidates.length / retestPageSize)}
+                        >
+                          Next
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── LIVE TIMER TAB ─────────────────────────────────────────── */}
+              {activeDetailTab === 'live-timer' && (() => {
+                const fmt = (secs: number) => {
+                  const h = Math.floor(secs / 3600)
+                  const m = Math.floor((secs % 3600) / 60)
+                  const s = secs % 60
+                  return h > 0
+                    ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+                    : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+                }
+                const isRunning   = liveTimer?.timer_started && !liveTimer?.is_expired
+                const isExpired   = liveTimer?.is_expired
+                const isNotStarted = !liveTimer?.timer_started
+                const tLeft       = liveTimerTimeLeft ?? 0
+                const isCritical  = isRunning && tLeft <= 120
+                const isUrgent    = isRunning && tLeft <= 300 && !isCritical
+
+                return (
+                  <div className="space-y-6">
+
+                    {/* Status banner */}
+                    <div className={`rounded-2xl p-6 flex items-center justify-between gap-4 ${
+                      isRunning  ? (isCritical ? 'bg-red-600 text-white' : isUrgent ? 'bg-orange-500 text-white' : 'bg-gradient-to-r from-green-600 to-emerald-600 text-white')
+                      : isExpired  ? 'bg-gray-800 text-white'
+                      : 'bg-gradient-to-r from-indigo-50 to-blue-50 border border-indigo-200'
+                    }`}>
+                      <div className="flex items-center gap-4">
+                        <div className={`w-14 h-14 rounded-full flex items-center justify-center shrink-0 ${
+                          isRunning ? 'bg-white/20' : isExpired ? 'bg-white/10' : 'bg-indigo-100'
+                        }`}>
+                          <Clock className={`w-7 h-7 ${isRunning && isCritical ? 'animate-pulse' : ''} ${isRunning || isExpired ? 'text-white' : 'text-indigo-600'}`} />
+                        </div>
+                        <div>
+                          {isNotStarted && (
+                            <>
+                              <p className="text-lg font-bold text-indigo-900">Live Timer Not Started</p>
+                              <p className="text-sm text-indigo-600 mt-0.5">
+                                {selectedClapTest?.global_duration_minutes
+                                  ? `Configured: ${selectedClapTest.global_duration_minutes} minutes`
+                                  : 'Set global_duration_minutes in the Configure tab first.'}
+                              </p>
+                            </>
+                          )}
+                          {isRunning && (
+                            <>
+                              <p className="text-sm font-medium opacity-80">Time Remaining</p>
+                              <p className={`font-mono font-bold text-4xl tracking-tight ${isCritical ? 'animate-pulse' : ''}`}>
+                                {liveTimerLoading ? '–:––' : fmt(tLeft)}
+                              </p>
+                              {liveTimer?.global_deadline && (
+                                <p className="text-xs opacity-70 mt-1">
+                                  Ends at {new Date(liveTimer.global_deadline).toLocaleTimeString()} local · {new Date(liveTimer.global_deadline).toUTCString()}
+                                </p>
+                              )}
+                            </>
+                          )}
+                          {isExpired && (
+                            <>
+                              <p className="text-lg font-bold">Test Time Expired</p>
+                              <p className="text-sm opacity-70 mt-0.5">All active students have been auto-submitted.</p>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col items-end gap-2 shrink-0">
+                        {isNotStarted && (
+                          <Button
+                            onClick={() => handleStartLiveTimer(false)}
+                            disabled={startLoading || !selectedClapTest?.global_duration_minutes}
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white"
+                          >
+                            {startLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Zap className="w-4 h-4 mr-2" />}
+                            Start Live Timer
+                          </Button>
+                        )}
+                        {isRunning && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => fetchLiveTimerStatus(selectedClapTest.id)}
+                            disabled={liveTimerLoading}
+                            className="bg-white/10 border-white/30 text-white hover:bg-white/20"
+                          >
+                            <RotateCcw className={`w-3.5 h-3.5 mr-1.5 ${liveTimerLoading ? 'animate-spin' : ''}`} /> Refresh
+                          </Button>
+                        )}
+                        {isExpired && (
+                          <Button
+                            onClick={() => handleStartLiveTimer(true)}
+                            disabled={startLoading}
+                            variant="outline"
+                            className="border-white/30 text-white hover:bg-white/10"
+                          >
+                            {startLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RotateCcw className="w-4 h-4 mr-2" />}
+                            Reset & Restart
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Student counters */}
+                    {liveTimer && (
+                      <div className="grid grid-cols-3 gap-4">
+                        {[
+                          { label: 'Total Assigned', value: liveTimer.total_assigned ?? '–', icon: Users, color: 'indigo' },
+                          { label: 'Active / Writing', value: liveTimer.active_students ?? '–', icon: Zap, color: 'green' },
+                          { label: 'Completed', value: liveTimer.completed_students ?? '–', icon: CheckCircle2, color: 'blue' },
+                        ].map(({ label, value, icon: Icon, color }) => (
+                          <div key={label} className={`bg-${color}-50 border border-${color}-200 rounded-xl p-4 text-center`}>
+                            <Icon className={`w-5 h-5 text-${color}-500 mx-auto mb-1`} />
+                            <p className={`text-2xl font-bold text-${color}-700`}>{value}</p>
+                            <p className={`text-xs text-${color}-600`}>{label}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Extend Timer Panel — only when running */}
+                    {isRunning && (
+                      <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle className="w-4 h-4 text-amber-500" />
+                          <h4 className="font-semibold text-gray-900">Extend Live Timer</h4>
+                        </div>
+                        <p className="text-sm text-gray-500">
+                          Extension is instant and atomic. All {liveTimer?.active_students ?? '…'} active students will see
+                          the updated countdown on their next poll (within 30 s).
+                        </p>
+
+                        <div className="flex flex-wrap gap-2">
+                          {[5, 10, 15, 30].map(m => (
+                            <button
+                              key={m}
+                              onClick={() => setExtendMinutes(m)}
+                              className={`px-4 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                                extendMinutes === m
+                                  ? 'bg-red-600 text-white border-red-600'
+                                  : 'bg-white text-gray-700 border-gray-300 hover:border-red-400 hover:text-red-600'
+                              }`}
+                            >
+                              +{m} min
+                            </button>
+                          ))}
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              min={1}
+                              max={180}
+                              value={extendMinutes}
+                              onChange={e => setExtendMinutes(Math.max(1, Math.min(180, parseInt(e.target.value) || 1)))}
+                              className="w-20 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-red-400 outline-none"
+                              placeholder="Custom"
+                            />
+                            <span className="text-sm text-gray-500">min</span>
+                          </div>
+                        </div>
+
+                        <input
+                          type="text"
+                          value={extendReason}
+                          onChange={e => setExtendReason(e.target.value)}
+                          placeholder="Reason (optional — logged in audit trail)"
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-red-400 outline-none"
+                        />
+
+                        {liveTimer?.global_deadline && (
+                          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+                            <strong>New deadline preview:</strong>{' '}
+                            {new Date(new Date(liveTimer.global_deadline).getTime() + extendMinutes * 60000).toLocaleTimeString()}
+                            {' '}({extendMinutes} min added)
+                          </div>
+                        )}
+
+                        <Button
+                          onClick={handleExtendTimer}
+                          disabled={extendLoading || extendMinutes < 1}
+                          className="bg-red-600 hover:bg-red-700 text-white w-full"
+                        >
+                          {extendLoading
+                            ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Extending…</>
+                            : <><ChevronRight className="w-4 h-4 mr-2" />Confirm: Add {extendMinutes} Minutes to All Students</>}
+                        </Button>
+                      </div>
+                    )}
+
+                    {/* Extension History */}
+                    {(liveTimer?.extension_log ?? []).length > 0 && (
+                      <div className="bg-white border border-gray-200 rounded-xl p-5">
+                        <div className="flex items-center gap-2 mb-4">
+                          <History className="w-4 h-4 text-gray-500" />
+                          <h4 className="font-semibold text-gray-900">Timer Audit Log</h4>
+                          <span className="ml-auto text-xs text-gray-400">{liveTimer.extension_log.length} event{liveTimer.extension_log.length !== 1 ? 's' : ''}</span>
+                        </div>
+                        <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                          {[...liveTimer.extension_log].reverse().map((entry: any, i: number) => (
+                            <div key={i} className="flex items-start gap-3 py-2 border-b border-gray-100 last:border-0 text-sm">
+                              <span className={`shrink-0 px-2 py-0.5 rounded-full text-xs font-semibold ${
+                                entry.action === 'extend'     ? 'bg-orange-100 text-orange-700' :
+                                entry.action === 'start'      ? 'bg-green-100 text-green-700' :
+                                'bg-gray-100 text-gray-600'
+                              }`}>
+                                {entry.action === 'extend' ? `+${entry.extend_minutes}m` :
+                                 entry.action === 'start'  ? 'START' : entry.action.toUpperCase()}
+                              </span>
+                              <div className="min-w-0">
+                                <p className="text-gray-700 font-medium truncate">{entry.reason}</p>
+                                <p className="text-gray-400 text-xs">
+                                  {new Date(entry.at).toLocaleString()} · by {entry.by}
+                                  {entry.new_deadline_utc && (
+                                    <> · deadline → {new Date(entry.new_deadline_utc).toLocaleTimeString()}</>
+                                  )}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Not started help text */}
+                    {isNotStarted && !liveTimerLoading && (
+                      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800 space-y-1">
+                        <p className="font-semibold">How Live Timer Works</p>
+                        <ul className="list-disc pl-4 space-y-1 text-blue-700">
+                          <li>Click <strong>Start Live Timer</strong> to set a server-authoritative deadline for all students.</li>
+                          <li>Students poll every 5–30 s and their countdown updates automatically.</li>
+                          <li>Use <strong>Extend Timer</strong> at any time — all active students see the new time within 30 s.</li>
+                          <li>On expiry, students are auto-submitted with no action required from you.</li>
+                          <li>All changes are logged in the audit trail above.</li>
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
+
+              {activeDetailTab === 'sets' && (
+                <div className="space-y-6">
+
+                  {/* ── Header Row ──────────────────────────────────────────── */}
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-lg font-bold text-gray-900">Question Paper Sets</h3>
+                      <p className="text-sm text-gray-500 mt-0.5">
+                        Create multiple sets so no two neighbouring students get the same question paper.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleValidateSets}
+                        disabled={sets.length < 2}
+                        className="border-violet-200 text-violet-700 hover:bg-violet-50"
+                      >
+                        <TrendingUp className="w-4 h-4 mr-1.5" /> Validate Sets
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => handleCreateSet()}
+                        disabled={creatingSet || sets.length >= 26}
+                        className="bg-violet-600 hover:bg-violet-700 text-white"
+                      >
+                        {creatingSet ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" />Creating...</> : <><Plus className="w-4 h-4 mr-1.5" />New Empty Set</>}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* ── Minimum 2 sets info banner ───────────────────────────── */}
+                  {sets.length < 2 && (
+                    <div className="bg-violet-50 border border-violet-200 rounded-xl p-4 text-sm text-violet-800 flex gap-3">
+                      <FileText className="w-5 h-5 text-violet-500 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-semibold">At least 2 sets are required for distribution.</p>
+                        <p className="mt-0.5 text-violet-700">
+                          Create a second set (blank or cloned) and add questions to it, then use Smart Distribute.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── Sets List ────────────────────────────────────────────── */}
+                  {setsLoading ? (
+                    <div className="flex items-center justify-center py-12 text-gray-400">
+                      <Loader2 className="w-6 h-6 animate-spin mr-2" /> Loading sets...
+                    </div>
+                  ) : sets.length === 0 ? (
+                    <div className="space-y-4">
+                      {/* ── Import Callout ─────────────────────────────────── */}
+                      <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-5 flex gap-4">
+                        <div className="w-10 h-10 rounded-lg bg-indigo-100 flex items-center justify-center shrink-0 mt-0.5">
+                          <ArrowRight className="w-5 h-5 text-indigo-600" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold text-indigo-900">
+                            Import existing question paper as Set A
+                          </p>
+                          <p className="text-sm text-indigo-700 mt-1">
+                            This test already has a question paper built in the{' '}
+                            <strong>Configure</strong> tab. Import it here as <strong>Set A</strong>,
+                            then clone and customise to create Set B, C, etc.
+                          </p>
+                          <div className="flex flex-wrap gap-2 mt-3">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="border-indigo-300 text-indigo-700 hover:bg-indigo-100"
+                              onClick={() => handleImportFromComponents(true)}
+                              disabled={importDryRunLoading || importing}
+                            >
+                              {importDryRunLoading
+                                ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Previewing...</>
+                                : <><FileText className="w-3.5 h-3.5 mr-1.5" />Preview Import</>}
+                            </Button>
+                            {importPreview && (
+                              <Button
+                                size="sm"
+                                className="bg-indigo-600 hover:bg-indigo-700 text-white"
+                                onClick={() => handleImportFromComponents(false)}
+                                disabled={importing}
+                              >
+                                {importing
+                                  ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Importing...</>
+                                  : <><ArrowRight className="w-3.5 h-3.5 mr-1.5" />Confirm Import as Set A</>}
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* ── Preview Breakdown ─────────────────────────────── */}
+                      {importPreview && (
+                        <div className="bg-white border border-indigo-200 rounded-xl overflow-hidden">
+                          <div className="bg-indigo-50 px-4 py-3 border-b border-indigo-200 flex items-center justify-between">
+                            <p className="font-semibold text-indigo-900 text-sm">
+                              Import Preview — Set A
+                            </p>
+                            <div className="flex items-center gap-2 text-xs">
+                              <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-medium">
+                                {importPreview.components} components
+                              </span>
+                              <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-medium">
+                                {importPreview.total_items} questions total
+                              </span>
+                            </div>
+                          </div>
+                          <table className="w-full text-sm">
+                            <thead className="bg-gray-50 border-b border-gray-200">
+                              <tr>
+                                <th className="text-left px-4 py-2.5 font-semibold text-gray-600">Component</th>
+                                <th className="text-left px-4 py-2.5 font-semibold text-gray-600">Title</th>
+                                <th className="text-center px-4 py-2.5 font-semibold text-gray-600">Questions</th>
+                                <th className="text-center px-4 py-2.5 font-semibold text-gray-600">Duration</th>
+                                <th className="text-center px-4 py-2.5 font-semibold text-gray-600">Max Marks</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {(importPreview.component_breakdown || []).map((comp: any) => (
+                                <tr key={comp.test_type} className="hover:bg-gray-50">
+                                  <td className="px-4 py-2.5">
+                                    <span className="capitalize font-medium text-gray-900">{comp.test_type}</span>
+                                  </td>
+                                  <td className="px-4 py-2.5 text-gray-600">{comp.title}</td>
+                                  <td className="px-4 py-2.5 text-center font-mono text-indigo-700 font-semibold">{comp.item_count}</td>
+                                  <td className="px-4 py-2.5 text-center text-gray-500">{comp.duration_minutes}m</td>
+                                  <td className="px-4 py-2.5 text-center text-gray-500">{comp.max_marks}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          <div className="px-4 py-3 bg-amber-50 border-t border-amber-100 text-xs text-amber-800">
+                            ⚠ This is a <strong>read-only preview</strong>. Click <strong>"Confirm Import as Set A"</strong> above to write the data. No data has been saved yet.
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ── Divider ───────────────────────────────────────── */}
+                      <div className="flex items-center gap-3 text-xs text-gray-400">
+                        <div className="flex-1 h-px bg-gray-200" />
+                        <span>or start from scratch</span>
+                        <div className="flex-1 h-px bg-gray-200" />
+                      </div>
+
+                      {/* ── Create Empty ─────────────────────────────────── */}
+                      <div className="border-2 border-dashed border-gray-200 rounded-xl py-10 text-center">
+                        <FileText className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+                        <p className="text-gray-500 font-medium">Create a blank Set A</p>
+                        <p className="text-sm text-gray-400 mt-1 mb-4">Use "New Empty Set" if you prefer to build sets from scratch.</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {sets.map((s: any) => (
+                        <div key={s.id} className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm hover:shadow-md transition-shadow">
+                          <div className="flex items-center justify-between mb-3">
+                            <div className="flex items-center gap-2">
+                              <span className="w-9 h-9 rounded-lg bg-violet-100 text-violet-700 font-bold text-lg flex items-center justify-center">
+                                {s.label}
+                              </span>
+                              <div>
+                                <p className="font-semibold text-gray-900 text-sm">Set {s.label}</p>
+                                <p className="text-xs text-gray-400">{s.component_count} components · {s.total_item_count} items</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              {s.assigned_student_count > 0 && (
+                                <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
+                                  {s.assigned_student_count} students
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex gap-2 mt-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="flex-1 text-xs border-indigo-200 text-indigo-600 hover:bg-indigo-50"
+                              onClick={() => router.push(`/admin/dashboard/clap-tests/${selectedClapTest?.id}/sets/${s.id}/bundle-preview`)}
+                            >
+                              <Play className="w-3 h-3 mr-1" /> Preview Set
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="text-xs border-violet-200 text-violet-600 hover:bg-violet-50"
+                              disabled={creatingSet || sets.length >= 26}
+                              onClick={() => handleCreateSet(s.id)}
+                            >
+                              <Plus className="w-3 h-3 mr-1" /> Clone
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="text-xs border-red-200 text-red-500 hover:bg-red-50"
+                              onClick={() => handleDeleteSet(s.id, s.label, s.assigned_student_count)}
+                            >
+                              ✕
+                            </Button>
+                          </div>
+
+                          {/* Component list — each row navigates to that component's editor */}
+                          <div className="mt-3 pt-3 border-t border-gray-100 flex flex-col gap-1.5">
+                            {s.components && s.components.length > 0 ? (
+                              s.components.map((c: any) => (
+                                <div
+                                  key={c.id}
+                                  className="flex justify-between items-center hover:bg-blue-50 p-1.5 rounded transition-colors cursor-pointer group"
+                                  onClick={() => router.push(`/admin/dashboard/clap-tests/${selectedClapTest?.id}/sets/${s.id}/${c.test_type}`)}
+                                >
+                                  <span className="text-xs font-medium text-gray-700 capitalize">{c.test_type}</span>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">{c.item_count} items</span>
+                                    <span className="text-[10px] text-blue-600 font-medium px-1.5 group-hover:underline">Edit →</span>
+                                  </div>
+                                </div>
+                              ))
+                            ) : s.component_count > 0 ? (
+                              /* Fallback: components not yet loaded in state — show generic edit buttons */
+                              (['listening', 'speaking', 'reading', 'writing', 'vocabulary'] as const).map((type) => (
+                                <div
+                                  key={type}
+                                  className="flex justify-between items-center hover:bg-blue-50 p-1.5 rounded transition-colors cursor-pointer group"
+                                  onClick={() => router.push(`/admin/dashboard/clap-tests/${selectedClapTest?.id}/sets/${s.id}/${type}`)}
+                                >
+                                  <span className="text-xs font-medium text-gray-700 capitalize">{type}</span>
+                                  <span className="text-[10px] text-blue-600 font-medium px-1.5 group-hover:underline">Edit →</span>
+                                </div>
+                              ))
+                            ) : (
+                              <p className="text-xs text-amber-600 bg-amber-50 rounded px-2 py-1">
+                                ⚠ No components yet — use Clone or import to populate this set
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* ── Validation Panel ─────────────────────────────────────── */}
+                  {setsValidation && (
+                    <div className={`rounded-xl border p-4 text-sm ${setsValidation.valid ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
+                      <p className="font-semibold mb-1">
+                        {setsValidation.valid ? '✅ All sets are balanced and ready for distribution.' : `❌ ${setsValidation.issues.length} issue(s) found — fix before distributing.`}
+                      </p>
+                      {!setsValidation.valid && (
+                        <ul className="mt-2 space-y-1 list-disc list-inside text-red-700 text-xs">
+                          {setsValidation.issues.map((issue: any, i: number) => (
+                            <li key={i}>
+                              Set {issue.set_label} — {issue.test_type}:
+                              {issue.issue ? ` ${issue.issue}` : ` expected ${issue.expected_items} items, got ${issue.actual_items}`}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+
+                  {/* ── Smart Distribution Panel ─────────────────────────────── */}
+                  {sets.length >= 2 && (
+                    <div className="bg-white border border-violet-200 rounded-xl p-5 space-y-4">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Settings className="w-4 h-4 text-violet-600" />
+                        <h4 className="font-semibold text-gray-900">Smart Distribution</h4>
+                      </div>
+                      <p className="text-xs text-gray-500">
+                        Distribute sets across all assigned students so no two adjacent students share the same question paper.
+                      </p>
+
+                      {/* Strategy Selector */}
+                      <div className="flex flex-wrap gap-2">
+                        {[
+                          { id: 'round_robin', label: 'Round Robin', desc: 'Best when seating layout is unknown' },
+                          { id: 'latin_square', label: 'Latin Square', desc: 'Perfect for grid seating (requires rows × cols)' },
+                        ].map((s) => (
+                          <label
+                            key={s.id}
+                            className={`flex-1 min-w-[180px] border rounded-lg p-3 cursor-pointer transition-colors ${distributeStrategy === s.id ? 'border-violet-500 bg-violet-50' : 'border-gray-200 hover:border-violet-300'}`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="radio"
+                                name="dist_strategy"
+                                value={s.id}
+                                checked={distributeStrategy === s.id as any}
+                                onChange={() => setDistributeStrategy(s.id as any)}
+                                className="accent-violet-600"
+                              />
+                              <div>
+                                <p className="text-sm font-semibold text-gray-800">{s.label}</p>
+                                <p className="text-xs text-gray-500 mt-0.5">{s.desc}</p>
+                              </div>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+
+                      {/* Latin Square Config */}
+                      {distributeStrategy === 'latin_square' && (
+                        <div className="flex items-center gap-4 bg-violet-50 rounded-lg px-4 py-3 text-sm">
+                          <label className="flex items-center gap-2 text-gray-700">
+                            Rows:
+                            <input
+                              type="number"
+                              min={1}
+                              value={distributeRows}
+                              onChange={e => setDistributeRows(Math.max(1, parseInt(e.target.value) || 1))}
+                              className="w-16 border border-violet-300 rounded px-2 py-1 text-center focus:ring-1 focus:ring-violet-500 outline-none"
+                            />
+                          </label>
+                          <span className="text-gray-400">×</span>
+                          <label className="flex items-center gap-2 text-gray-700">
+                            Cols:
+                            <input
+                              type="number"
+                              min={1}
+                              value={distributeCols}
+                              onChange={e => setDistributeCols(Math.max(1, parseInt(e.target.value) || 1))}
+                              className="w-16 border border-violet-300 rounded px-2 py-1 text-center focus:ring-1 focus:ring-violet-500 outline-none"
+                            />
+                          </label>
+                          <span className="text-xs text-violet-600 font-medium">= {distributeRows * distributeCols} seats</span>
+                        </div>
+                      )}
+
+                      {/* Action Buttons */}
+                      <div className="flex flex-wrap gap-3 pt-1">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleDistribute(true)}
+                          disabled={distributing}
+                          className="border-violet-200 text-violet-700 hover:bg-violet-50"
+                        >
+                          {distributing ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <TrendingUp className="w-4 h-4 mr-1.5" />}
+                          Dry Run Preview
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={() => handleDistribute(false)}
+                          disabled={distributing || !setsCanDistribute}
+                          className="bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50"
+                        >
+                          {distributing ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" />Distributing...</> : <><ArrowRight className="w-4 h-4 mr-1.5" />Distribute Now</>}
+                        </Button>
+                        {distributionStatus?.distributed > 0 && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleClearDistribution}
+                            className="border-red-200 text-red-600 hover:bg-red-50"
+                          >
+                            Clear Distribution
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── Distribution Status Table ─────────────────────────────── */}
+                  {distributionStatus && (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-semibold text-gray-900 text-sm">Distribution Status</h4>
+                        <div className="flex items-center gap-3">
+                          {Object.entries(distributionStatus.by_set || {}).map(([label, count]: any) => (
+                            <span key={label} className="text-xs bg-violet-100 text-violet-700 px-2.5 py-1 rounded-full font-medium">
+                              Set {label}: {count}
+                            </span>
+                          ))}
+                          <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${distributionStatus.distribution_complete ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                            {distributionStatus.distributed}/{distributionStatus.total_students} distributed
+                          </span>
+                        </div>
+                      </div>
+
+                      {distributionStatusLoading ? (
+                        <div className="flex items-center justify-center py-8 text-gray-400">
+                          <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading...
+                        </div>
+                      ) : (
+                        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                          <table className="w-full text-sm">
+                            <thead className="bg-gray-50 border-b border-gray-200">
+                              <tr>
+                                <th className="text-left px-4 py-3 font-semibold text-gray-600">Student</th>
+                                <th className="text-left px-4 py-3 font-semibold text-gray-600">Roll No.</th>
+                                <th className="text-center px-4 py-3 font-semibold text-gray-600">Assigned Set</th>
+                                <th className="text-left px-4 py-3 font-semibold text-gray-600">Test Status</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {(distributionStatus.students || []).slice((setsDistPage - 1) * setsDistPageSize, setsDistPage * setsDistPageSize).map((s: any) => (
+                                <tr key={s.assignment_id} className="hover:bg-gray-50 transition-colors">
+                                  <td className="px-4 py-2.5 font-medium text-gray-900">{s.student_name}</td>
+                                  <td className="px-4 py-2.5 text-gray-500 font-mono text-xs">{s.student_roll || '—'}</td>
+                                  <td className="px-4 py-2.5 text-center">
+                                    {s.assigned_set_label ? (
+                                      <span className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-violet-100 text-violet-700 font-bold text-sm">
+                                        {s.assigned_set_label}
+                                      </span>
+                                    ) : (
+                                      <span className="text-gray-300 text-xs">Unassigned</span>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-2.5">
+                                    <Badge className={`text-xs ${s.status === 'completed' ? 'bg-green-100 text-green-700 border-green-200' : s.status === 'started' ? 'bg-blue-100 text-blue-700 border-blue-200' : s.status === 'expired' ? 'bg-red-100 text-red-700 border-red-200' : 'bg-gray-100 text-gray-600 border-gray-200'}`}>
+                                      {s.status}
+                                    </Badge>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+
+                      {(distributionStatus?.students?.length || 0) > setsDistPageSize && (
+                        <div className="flex items-center justify-between bg-white px-4 py-3 border border-gray-200 rounded-xl mt-3">
+                          <div className="text-sm text-gray-500">
+                            Showing <span className="font-medium">{(setsDistPage - 1) * setsDistPageSize + 1}</span> to <span className="font-medium">{Math.min(setsDistPage * setsDistPageSize, distributionStatus.students.length)}</span> of <span className="font-medium">{distributionStatus.students.length}</span> students
+                          </div>
+                          <div className="flex gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setSetsDistPage(p => Math.max(1, p - 1))}
+                              disabled={setsDistPage === 1}
+                            >
+                              Previous
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setSetsDistPage(p => Math.min(Math.ceil(distributionStatus.students.length / setsDistPageSize), p + 1))}
+                              disabled={setsDistPage === Math.ceil(distributionStatus.students.length / setsDistPageSize)}
+                            >
+                              Next
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                </div>
+              )}
+
             </div>
+
+            {/* ── Grant Retest Confirmation Modal ─────────────────────────────────── */}
+            {retestModalAssignment && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+                <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md mx-4 border border-amber-200">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center">
+                      <RotateCcw className="w-5 h-5 text-amber-600" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-gray-900">Grant Retest</h3>
+                      <p className="text-sm text-gray-500">{retestModalAssignment.student_name} · {retestModalAssignment.student_id}</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4 text-sm text-red-700">
+                    <strong>⚠ Warning:</strong> This will permanently delete all of this student&apos;s existing responses and submission records for this test. Attempt #{retestModalAssignment.attempt_number + 1} will start fresh.
+                  </div>
+
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Reason for retest <span className="text-red-500">*</span>
+                  </label>
+                  <textarea
+                    className="w-full border border-gray-200 rounded-lg p-3 text-sm resize-none focus:ring-2 focus:ring-amber-400 outline-none"
+                    rows={3}
+                    placeholder="e.g. Student experienced technical issues during the exam."
+                    value={retestReason}
+                    onChange={e => setRetestReason(e.target.value)}
+                    maxLength={500}
+                  />
+                  <p className="text-xs text-gray-400 text-right mb-4">{retestReason.length}/500</p>
+
+                  <div className="flex gap-3">
+                    <Button
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() => { setRetestModalAssignment(null); setRetestReason('') }}
+                      disabled={!!retestGranting}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      className="flex-1 bg-amber-500 hover:bg-amber-600 text-white"
+                      onClick={handleGrantRetest}
+                      disabled={!retestReason.trim() || !!retestGranting}
+                    >
+                      {retestGranting ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Granting...</> : 'Confirm & Grant Retest'}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         ) : clapTests.length === 0 ? (
           <div className="text-center py-12">
