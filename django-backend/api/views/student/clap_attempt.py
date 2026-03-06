@@ -36,7 +36,8 @@ def list_assigned_tests(request):
                     'id': str(comp.id),
                     'type': comp.test_type,
                     'title': comp.title,
-                    'duration': comp.duration_minutes
+                    'duration': comp.duration_minutes,
+                    'timer_enabled': comp.timer_enabled,
                 })
 
             data.append({
@@ -47,6 +48,7 @@ def list_assigned_tests(request):
                 'assigned_at': assignment.assigned_at.isoformat() if assignment.assigned_at else None,
                 'started_at': assignment.started_at.isoformat() if assignment.started_at else None,
                 'completed_at': assignment.completed_at.isoformat() if assignment.completed_at else None,
+                'retest_granted': assignment.retest_granted,
                 'components': components
             })
 
@@ -55,6 +57,56 @@ def list_assigned_tests(request):
     except Exception as e:
         logger.error(f"Error listing assignments: {str(e)}")
         return JsonResponse({'error': str(e)}, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def start_assignment(request, assignment_id):
+    """
+    POST /student/clap-assignments/{assignment_id}/start
+
+    Idempotent start — marks the assignment as started the first time,
+    then returns the server-authoritative started_at and total_duration_minutes
+    on every subsequent call so the frontend can seed its local timer.
+
+    Response: { assignment_id, status, started_at, total_duration_minutes }
+    """
+    user = get_user_from_request(request)
+    if not user or user.role != 'student':
+        return JsonResponse({'error': 'Unauthorized'}, status=401)
+
+    try:
+        assignment = StudentClapAssignment.objects.select_related('clap_test').get(
+            id=assignment_id, student=user
+        )
+    except StudentClapAssignment.DoesNotExist:
+        return JsonResponse({'error': 'Assignment not found'}, status=404)
+
+    now = timezone.now()
+
+    # Idempotent: only update started_at / status on first call
+    if not assignment.started_at:
+        assignment.started_at = now
+        assignment.status = 'started'
+        assignment.save(update_fields=['started_at', 'status'])
+
+    # Effective duration: global_duration_minutes > sum of component durations
+    test = assignment.clap_test
+    if test.global_duration_minutes:
+        total_duration = test.global_duration_minutes
+    else:
+        total_duration = sum(
+            c.duration_minutes or 0
+            for c in test.components.all()
+        ) or None
+
+    return JsonResponse({
+        'assignment_id': str(assignment.id),
+        'status': assignment.status,
+        'started_at': assignment.started_at.isoformat() if assignment.started_at else None,
+        'total_duration_minutes': total_duration,
+    })
+
 
 @csrf_exempt
 @require_http_methods(["GET"])
