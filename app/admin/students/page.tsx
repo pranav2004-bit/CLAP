@@ -6,7 +6,7 @@ import { Plus, Upload } from 'lucide-react'
 import { EnhancedStudentManagement } from '@/components/EnhancedStudentManagement'
 import { EnhancedStudentManagementModal } from '@/components/EnhancedStudentManagementModal'
 import { BulkImportModal } from '@/components/admin/BulkImportModal'
-import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders, apiFetch } from '@/lib/api-config'
 import { toast } from 'sonner'
 
 interface Batch {
@@ -24,7 +24,7 @@ export default function AdminStudentsPage() {
   useEffect(() => {
     const fetchBatches = async () => {
       try {
-        const res = await fetch(getApiUrl('admin/batches'), { headers: getAuthHeaders() })
+        const res = await apiFetch(getApiUrl('admin/batches'), { headers: getAuthHeaders() })
         if (res.ok) {
           const data = await res.json()
           setBatches(data.batches || [])
@@ -39,7 +39,7 @@ export default function AdminStudentsPage() {
 
   const handleCreateStudent = async (studentData: any) => {
     try {
-      const response = await fetch(getApiUrl('admin/students'), {
+      const response = await apiFetch(getApiUrl('admin/students'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

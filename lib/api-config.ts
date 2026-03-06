@@ -46,3 +46,17 @@ export const handle401 = () => {
     const loginPath = role === 'admin' ? '/admin-login' : '/login'
     window.location.href = `${loginPath}?reason=session_expired`
 }
+
+/**
+ * Drop-in replacement for fetch() for all CLAP API calls.
+ * Automatically calls handle401() when the server returns 401,
+ * clearing auth state and redirecting to the login page instantly.
+ *
+ * Usage (identical to fetch):
+ *   const res = await apiFetch(getApiUrl('admin/...'), { headers: getAuthHeaders() })
+ */
+export const apiFetch = async (url: string, options?: RequestInit): Promise<Response> => {
+    const res = await fetch(url, options)
+    if (res.status === 401) handle401()
+    return res
+}

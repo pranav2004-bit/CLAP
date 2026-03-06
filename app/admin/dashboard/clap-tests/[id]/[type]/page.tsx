@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { ArrowLeft, Save, Plus, Trash2, GripVertical, FileText, Mic, Image as ImageIcon, CheckSquare, Eye, Settings, Clock, X, Loader2, ArrowUp, ArrowDown, Check } from 'lucide-react'
 import { toast } from 'sonner'
-import { getApiUrl } from '@/lib/api-config'
+import { getApiUrl, apiFetch } from '@/lib/api-config'
 import { TestPreviewModal } from '@/components/admin/TestPreviewModal'
 
 // Question classification helper
@@ -55,7 +55,7 @@ function ClapTestEditorContent() {
                 // Or better, let's just make an API that gets the component by test_id and type?
                 // For now, I'll fetch the test details and find the component.
 
-                const testResponse = await fetch(getApiUrl(`admin/clap-tests/${params.id}`))
+                const testResponse = await apiFetch(getApiUrl(`admin/clap-tests/${params.id}`))
                 const testData = await testResponse.json()
 
                 if (!testResponse.ok) throw new Error(testData.error)
@@ -74,7 +74,7 @@ function ClapTestEditorContent() {
                 // My `clap_test_detail_handler` returns `tests` array with `id`, `type`, `name`, `status`.
                 // So `foundComponent.id` is the component ID! 
 
-                const itemsResponse = await fetch(getApiUrl(`admin/clap-components/${foundComponent.id}/items`), {
+                const itemsResponse = await apiFetch(getApiUrl(`admin/clap-components/${foundComponent.id}/items`), {
                     headers: {
                         'x-user-id': localStorage.getItem('user_id') || ''
                     }
@@ -112,7 +112,7 @@ function ClapTestEditorContent() {
             // Optimistic update
             setItems(prev => [...prev, { ...newItem, id: 'temp-' + Date.now() }]) // Temp ID
 
-            const response = await fetch(getApiUrl(`admin/clap-components/${component.id}/items`), {
+            const response = await apiFetch(getApiUrl(`admin/clap-components/${component.id}/items`), {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -140,7 +140,7 @@ function ClapTestEditorContent() {
         if (!confirm('Are you sure you want to delete this item?')) return
 
         try {
-            const response = await fetch(getApiUrl(`admin/clap-items/${itemId}`), {
+            const response = await apiFetch(getApiUrl(`admin/clap-items/${itemId}`), {
                 method: 'DELETE',
                 headers: {
                     'x-user-id': localStorage.getItem('user_id') || ''
@@ -176,7 +176,7 @@ function ClapTestEditorContent() {
             // Need component ID to reorder
             if (!component) return
 
-            await fetch(getApiUrl(`admin/clap-components/${component.id}/reorder-items`), {
+            await apiFetch(getApiUrl(`admin/clap-components/${component.id}/reorder-items`), {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -224,7 +224,7 @@ function ClapTestEditorContent() {
 
         try {
             // Debounce logic could be added here, but for now simple save on change/blur
-            const response = await fetch(getApiUrl(`admin/clap-items/${itemId}`), {
+            const response = await apiFetch(getApiUrl(`admin/clap-items/${itemId}`), {
                 method: 'PATCH',
                 headers: {
                     'Content-Type': 'application/json',
@@ -331,7 +331,7 @@ function ClapTestEditorContent() {
 
             // We are using the component ID to update settings
             // Assuming endpoint admin/clap-components/[id] accepts PATCH
-            const response = await fetch(getApiUrl(`admin/clap-components/${component.id}`), {
+            const response = await apiFetch(getApiUrl(`admin/clap-components/${component.id}`), {
                 method: 'PATCH',
                 headers: {
                     'Content-Type': 'application/json',

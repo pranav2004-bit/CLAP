@@ -13,7 +13,7 @@ import {
   Upload, X, ChevronRight,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders, apiFetch } from '@/lib/api-config'
 import { TestPreviewModal } from '@/components/admin/TestPreviewModal'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -118,8 +118,8 @@ function SetEditorContent() {
       try {
         // Parallel: fetch set components + test name
         const [setRes, testRes] = await Promise.all([
-          fetch(getApiUrl(`admin/sets/${params.setId}/components`), { headers: getAuthHeaders() }),
-          fetch(getApiUrl(`admin/clap-tests/${params.id}`),         { headers: getAuthHeaders() }),
+          apiFetch(getApiUrl(`admin/sets/${params.setId}/components`), { headers: getAuthHeaders() }),
+          apiFetch(getApiUrl(`admin/clap-tests/${params.id}`),         { headers: getAuthHeaders() }),
         ])
 
         const setData = await setRes.json()
@@ -137,7 +137,7 @@ function SetEditorContent() {
         }
 
         // Fetch items for this component
-        const itemsRes  = await fetch(getApiUrl(`admin/set-components/${found.id}/items`), { headers: getAuthHeaders() })
+        const itemsRes  = await apiFetch(getApiUrl(`admin/set-components/${found.id}/items`), { headers: getAuthHeaders() })
         const itemsData = await itemsRes.json()
         if (itemsRes.ok) setItems((itemsData.items || []).filter(Boolean))
 
@@ -170,7 +170,7 @@ function SetEditorContent() {
     setShowAddMenu(false)
 
     try {
-      const res  = await fetch(getApiUrl(`admin/set-components/${comp.id}/items`), {
+      const res  = await apiFetch(getApiUrl(`admin/set-components/${comp.id}/items`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify(newItem),
@@ -199,7 +199,7 @@ function SetEditorContent() {
     setItems(prev => prev.filter(i => i?.id !== itemId))
 
     try {
-      const res = await fetch(getApiUrl(`admin/set-items/${itemId}`), {
+      const res = await apiFetch(getApiUrl(`admin/set-items/${itemId}`), {
         method: 'DELETE',
         headers: getAuthHeaders(),
       })
@@ -232,7 +232,7 @@ function SetEditorContent() {
     // 2. Persist new order
     const comp = componentRef.current
     if (comp) {
-      fetch(getApiUrl(`admin/set-components/${comp.id}/reorder-items`), {
+      apiFetch(getApiUrl(`admin/set-components/${comp.id}/reorder-items`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({ item_ids: next.filter(Boolean).map(i => i.id) }),
@@ -269,7 +269,7 @@ function SetEditorContent() {
         const current = itemsRef.current.find(i => i?.id === itemId)
         if (!current) return
 
-        const res = await fetch(getApiUrl(`admin/set-items/${itemId}`), {
+        const res = await apiFetch(getApiUrl(`admin/set-items/${itemId}`), {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify({
@@ -317,7 +317,7 @@ function SetEditorContent() {
 
     const t = toast.loading('Uploading audio...')
     try {
-      const res  = await fetch(getApiUrl(`admin/set-items/${itemId}/upload-audio`), {
+      const res  = await apiFetch(getApiUrl(`admin/set-items/${itemId}/upload-audio`), {
         method: 'POST',
         headers: getAuthHeaders(),
         body: form,
@@ -341,7 +341,7 @@ function SetEditorContent() {
   const handleDeleteAudio = useCallback(async (itemId: string) => {
     if (!confirm('Delete this audio file? Students will lose access to it.')) return
     try {
-      const res  = await fetch(getApiUrl(`admin/set-items/${itemId}/audio`), {
+      const res  = await apiFetch(getApiUrl(`admin/set-items/${itemId}/audio`), {
         method: 'DELETE',
         headers: getAuthHeaders(),
       })

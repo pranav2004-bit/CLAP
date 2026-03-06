@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ArrowLeft, Headphones, Mic, BookOpen, PenTool, Brain, CheckCircle, PlayCircle, Clock, RotateCcw } from 'lucide-react'
 import { toast } from 'sonner'
-import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders, apiFetch } from '@/lib/api-config'
 import { TestPreviewModal } from '@/components/admin/TestPreviewModal'
 
 export default function SetBundlePreviewPage() {
@@ -39,7 +39,7 @@ export default function SetBundlePreviewPage() {
         const fetchSet = async () => {
             try {
                 // 1. Get components for this set
-                const setRes = await fetch(getApiUrl(`admin/sets/${params.setId}/components`), {
+                const setRes = await apiFetch(getApiUrl(`admin/sets/${params.setId}/components`), {
                     headers: getAuthHeaders()
                 })
                 if (!setRes.ok) throw new Error('Failed to load set')
@@ -48,7 +48,7 @@ export default function SetBundlePreviewPage() {
                 setComponents(setData.components || [])
 
                 // 2. Get the test name from the parent test
-                const testRes = await fetch(getApiUrl(`admin/clap-tests/${params.id}`), {
+                const testRes = await apiFetch(getApiUrl(`admin/clap-tests/${params.id}`), {
                     headers: getAuthHeaders()
                 })
                 if (testRes.ok) {
@@ -126,7 +126,7 @@ export default function SetBundlePreviewPage() {
         if (isTestLocked) return
         const loadingToast = toast.loading(`Loading ${comp.test_type} preview...`)
         try {
-            const res = await fetch(getApiUrl(`admin/set-components/${comp.id}/items`), {
+            const res = await apiFetch(getApiUrl(`admin/set-components/${comp.id}/items`), {
                 headers: getAuthHeaders()
             })
             const data = await res.json()

@@ -34,7 +34,7 @@ import {
   CheckCircle2,
   ChevronRight,
 } from 'lucide-react'
-import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders, apiFetch } from '@/lib/api-config'
 import { feedback } from '@/lib/user-feedback'
 import { TestPreviewModal } from '@/components/admin/TestPreviewModal'
 
@@ -112,7 +112,7 @@ export default function AdminTestsPage() {
   const fetchRetestCandidates = async (testId: string) => {
     setRetestLoading(true)
     try {
-      const res = await fetch(getApiUrl(`admin/clap-tests/${testId}/retest-candidates`), {
+      const res = await apiFetch(getApiUrl(`admin/clap-tests/${testId}/retest-candidates`), {
         headers: getAuthHeaders(),
         cache: 'no-store'
       })
@@ -160,7 +160,7 @@ export default function AdminTestsPage() {
 
   const fetchBatches = async () => {
     try {
-      const response = await fetch(getApiUrl('admin/batches'), { headers: getAuthHeaders() });
+      const response = await apiFetch(getApiUrl('admin/batches'), { headers: getAuthHeaders() });
       if (!response.ok) {
         console.error('Failed to fetch batches:', response.status);
         return;
@@ -178,7 +178,7 @@ export default function AdminTestsPage() {
   const fetchClapTests = async () => {
     try {
       const loadingToast = feedback.loadingData('CLAP tests')
-      const response = await fetch(getApiUrl('admin/clap-tests'), {
+      const response = await apiFetch(getApiUrl('admin/clap-tests'), {
         headers: getAuthHeaders(),
         cache: 'no-store'
       });
@@ -206,7 +206,7 @@ export default function AdminTestsPage() {
     try {
       setIsCreatingTest(true);
       const loadingToast = feedback.creating('CLAP test')
-      const response = await fetch(getApiUrl('admin/clap-tests'), {
+      const response = await apiFetch(getApiUrl('admin/clap-tests'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -243,7 +243,7 @@ export default function AdminTestsPage() {
     setSetsLoading(true)
     setSetsValidation(null)
     try {
-      const res = await fetch(getApiUrl(`admin/clap-tests/${testId}/sets`), {
+      const res = await apiFetch(getApiUrl(`admin/clap-tests/${testId}/sets`), {
         headers: getAuthHeaders(), cache: 'no-store'
       })
       if (!res.ok) { toast.error('Failed to load sets'); return }
@@ -260,7 +260,7 @@ export default function AdminTestsPage() {
   const fetchDistributionStatus = async (testId: string) => {
     setDistributionStatusLoading(true)
     try {
-      const res = await fetch(getApiUrl(`admin/clap-tests/${testId}/distribution-status`), {
+      const res = await apiFetch(getApiUrl(`admin/clap-tests/${testId}/distribution-status`), {
         headers: getAuthHeaders(), cache: 'no-store'
       })
       if (!res.ok) { toast.error('Failed to load distribution status'); return }
@@ -280,7 +280,7 @@ export default function AdminTestsPage() {
     try {
       const body: any = {}
       if (cloneFromId) body.clone_from_set_id = cloneFromId
-      const res = await fetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}/sets`), {
+      const res = await apiFetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}/sets`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify(body)
@@ -308,7 +308,7 @@ export default function AdminTestsPage() {
     }
     if (!confirm(`Delete Set ${setLabel}? All items in this set will be permanently removed.`)) return
     try {
-      const res = await fetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}/sets/${setId}`), {
+      const res = await apiFetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}/sets/${setId}`), {
         method: 'DELETE', headers: getAuthHeaders()
       })
       const data = await res.json()
@@ -326,7 +326,7 @@ export default function AdminTestsPage() {
   const handleValidateSets = async () => {
     if (!selectedClapTest) return
     try {
-      const res = await fetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}/sets/validate`), {
+      const res = await apiFetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}/sets/validate`), {
         headers: getAuthHeaders()
       })
       const data = await res.json()
@@ -399,7 +399,7 @@ export default function AdminTestsPage() {
         body.rows = distributeRows
         body.cols = distributeCols
       }
-      const res = await fetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}/distribute-sets`), {
+      const res = await apiFetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}/distribute-sets`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify(body)
@@ -426,7 +426,7 @@ export default function AdminTestsPage() {
     if (!selectedClapTest) return
     if (!confirm('Clear all set assignments? Students will go back to the default question paper.')) return
     try {
-      const res = await fetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}/clear-distribution`), {
+      const res = await apiFetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}/clear-distribution`), {
         method: 'POST', headers: getAuthHeaders()
       })
       const data = await res.json()
@@ -451,7 +451,7 @@ export default function AdminTestsPage() {
   // CLAP Test Handlers
   const handleCreateClapTest = () => {
     setShowCreateClapTestModal(true);
-    fetchBatches(); // Fetch batches when modal opens
+    // Batches already fetched on mount — no duplicate fetch needed
   };
 
   const handleCloseCreateClapTest = () => {
@@ -466,7 +466,7 @@ export default function AdminTestsPage() {
     if (!testId) return
     setLiveTimerLoading(true)
     try {
-      const res = await fetch(getApiUrl(`admin/clap-tests/${testId}/live-timer-status`), {
+      const res = await apiFetch(getApiUrl(`admin/clap-tests/${testId}/live-timer-status`), {
         headers: getAuthHeaders(),
       })
       const serverTimeStr = res.headers.get('X-Server-Time')
@@ -490,7 +490,7 @@ export default function AdminTestsPage() {
     if (!selectedClapTest) return
     setStartLoading(true)
     try {
-      const res = await fetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}/start-live-timer`), {
+      const res = await apiFetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}/start-live-timer`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({ force, reason: 'Started from Live Timer panel' }),
@@ -514,7 +514,7 @@ export default function AdminTestsPage() {
     if (!selectedClapTest || extendMinutes < 1) return
     setExtendLoading(true)
     try {
-      const res = await fetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}/extend-timer`), {
+      const res = await apiFetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}/extend-timer`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({ extend_minutes: extendMinutes, reason: extendReason || 'Extended from Live Timer panel' }),
@@ -578,7 +578,7 @@ export default function AdminTestsPage() {
 
     const loadingToast = toast.loading(`Loading ${compType} preview...`);
     try {
-      const response = await fetch(getApiUrl(`admin/clap-components/${comp.id}/items`), {
+      const response = await apiFetch(getApiUrl(`admin/clap-components/${comp.id}/items`), {
         headers: getAuthHeaders()
       });
       const data = await response.json();
@@ -607,7 +607,7 @@ export default function AdminTestsPage() {
   const handleEditClapTest = (clapTest: any) => {
     setSelectedClapTest(clapTest);
     setShowEditClapTestModal(true);
-    fetchBatches(); // Fetch batches when modal opens
+    // Batches already fetched on mount — no duplicate fetch needed
   };
 
   const handleCloseEditClapTest = () => {
@@ -618,7 +618,7 @@ export default function AdminTestsPage() {
   const handleUpdateClapTest = async (updatedData: any) => {
     try {
       const loadingToast = feedback.updating('CLAP test')
-      const response = await fetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}`), {
+      const response = await apiFetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}`), {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -666,7 +666,7 @@ export default function AdminTestsPage() {
     setConfigureSaving(true)
     try {
       // 1. Update test name/status
-      const testRes = await fetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}`), {
+      const testRes = await apiFetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}`), {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -681,7 +681,7 @@ export default function AdminTestsPage() {
 
       // 2. Update each component's duration and max_marks
       for (const comp of configComponents) {
-        const compRes = await fetch(getApiUrl(`admin/clap-components/${comp.id}`), {
+        const compRes = await apiFetch(getApiUrl(`admin/clap-components/${comp.id}`), {
           method: 'PATCH',
           headers: {
             'Content-Type': 'application/json',
@@ -744,7 +744,7 @@ export default function AdminTestsPage() {
       }
 
       // Make API call to assign the test
-      const response = await fetch(getApiUrl(`admin/clap-tests/${clapTest.id}/assign`), {
+      const response = await apiFetch(getApiUrl(`admin/clap-tests/${clapTest.id}/assign`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -813,7 +813,7 @@ export default function AdminTestsPage() {
       }
 
       // Make API call to unassign the test
-      const response = await fetch(getApiUrl(`admin/clap-tests/${clapTest.id}/unassign`), {
+      const response = await apiFetch(getApiUrl(`admin/clap-tests/${clapTest.id}/unassign`), {
         method: 'POST',
         headers: getAuthHeaders()
       });
@@ -867,7 +867,7 @@ export default function AdminTestsPage() {
     }
 
     try {
-      const response = await fetch(getApiUrl(`admin/clap-tests/${clapTest.id}`), {
+      const response = await apiFetch(getApiUrl(`admin/clap-tests/${clapTest.id}`), {
         method: 'DELETE',
         headers: getAuthHeaders()
       });
@@ -1442,7 +1442,7 @@ export default function AdminTestsPage() {
                             const loadingToast = toast.loading('Applying global rules to all sets...')
                             try {
                               // 1. Save ClapTest-level settings (including global_duration_minutes)
-                              await fetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}`), {
+                              await apiFetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}`), {
                                 method: 'PATCH',
                                 headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
                                 body: JSON.stringify({
@@ -1455,7 +1455,7 @@ export default function AdminTestsPage() {
                               // 2. Save per-component settings (duration + timer_enabled + max_marks)
                               // Backend auto-syncs these to all matching ClapSetComponents
                               for (const comp of selectedClapTest.tests) {
-                                await fetch(getApiUrl(`admin/clap-components/${comp.id}`), {
+                                await apiFetch(getApiUrl(`admin/clap-components/${comp.id}`), {
                                   method: 'PATCH',
                                   headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
                                   body: JSON.stringify({
@@ -1467,7 +1467,7 @@ export default function AdminTestsPage() {
                               }
 
                               // 3. Force full-sync as safety net (catches any edge cases)
-                              await fetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}/sync-timers`), {
+                              await apiFetch(getApiUrl(`admin/clap-tests/${selectedClapTest.id}/sync-timers`), {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
                               });

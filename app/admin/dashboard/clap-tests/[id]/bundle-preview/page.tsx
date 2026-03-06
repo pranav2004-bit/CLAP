@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ArrowLeft, Headphones, Mic, BookOpen, PenTool, Brain, CheckCircle, PlayCircle, Clock } from 'lucide-react'
 import { toast } from 'sonner'
-import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders, apiFetch } from '@/lib/api-config'
 import { TestPreviewModal } from '@/components/admin/TestPreviewModal'
 
 export default function AdminBundlePreviewPage() {
@@ -35,7 +35,7 @@ export default function AdminBundlePreviewPage() {
         const fetchTest = async () => {
             try {
                 // Fetch specific test
-                const response = await fetch(getApiUrl(`admin/clap-tests/${params.id}`), { headers: getAuthHeaders() })
+                const response = await apiFetch(getApiUrl(`admin/clap-tests/${params.id}`), { headers: getAuthHeaders() })
                 if (!response.ok) throw new Error('Failed to load test')
                 const data = await response.json()
                 // API returns { clapTest: { id, name, tests: [...], ... } }
@@ -122,7 +122,7 @@ export default function AdminBundlePreviewPage() {
         // Fetch items to open TestPreviewModal
         const loadingToast = toast.loading(`Loading ${comp.type} preview...`);
         try {
-            const response = await fetch(getApiUrl(`admin/clap-components/${comp.id}/items`), {
+            const response = await apiFetch(getApiUrl(`admin/clap-components/${comp.id}/items`), {
                 headers: getAuthHeaders()
             });
             const data = await response.json();
