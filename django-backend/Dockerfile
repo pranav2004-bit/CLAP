@@ -76,9 +76,9 @@ EXPOSE 8000
 
 # ── Startup ───────────────────────────────────────────────────────
 # collectstatic is run here so WhiteNoise can serve compressed assets.
-# migrate --check ensures unapplied migrations fail fast (no silent drift).
+# migrate applies any pending migrations (safe: Django migrations are idempotent).
 # gunicorn reads config from gunicorn.conf.py (workers, threads, timeouts).
 CMD ["sh", "-c", \
      "python manage.py collectstatic --noinput && \
-      python manage.py migrate --check && \
+      python manage.py migrate --noinput && \
       gunicorn clap_backend.wsgi:application --config gunicorn.conf.py"]

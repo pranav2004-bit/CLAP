@@ -94,6 +94,11 @@ export const signIn = async (identifier: string, password: string, role: 'studen
       return { data: null, error: { message: data.error || 'Invalid credentials' } }
     }
 
+    // Store JWT access token — used by getAuthHeaders() for all subsequent API calls
+    if (data.access_token) {
+      localStorage.setItem('access_token', data.access_token)
+    }
+
     return {
       data: {
         user: {
@@ -109,6 +114,11 @@ export const signIn = async (identifier: string, password: string, role: 'studen
       error: null
     }
   } catch (error: any) {
+    console.error('Login error:', error)
+    // Handle network connection errors nicely
+    if (error.message?.includes('fetch') || error.message?.includes('NetworkError')) {
+      return { data: null, error: { message: 'Cannot connect to the server right now. Please try again later.' } }
+    }
     return { data: null, error: { message: error.message || 'Authentication failed' } }
   }
 }

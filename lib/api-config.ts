@@ -14,6 +14,12 @@ export const getApiUrl = (endpoint: string) => {
 
 export const getAuthHeaders = (): Record<string, string> => {
     if (typeof window === 'undefined') return {}
+    // Prefer JWT Bearer token (more secure — server validates signature)
+    const accessToken = localStorage.getItem('access_token')
+    if (accessToken) {
+        return { 'Authorization': `Bearer ${accessToken}` }
+    }
+    // Fallback to x-user-id for backward compatibility
     const userId = localStorage.getItem('user_id')
     return userId ? { 'x-user-id': userId } : {}
 }
