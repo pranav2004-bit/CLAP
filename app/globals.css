@@ -242,3 +242,23 @@
 .animate-slide-up {
   animation: slide-up 0.6s ease-out forwards;
 }
+
+/* ── Student test mode utilities ──────────────────────────────────────── */
+
+/* iOS Safari fullscreen simulation (requestFullscreen not supported) */
+.ios-test-fullscreen {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 9999 !important;
+  overflow: hidden !important;
+  background: white !important;
+}
+
+/* Hide scrollbars on pill navigation rows */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}

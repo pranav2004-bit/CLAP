@@ -1,13 +1,14 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { ArrowLeft, Headphones, Mic, BookOpen, PenTool, Brain, CheckCircle, PlayCircle, Loader2, Download } from 'lucide-react'
+import { ArrowLeft, Headphones, Mic, BookOpen, PenTool, Brain, CheckCircle, PlayCircle, Loader2, Download, Clock, AlertTriangle, LogOut } from 'lucide-react'
 import { toast } from 'sonner'
-import { getApiUrl } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
+import { useAntiCheat } from '@/hooks/useAntiCheat'
 
 const STATUS_STEPS = [
   'PENDING',
@@ -32,18 +33,87 @@ export default function StudentClapTestDetailPage() {
   const [results, setResults] = useState<any>(null)
   const [history, setHistory] = useState<any[]>([])
 
+  // ── Server-authoritative timer state ──────────────────────────────────────
+  const [globalTimeLeft, setGlobalTimeLeft]     = useState<number | null>(null)
+  const [isTestLocked, setIsTestLocked]         = useState(false)
+  const [timerSyncError, setTimerSyncError]     = useState(false)   // true = poll failed
+  const [timerExtended, setTimerExtended]       = useState(false)   // brief flash on extension
+
+  // Stable refs — safe inside callbacks without stale closures
+  const deadlineRef         = useRef<Date | null>(null)   // server deadline (UTC)
+  const clockOffsetRef      = useRef(0)                   // ms: server_time - client_time
+  const extensionCountRef   = useRef(-1)                  // -1 = not yet polled
+  const pollingTimerRef     = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const isAutoSubmitRef     = useRef(false)               // prevents double auto-submit
+  const assignmentReadyRef  = useRef(false)               // true once assignment is loaded
+
+  // Completed Components State
+  const [submittedComponents, setSubmittedComponents] = useState<string[]>([])
+
+  // Anti-cheat / exit modal state
+  const [exitStep, setExitStep] = useState<0 | 1 | 2>(0)
+  const [exitConfirmText, setExitConfirmText] = useState('')
+  const [tabWarnings, setTabWarnings] = useState(0)
+
   const submissionId = searchParams.get('submission_id')
+
+  const [globalTotalDuration, setGlobalTotalDuration] = useState<number | null>(null)
+
+  const testIsActive = !!assignment && !isLoading && assignment.status !== 'completed' && !submissionId
+
+  // iOS Safari detection (no native requestFullscreen)
+  const isIOS = typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent)
+
+  const { requestFullscreen, exitFullscreen } = useAntiCheat({
+    enabled: testIsActive,
+    onTabSwitch: (count) => {
+      setTabWarnings(count)
+      if (count >= 2 && !isAutoSubmitRef.current) {
+        toast.error('Tab switch limit reached — auto-submitting your assessment.')
+        handleFinalSubmit(true)
+      } else if (count === 1) {
+        toast.warning('⚠ Tab switch detected (1/2). One more will auto-submit your test.')
+      }
+    },
+    onFullscreenExit: () => {
+      toast.warning('Fullscreen exited — returning to fullscreen.')
+      requestFullscreen()
+    },
+  })
 
   useEffect(() => {
     const fetchAssignment = async () => {
       try {
-        const response = await fetch(getApiUrl('student/clap-assignments'))
+        const response = await fetch(getApiUrl('student/clap-assignments'), {
+          headers: getAuthHeaders()
+        })
         const data = await response.json()
 
         if (response.ok) {
           const found = data.assignments.find((a: any) => a.assignment_id === params.assignment_id)
           if (found) {
             setAssignment(found)
+
+            // --- Retest: if admin has granted a retest and test is back to 'assigned',
+            // clear ALL localStorage progress so the student starts completely fresh.
+            if (found.retest_granted && found.status === 'assigned') {
+              localStorage.removeItem(`submitted_components_${params.assignment_id}`)
+              toast.info('🔄 A retest has been granted. Your previous progress has been cleared. You may begin again.')
+            }
+
+            // If not yet submitted, call /start to get a server-anchored start time
+            if (found.status !== 'completed') {
+              const startResp = await fetch(getApiUrl(`student/clap-assignments/${params.assignment_id}/start`), {
+                method: 'POST',
+                headers: getAuthHeaders()
+              })
+              if (startResp.ok) {
+                const startData = await startResp.json()
+                // Update the assignment with the definitive started_at
+                setAssignment((prev: any) => ({ ...prev, started_at: startData.started_at }))
+                setGlobalTotalDuration(startData.total_duration_minutes)
+              }
+            }
           } else {
             toast.error('Assignment not found')
             router.push('/student/clap-tests')
@@ -61,8 +131,210 @@ export default function StudentClapTestDetailPage() {
 
     if (params.assignment_id) {
       fetchAssignment()
+      // Load saved states (only if not cleared above — fetchAssignment runs async, but this runs sync)
+      const saved = localStorage.getItem(`submitted_components_${params.assignment_id}`)
+      if (saved) {
+        try {
+          setSubmittedComponents(JSON.parse(saved))
+        } catch (e) {
+          console.error(e)
+        }
+      }
     }
   }, [params.assignment_id, router])
+
+  // ── handleFinalSubmit (stable — used by auto-submit + manual submit) ───────
+  const handleFinalSubmit = useCallback(async (autoSubmit = false) => {
+    if (!autoSubmit && !confirm('Are you sure you want to submit the ENTIRE assessment? You will not be able to make changes.')) return;
+    try {
+      const idempotencyKey = crypto.randomUUID();
+      const submitResp = await fetch(getApiUrl('submissions'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders()
+        },
+        body: JSON.stringify({
+          assignment_id: params.assignment_id,
+          idempotency_key: idempotencyKey,
+          correlation_id: idempotencyKey
+        })
+      });
+      if (!submitResp.ok) throw new Error('Submission failed');
+      const submissionData  = await submitResp.json();
+      const newSubmissionId = submissionData.submission_id;
+      toast.success('Test Submitted Successfully!');
+      router.push(`/student/clap-tests/${params.assignment_id}?submission_id=${newSubmissionId}`);
+    } catch (e) {
+      toast.error('Failed to submit test completely.');
+      console.error(e);
+      isAutoSubmitRef.current = false;   // allow retry on error
+    }
+  }, [params.assignment_id, router])
+
+  const formatTime = (seconds: number) => {
+    const hrs  = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    if (hrs > 0) return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // ── Adaptive polling interval based on remaining seconds ──────────────────
+  const getNextPollMs = (remainingSecs: number): number => {
+    if (remainingSecs <= 30)  return 1000    // < 30 s  → every second
+    if (remainingSecs <= 120) return 3000    // < 2 min → every 3 s
+    if (remainingSecs <= 600) return 10000   // < 10 min → every 10 s
+    return 30000                             // > 10 min → every 30 s
+  }
+
+  // ── Server-authoritative timer: poll /global-timer ────────────────────────
+  // Architecture:
+  //   POLL → updates deadlineRef + clockOffsetRef + detects extensions
+  //   COUNTDOWN → separate 1-s tick reading deadlineRef, triggers auto-submit
+  // Separation ensures the countdown is always smooth (no flicker on poll).
+
+  const pollGlobalTimer = useCallback(async () => {
+    if (!params.assignment_id || !assignmentReadyRef.current) return
+    if (isAutoSubmitRef.current) return  // already submitting — stop polling
+
+    try {
+      const res = await fetch(getApiUrl(`student/clap-assignments/${params.assignment_id}/global-timer`), {
+        headers: getAuthHeaders()
+      })
+
+      // Calibrate client clock from every response
+      const serverTimeStr = res.headers.get('X-Server-Time')
+      if (serverTimeStr) {
+        clockOffsetRef.current = new Date(serverTimeStr).getTime() - Date.now()
+      }
+
+      if (!res.ok) {
+        setTimerSyncError(true)
+        pollingTimerRef.current = setTimeout(pollGlobalTimer, 5000)
+        return
+      }
+
+      setTimerSyncError(false)
+      const data = await res.json()
+
+      // If student has already completed, stop polling
+      if (data.assignment_status === 'completed') return
+
+      if (data.deadline_utc) {
+        const newDeadline   = new Date(data.deadline_utc)
+        const newExtCount   = data.extension_count ?? 0
+        const prevExtCount  = extensionCountRef.current
+
+        // Notify student if admin just extended the timer
+        if (prevExtCount >= 0 && newExtCount > prevExtCount) {
+          const minsLeft = Math.ceil((data.remaining_seconds ?? 0) / 60)
+          toast.success(
+            `⏱ Time Extended! You now have ${minsLeft} minute${minsLeft !== 1 ? 's' : ''} remaining.`,
+            { duration: 8000, icon: '🕐' }
+          )
+          setTimerExtended(true)
+          setTimeout(() => setTimerExtended(false), 3000)
+        }
+
+        extensionCountRef.current = newExtCount
+        deadlineRef.current       = newDeadline
+      }
+
+      // Server says it's already expired — trigger auto-submit immediately
+      if (data.is_expired && !isAutoSubmitRef.current) {
+        isAutoSubmitRef.current = true
+        setIsTestLocked(true)
+        setGlobalTimeLeft(0)
+        toast.error('⏱ Time has expired — auto-submitting your assessment…', { duration: 8000 })
+        handleFinalSubmit(true)
+        return
+      }
+
+      pollingTimerRef.current = setTimeout(pollGlobalTimer, getNextPollMs(data.remaining_seconds ?? 9999))
+    } catch {
+      setTimerSyncError(true)
+      pollingTimerRef.current = setTimeout(pollGlobalTimer, 5000)
+    }
+  }, [params.assignment_id, handleFinalSubmit])
+
+  // ── Start polling + enter fullscreen when assignment is loaded ────────────
+  useEffect(() => {
+    if (!assignment || assignment.status === 'completed' || submissionId) return
+    assignmentReadyRef.current = true
+    pollGlobalTimer()
+
+    // Enter fullscreen (iOS: CSS class simulation)
+    if (isIOS) {
+      document.documentElement.classList.add('ios-test-fullscreen')
+    } else {
+      requestFullscreen()
+    }
+
+    return () => {
+      if (pollingTimerRef.current) clearTimeout(pollingTimerRef.current)
+      assignmentReadyRef.current = false
+      document.documentElement.classList.remove('ios-test-fullscreen')
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignment?.assignment_id, !!submissionId])
+
+  // ── Seed deadline from /start response (zero-delay, avoids first-poll gap) ─
+  useEffect(() => {
+    if (globalTotalDuration !== null && assignment?.started_at && !deadlineRef.current) {
+      // Use the deadline from /start if the poll hasn't fired yet
+      // This is only a seed; poll will override with the authoritative value
+    }
+  }, [globalTotalDuration, assignment?.started_at])
+
+  // ── Page Visibility — re-poll immediately when tab re-focuses ────────────
+  useEffect(() => {
+    const onVisible = () => {
+      if (!document.hidden && assignmentReadyRef.current && !isAutoSubmitRef.current) {
+        if (pollingTimerRef.current) clearTimeout(pollingTimerRef.current)
+        pollGlobalTimer()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [pollGlobalTimer])
+
+  // ── Local countdown (smooth 1-s tick; reads deadlineRef so no stale state) ─
+  // This is purely cosmetic — the deadline is always fetched fresh on each poll.
+  useEffect(() => {
+    if (assignment?.status === 'completed' || isTestLocked || submissionId) return
+
+    const tick = () => {
+      if (!deadlineRef.current) {
+        // Fallback: compute from started_at + globalTotalDuration until first poll returns
+        if (assignment?.started_at && globalTotalDuration) {
+          const startMs  = new Date(assignment.started_at).getTime()
+          const adjusted = Date.now() + clockOffsetRef.current
+          const remaining = Math.max(0, Math.floor(
+            (startMs + globalTotalDuration * 60 * 1000 - adjusted) / 1000
+          ))
+          setGlobalTimeLeft(remaining)
+        }
+        return
+      }
+
+      const adjusted  = Date.now() + clockOffsetRef.current
+      const remaining = Math.max(0, Math.floor((deadlineRef.current.getTime() - adjusted) / 1000))
+      setGlobalTimeLeft(remaining)
+
+      if (remaining === 0 && !isAutoSubmitRef.current) {
+        isAutoSubmitRef.current = true
+        setIsTestLocked(true)
+        toast.error('⏱ Time has expired — auto-submitting your assessment…', { duration: 8000 })
+        handleFinalSubmit(true)
+      }
+    }
+
+    tick()
+    const id = setInterval(tick, 1000)
+    return () => clearInterval(id)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignment?.started_at, assignment?.status, globalTotalDuration, isTestLocked, submissionId, handleFinalSubmit])
 
   useEffect(() => {
     if (!submissionId) return
@@ -75,7 +347,7 @@ export default function StudentClapTestDetailPage() {
         setPolling(true)
         const userId = localStorage.getItem('user_id') || ''
         const resp = await fetch(getApiUrl(`submissions/${submissionId}/status`), {
-          headers: userId ? { 'x-user-id': userId } : {},
+          headers: getAuthHeaders(),
         })
 
         if (!resp.ok) return
@@ -110,7 +382,7 @@ export default function StudentClapTestDetailPage() {
       try {
         const userId = localStorage.getItem('user_id') || ''
         const resp = await fetch(getApiUrl(`submissions/${submissionId}/results`), {
-          headers: userId ? { 'x-user-id': userId } : {},
+          headers: getAuthHeaders(),
         })
         if (!resp.ok) return
         const data = await resp.json()
@@ -129,7 +401,7 @@ export default function StudentClapTestDetailPage() {
         const userId = localStorage.getItem('user_id') || ''
         const assessmentId = assignment?.test_id || assignment?.clap_test_id || assignment?.id || ''
         const url = assessmentId ? getApiUrl(`submissions/history?assessment_id=${assessmentId}`) : getApiUrl('submissions/history')
-        const resp = await fetch(url, { headers: userId ? { 'x-user-id': userId } : {} })
+        const resp = await fetch(url, { headers: getAuthHeaders() })
         if (!resp.ok) return
         const data = await resp.json()
         setHistory(Array.isArray(data.rows) ? data.rows : [])
@@ -173,24 +445,121 @@ export default function StudentClapTestDetailPage() {
     }
   }
 
-  if (isLoading) return <div className="p-8 text-center">Loading details...</div>
+  if (isLoading) return (
+    <div className="min-h-dvh flex items-center justify-center">
+      <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
+    </div>
+  )
   if (!assignment) return null
 
   return (
-    <div className="container mx-auto p-6 max-w-4xl">
-      <Button variant="ghost" className="mb-6 pl-0 hover:pl-2 transition-all" onClick={() => router.back()}>
-        <ArrowLeft className="w-4 h-4 mr-2" />
-        Back to Dashboard
-      </Button>
+    <div className="min-h-dvh bg-background">
+      {/* ── Two-step exit confirmation modal ──────────────────────────────── */}
+      {exitStep >= 1 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+            <div className="flex items-center gap-3 mb-4">
+              <AlertTriangle className="text-red-500 w-7 h-7 flex-shrink-0" />
+              <h2 className="text-lg font-bold text-red-700">Exit Test?</h2>
+            </div>
+            <p className="text-gray-600 text-sm mb-6">
+              Exiting will forfeit this attempt. Submitted components are saved, but unsubmitted ones will be marked incomplete.
+            </p>
+            {exitStep === 1 && (
+              <div className="flex gap-3">
+                <Button variant="outline" className="flex-1" onClick={() => setExitStep(0)}>
+                  Stay in Test
+                </Button>
+                <Button variant="destructive" className="flex-1" onClick={() => setExitStep(2)}>
+                  Exit Anyway
+                </Button>
+              </div>
+            )}
+            {exitStep === 2 && (
+              <>
+                <p className="text-sm font-medium mb-3">
+                  Type <strong>EXIT</strong> to confirm:
+                </p>
+                <input
+                  type="text"
+                  value={exitConfirmText}
+                  onChange={e => setExitConfirmText(e.target.value.toUpperCase())}
+                  placeholder="Type EXIT"
+                  autoFocus
+                  className="w-full border-2 border-red-300 rounded-lg px-4 py-3 text-base mb-4
+                             outline-none focus:border-red-500"
+                />
+                <div className="flex gap-3">
+                  <Button variant="outline" className="flex-1"
+                          onClick={() => { setExitStep(0); setExitConfirmText('') }}>
+                    Cancel
+                  </Button>
+                  <Button variant="destructive" className="flex-1"
+                          disabled={exitConfirmText !== 'EXIT'}
+                          onClick={async () => {
+                            await exitFullscreen()
+                            document.documentElement.classList.remove('ios-test-fullscreen')
+                            router.push('/student/clap-tests')
+                          }}>
+                    Confirm Exit
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+    <div className="px-4 py-4 sm:px-6 max-w-4xl mx-auto">
+      {/* Header row */}
+      <div className="flex items-center justify-between mb-6">
+        <Button variant="ghost" className="pl-0 hover:pl-2 transition-all" onClick={() => router.back()}>
+          <ArrowLeft className="w-4 h-4 mr-2" />
+          <span className="hidden sm:inline">Back to Dashboard</span>
+          <span className="sm:hidden">Back</span>
+        </Button>
+        {testIsActive && (
+          <Button variant="ghost" size="sm" onClick={() => setExitStep(1)}
+                  className="text-red-600 hover:text-red-700 hover:bg-red-50 min-h-[40px]">
+            <LogOut className="w-4 h-4 mr-1.5" />
+            <span className="hidden sm:inline">Exit Test</span>
+          </Button>
+        )}
+      </div>
 
       <div className="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-2xl p-8 text-white mb-8 shadow-xl">
         <h1 className="text-3xl font-bold mb-2">{assignment.test_name}</h1>
         <p className="text-indigo-100">Complete all 5 modules to finish the assessment.</p>
-        <div className="mt-4 flex gap-4">
-          <Badge className="bg-white/20 hover:bg-white/30 text-white border-0">
-            {assignment.status || 'Pending'}
-          </Badge>
-          <span className="text-sm text-indigo-200">Assigned: {new Date(assignment.assigned_at).toLocaleDateString()}</span>
+        <div className="mt-4 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
+          <div className="flex gap-4 items-center">
+            <Badge className="bg-white/20 hover:bg-white/30 text-white border-0">
+              {assignment.status || 'Pending'}
+            </Badge>
+            <span className="text-sm text-indigo-200">Assigned: {new Date(assignment.assigned_at).toLocaleDateString()}</span>
+          </div>
+          {globalTimeLeft !== null && !submissionId && (
+            <div className={`px-4 py-2 rounded-xl flex items-center gap-2 font-mono text-xl font-bold border transition-all duration-500 ${
+              timerExtended
+                ? 'bg-green-500/30 border-green-300/60 scale-105'
+                : globalTimeLeft < 120
+                  ? 'bg-red-500/30 border-red-300/60 animate-pulse'
+                  : globalTimeLeft < 300
+                    ? 'bg-orange-400/25 border-orange-300/50'
+                    : 'bg-white/10 border-white/20'
+            }`}>
+              <Clock className={`w-5 h-5 ${timerExtended ? 'text-green-300' : globalTimeLeft < 120 ? 'text-red-300' : ''}`} />
+              <span className={
+                timerExtended ? 'text-green-200' :
+                globalTimeLeft < 120 ? 'text-red-200' :
+                globalTimeLeft < 300 ? 'text-orange-200' : ''
+              }>
+                {formatTime(globalTimeLeft)} left
+              </span>
+              {timerSyncError && (
+                <span className="text-xs text-yellow-300 font-normal ml-1" title="Timer sync failed — retrying">⚠</span>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -291,35 +660,81 @@ export default function StudentClapTestDetailPage() {
         </Card>
       )}
 
-      <div className="grid gap-4">
+      {/* Tab-switch warning banner */}
+      {tabWarnings === 1 && (
+        <div className="bg-yellow-50 border border-yellow-300 rounded-lg px-4 py-3 flex items-start gap-3 mb-4">
+          <AlertTriangle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-yellow-900 font-semibold text-sm">Tab switch detected (1/2)</p>
+            <p className="text-yellow-700 text-sm">One more tab switch will automatically submit your entire assessment.</p>
+          </div>
+        </div>
+      )}
+
+      <div className="grid gap-3 sm:gap-4">
         {assignment.components?.map((comp: any) => {
           const Icon = getIcon(comp.type)
+          const isSubmitted = submittedComponents.includes(comp.type);
+          const isDisabled = isTestLocked || !!submissionId || isSubmitted;
+
           return (
             <Card
               key={comp.id}
-              className="hover:shadow-md transition-all cursor-pointer border-l-4 hover:border-l-indigo-500"
-              onClick={() => router.push(`/student/clap-tests/${params.assignment_id}/${comp.type}`)}
+              className={`transition-all border-l-4 touch-manipulation
+                ${isSubmitted ? 'border-l-green-500 bg-green-50/10' : 'border-l-indigo-500 cursor-pointer hover:shadow-md'}
+                ${isDisabled && !isSubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
+              onClick={() => {
+                if (!isDisabled) router.push(`/student/clap-tests/${params.assignment_id}/${comp.type}`)
+              }}
             >
-              <CardContent className="p-6 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-600">
-                    <Icon className="w-6 h-6" />
+              <CardContent className="p-4 sm:p-6 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 sm:gap-4 min-w-0">
+                  <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center flex-shrink-0
+                    ${isSubmitted ? 'bg-green-100 text-green-600' : 'bg-indigo-50 text-indigo-600'}`}>
+                    <Icon className="w-5 h-5 sm:w-6 sm:h-6" />
                   </div>
-                  <div>
-                    <h3 className="font-semibold text-lg capitalize">{comp.title}</h3>
-                    <p className="text-sm text-gray-500">{comp.duration || 10} min • 10 Marks</p>
+                  <div className="min-w-0">
+                    <h3 className={`font-semibold text-base sm:text-lg capitalize truncate
+                      ${isSubmitted ? 'text-green-800' : ''}`}>{comp.title}</h3>
+                    <p className="text-xs sm:text-sm text-gray-500">
+                      {comp.timer_enabled !== false ? `${comp.duration || 10} min` : 'No component timer'} • 10 Marks
+                    </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-4">
-                  <Button size="sm" className="rounded-full px-6">
-                    Start <PlayCircle className="w-4 h-4 ml-2" />
-                  </Button>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  {isSubmitted ? (
+                    <Badge className="bg-green-100 text-green-700 hover:bg-green-200 border-green-200 whitespace-nowrap">
+                      <CheckCircle className="w-3 h-3 mr-1" /> Submitted
+                    </Badge>
+                  ) : (
+                    <Button size="sm" className="rounded-full px-4 sm:px-6 min-h-[40px] whitespace-nowrap"
+                            disabled={isDisabled}>
+                      {assignment.started_at ? 'Resume' : 'Start'}
+                      <PlayCircle className="w-4 h-4 ml-1.5" />
+                    </Button>
+                  )}
                 </div>
               </CardContent>
             </Card>
           )
         })}
       </div>
+
+      {!submissionId && assignment.components && submittedComponents.length === assignment.components.length && (
+        <div className="mt-8 flex justify-center">
+          <Button size="lg" className="bg-green-600 hover:bg-green-700 text-white font-bold text-lg px-12 py-6 rounded-xl shadow-lg border-b-4 border-green-800 active:border-b-0 active:translate-y-[4px]" onClick={() => handleFinalSubmit(false)}>
+            Final Submit Entire Assessment
+          </Button>
+        </div>
+      )}
+      {!submissionId && !isTestLocked && submittedComponents.length < (assignment.components?.length || 5) && assignment.started_at && (
+        <div className="mt-8 flex justify-center">
+          <Button variant="outline" size="lg" className="text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700 font-bold" onClick={() => handleFinalSubmit(false)}>
+            Force Submit Assessment Early
+          </Button>
+        </div>
+      )}
+    </div>
     </div>
   )
 }

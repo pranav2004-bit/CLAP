@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { FileText, Clock, CheckCircle } from 'lucide-react'
 import { toast } from 'sonner'
-import { getApiUrl } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
 
 export default function StudentClapTestsPage() {
     const router = useRouter()
@@ -17,7 +17,9 @@ export default function StudentClapTestsPage() {
     useEffect(() => {
         const fetchAssignments = async () => {
             try {
-                const response = await fetch(getApiUrl('student/clap-assignments'))
+                const response = await fetch(getApiUrl('student/clap-assignments'), {
+                    headers: getAuthHeaders()
+                })
                 const data = await response.json()
 
                 if (response.ok) {
@@ -36,10 +38,14 @@ export default function StudentClapTestsPage() {
         fetchAssignments()
     }, [])
 
-    if (isLoading) return <div className="p-8 text-center">Loading tests...</div>
+    if (isLoading) return (
+        <div className="min-h-dvh flex items-center justify-center">
+            <div className="text-center text-muted-foreground">Loading tests...</div>
+        </div>
+    )
 
     return (
-        <div className="container mx-auto p-6 max-w-5xl">
+        <div className="px-4 py-6 sm:px-6 max-w-5xl mx-auto">
             <h1 className="text-2xl font-bold mb-2">My CLAP Assessments</h1>
             <p className="text-gray-500 mb-8">Complete your assigned Continuous Learning Assessment Program tests.</p>
 

@@ -31,7 +31,7 @@ import {
   ArrowRight,
   Info
 } from 'lucide-react'
-import { getApiUrl } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
 
 const tests = [
   {
@@ -111,12 +111,16 @@ export default function StudentDashboard() {
 
       try {
         const response = await fetch(getApiUrl('student/profile'), {
-          headers: { 'x-user-id': storedUserId }
+          headers: getAuthHeaders()
         })
 
         if (response.ok) {
           const data = await response.json()
           if (data.profile) {
+            if (!data.profile.profile_completed) {
+              router.push('/student/profile')
+              return
+            }
             setUser({
               id: data.profile.id,
               name: data.profile.username || data.profile.full_name || 'Student',
@@ -170,16 +174,16 @@ export default function StudentDashboard() {
   const maxMarks = dashboardData?.tests.reduce((acc, t) => acc + (t.max_score || 0), 0) || 50
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-dvh bg-background">
       {/* Header */}
       <header className="sticky top-0 z-50 glass border-b border-border">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between">
             <div className="flex items-center gap-3">
-              <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={113} height={46} className="w-auto h-10 object-contain" priority />
+              <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={113} height={46} className="w-auto h-10 object-contain" priority style={{ width: 'auto', height: 'auto' }} />
               <div className="flex flex-col justify-center h-8 border-l border-border pl-3 ml-2">
                 <p className="text-xs font-semibold text-primary">Student Portal</p>
-                <span className="text-[10px] text-muted-foreground">by SANJIVO</span>
+                <span className="text-[10px] text-muted-foreground">A SANJIVO Product</span>
               </div>
             </div>
 
@@ -193,28 +197,30 @@ export default function StudentDashboard() {
               </div>
             )}
 
-            <div className="flex items-center gap-4">
-              <div className="hidden md:flex items-center gap-2 text-sm">
-                <User className="w-4 h-4 text-muted-foreground" />
-                <span className="font-medium">{user.name}</span>
+            <div className="flex items-center gap-2 sm:gap-4">
+              <div className="hidden md:flex items-center gap-2 text-sm max-w-[150px] truncate">
+                <User className="w-4 h-4 text-muted-foreground shrink-0" />
+                <span className="font-medium truncate">{user.name}</span>
               </div>
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => router.push('/student/profile')}
-                className="hover:bg-slate-100 hover:text-slate-900"
+                className="hover:bg-slate-100 hover:text-slate-900 px-2 sm:px-3"
+                title="My Profile"
               >
-                <User className="w-4 h-4 mr-2" />
-                My Profile
+                <User className="w-5 h-5 sm:w-4 sm:h-4 sm:mr-2" />
+                <span className="hidden sm:inline">My Profile</span>
               </Button>
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={handleLogout}
-                className="hover:bg-red-50 hover:text-red-600"
+                className="hover:bg-red-50 hover:text-red-600 px-2 sm:px-3"
+                title="Logout"
               >
-                <LogOut className="w-4 h-4 mr-2" />
-                Logout
+                <LogOut className="w-5 h-5 sm:w-4 sm:h-4 sm:mr-2" />
+                <span className="hidden sm:inline">Logout</span>
               </Button>
             </div>
           </div>
@@ -231,48 +237,48 @@ export default function StudentDashboard() {
         </div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-8">
           <Card>
-            <CardContent className="p-4 flex items-center gap-4">
-              <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
-                <Target className="w-6 h-6 text-primary" />
+            <CardContent className="p-3 sm:p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4">
+              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                <Target className="w-5 h-5 sm:w-6 sm:h-6 text-primary" />
               </div>
               <div>
-                <p className="text-2xl font-bold">{completedTests}/{totalTests}</p>
-                <p className="text-sm text-muted-foreground">Tests Completed</p>
+                <p className="text-xl sm:text-2xl font-bold">{completedTests}/{totalTests}</p>
+                <p className="text-xs sm:text-sm text-muted-foreground">Tests Completed</p>
               </div>
             </CardContent>
           </Card>
           <Card>
-            <CardContent className="p-4 flex items-center gap-4">
-              <div className="w-12 h-12 rounded-xl bg-success/10 flex items-center justify-center">
-                <Trophy className="w-6 h-6 text-success" />
+            <CardContent className="p-3 sm:p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4">
+              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-success/10 flex items-center justify-center shrink-0">
+                <Trophy className="w-5 h-5 sm:w-6 sm:h-6 text-success" />
               </div>
               <div>
-                <p className="text-2xl font-bold">{totalMarks}/{maxMarks}</p>
-                <p className="text-sm text-muted-foreground">Marks Scored</p>
+                <p className="text-xl sm:text-2xl font-bold">{totalMarks}/{maxMarks}</p>
+                <p className="text-xs sm:text-sm text-muted-foreground">Marks Scored</p>
               </div>
             </CardContent>
           </Card>
           <Card>
-            <CardContent className="p-4 flex items-center gap-4">
-              <div className="w-12 h-12 rounded-xl bg-warning/10 flex items-center justify-center">
-                <Clock className="w-6 h-6 text-warning" />
+            <CardContent className="p-3 sm:p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4">
+              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-warning/10 flex items-center justify-center shrink-0">
+                <Clock className="w-5 h-5 sm:w-6 sm:h-6 text-warning" />
               </div>
               <div>
-                <p className="text-2xl font-bold">{totalDuration} min</p>
-                <p className="text-sm text-muted-foreground">Total Duration</p>
+                <p className="text-xl sm:text-2xl font-bold">{totalDuration} min</p>
+                <p className="text-xs sm:text-sm text-muted-foreground">Total Duration</p>
               </div>
             </CardContent>
           </Card>
           <Card>
-            <CardContent className="p-4 flex items-center gap-4">
-              <div className="w-12 h-12 rounded-xl bg-accent/10 flex items-center justify-center">
-                <Info className="w-6 h-6 text-accent" />
+            <CardContent className="p-3 sm:p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4">
+              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-accent/10 flex items-center justify-center shrink-0">
+                <Info className="w-5 h-5 sm:w-6 sm:h-6 text-accent" />
               </div>
-              <div>
-                <p className="text-2xl font-bold">{user.studentId}</p>
-                <p className="text-sm text-muted-foreground">Student ID</p>
+              <div className="max-w-[120px] sm:max-w-none">
+                <p className="text-lg sm:text-2xl font-bold truncate" title={user.studentId}>{user.studentId}</p>
+                <p className="text-xs sm:text-sm text-muted-foreground">Student ID</p>
               </div>
             </CardContent>
           </Card>
@@ -316,7 +322,7 @@ export default function StudentDashboard() {
                   <span>Tab switching will be monitored</span>
                 </div>
               </div>
-              <Button variant="hero" size="xl" onClick={handleStartSession}>
+              <Button variant="hero" size="xl" onClick={handleStartSession} className="w-full sm:w-auto h-14 text-base sm:text-lg">
                 Start Assessment Session
                 <ArrowRight className="ml-2 w-5 h-5" />
               </Button>

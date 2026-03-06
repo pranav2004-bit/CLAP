@@ -5,11 +5,13 @@ import { useParams, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
-import { Clock, ChevronRight, ChevronLeft, CheckCircle, AlertTriangle, Loader2 } from 'lucide-react'
+import { Clock, ChevronRight, ChevronLeft, CheckCircle, AlertTriangle, Loader2, WifiOff } from 'lucide-react'
 import { toast } from 'sonner'
 import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
 import AudioRecorderItem from '@/components/audio-recorder'
 import AudioBlockPlayer from '@/components/AudioBlockPlayer'
+import { useAntiCheat } from '@/hooks/useAntiCheat'
+import { useNetworkAwareSave } from '@/hooks/useNetworkAwareSave'
 
 const isQuestion = (itemType: string): boolean =>
     itemType === 'mcq' || itemType === 'subjective'
@@ -33,6 +35,26 @@ export default function ClapTestTakingPage() {
     const [isLocked, setIsLocked] = useState(false)
     const [isAutoSubmitting, setIsAutoSubmitting] = useState(false)
     const isLockedRef = useRef(false)   // stable ref used inside callbacks
+
+    // Online/offline state
+    const [isOnline, setIsOnline] = useState(true)
+    useEffect(() => {
+        setIsOnline(navigator.onLine)
+        const onOnline  = () => { setIsOnline(true);  toast.success('Back online — syncing answers…') }
+        const onOffline = () => { setIsOnline(false); toast.warning('Offline — answers queued locally') }
+        window.addEventListener('online', onOnline)
+        window.addEventListener('offline', onOffline)
+        return () => { window.removeEventListener('online', onOnline); window.removeEventListener('offline', onOffline) }
+    }, [])
+
+    // Anti-cheat (component-level: tab warning only, no auto-submit)
+    useAntiCheat({
+        enabled: !isLoading && !isLocked,
+        onTabSwitch: (count) => {
+            toast.warning(`Tab switch detected (${count}). Please stay on the test page.`)
+        },
+        onFullscreenExit: () => {}, // fullscreen managed at assignment level
+    })
 
     // ── Load assignment + items ─────────────────────────────────────────────
 
@@ -162,6 +184,21 @@ export default function ClapTestTakingPage() {
         }
     }, [timeLeft, timerEnabled, autoSubmit])
 
+    // ── Network-aware save ─────────────────────────────────────────────────
+
+    const { save: debouncedSave, saveImmediate } = useNetworkAwareSave(
+        async ({ item_id, response_data }) => {
+            try {
+                const res = await fetch(getApiUrl(`student/clap-assignments/${params.assignment_id}/submit`), {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                    body:    JSON.stringify({ item_id, response_data }),
+                })
+                return res.ok
+            } catch { return false }
+        }
+    )
+
     // ── Helpers ────────────────────────────────────────────────────────────
 
     const formatTime = (secs: number) => {
@@ -170,20 +207,12 @@ export default function ClapTestTakingPage() {
         return `${m}:${s.toString().padStart(2, '0')}`
     }
 
-    const handleSaveAnswer = async (val: any) => {
+    const handleSaveAnswer = (val: any) => {
         if (isLocked) return
         const item = items[currentItemIndex]
         setAnswers(prev => ({ ...prev, [item.id]: val }))
         if (!componentId) return
-        try {
-            await fetch(getApiUrl(`student/clap-assignments/${params.assignment_id}/submit`), {
-                method:  'POST',
-                headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-                body:    JSON.stringify({ item_id: item.id, response_data: val }),
-            })
-        } catch (e) {
-            console.error('Auto-save failed', e)
-        }
+        debouncedSave({ item_id: item.id, response_data: val })
     }
 
     const handleSubmit = async () => {
@@ -191,6 +220,11 @@ export default function ClapTestTakingPage() {
         if (!confirm('Submit this module? You will not be able to change your answers.')) return
         setIsLocked(true)
         try {
+            // Flush any pending debounced save for the current item
+            const currentItem = items[currentItemIndex]
+            if (currentItem && componentId && answers[currentItem.id] !== undefined) {
+                await saveImmediate({ item_id: currentItem.id, response_data: answers[currentItem.id] })
+            }
             if (componentId) {
                 await fetch(
                     getApiUrl(`student/clap-assignments/${params.assignment_id}/components/${componentId}/finish`),
@@ -226,14 +260,15 @@ export default function ClapTestTakingPage() {
     const isCritical  = timerEnabled && timeLeft !== null && timeLeft <= 120   // < 2 min
 
     if (isLoading) return (
-        <div className="h-screen flex items-center justify-center gap-3 text-gray-500 bg-gray-50">
+        <div className="h-dvh flex items-center justify-center gap-3 text-gray-500 bg-gray-50">
             <Loader2 className="w-5 h-5 animate-spin" />
             Loading assessment…
         </div>
     )
 
     return (
-        <div className="h-screen flex flex-col bg-gray-50">
+        <div className="h-dvh flex flex-col bg-gray-50"
+             style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
 
             {/* ── Auto-submit overlay ───────────────────────────────────────── */}
             {isAutoSubmitting && (
@@ -250,30 +285,37 @@ export default function ClapTestTakingPage() {
             )}
 
             {/* ── Header ────────────────────────────────────────────────────── */}
-            <header className={`bg-white border-b px-6 py-4 flex items-center justify-between shadow-sm transition-colors ${isCritical ? 'border-red-400' : ''}`}>
-                <div className="flex items-center gap-4">
-                    <Button variant="ghost" size="sm" onClick={() => router.back()} disabled={isLocked}>
+            <header className={`flex-shrink-0 bg-white border-b px-4 py-3 flex items-center justify-between gap-2 shadow-sm transition-colors ${isCritical ? 'border-red-400' : ''}`}>
+                <div className="flex items-center gap-2 min-w-0">
+                    <Button variant="ghost" size="sm" onClick={() => router.back()} disabled={isLocked}
+                            className="flex-shrink-0 min-h-[40px] px-2 sm:px-3">
                         Quit
                     </Button>
-                    <h1 className="font-bold text-lg capitalize">{params.type} Assessment</h1>
+                    <h1 className="font-bold text-sm sm:text-base capitalize truncate">{params.type} Assessment</h1>
                 </div>
 
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2 flex-shrink-0">
+                    {/* Offline badge */}
+                    {!isOnline && (
+                        <span className="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded-full flex items-center gap-1">
+                            <WifiOff className="w-3 h-3" /> Offline
+                        </span>
+                    )}
                     {/* Timer display */}
                     {timerEnabled && timeLeft !== null && (
-                        <div className={`px-4 py-2 rounded-full font-mono font-bold flex items-center gap-2 transition-all ${
+                        <div className={`px-3 py-1.5 rounded-full font-mono font-bold text-sm flex items-center gap-1.5 transition-all ${
                             isCritical
                                 ? 'bg-red-600 text-white animate-pulse shadow-lg shadow-red-200'
                                 : isUrgent
                                 ? 'bg-orange-500 text-white'
                                 : 'bg-indigo-50 text-indigo-700'
                         }`}>
-                            <Clock className="w-4 h-4" />
+                            <Clock className="w-3.5 h-3.5" />
                             {formatTime(timeLeft)}
                         </div>
                     )}
                     {!timerEnabled && (
-                        <span className="text-xs text-gray-400 font-medium px-3 py-1.5 bg-gray-100 rounded-full">
+                        <span className="text-xs text-gray-400 font-medium px-2 py-1 bg-gray-100 rounded-full hidden sm:inline">
                             No Time Limit
                         </span>
                     )}
@@ -281,9 +323,10 @@ export default function ClapTestTakingPage() {
                     <Button
                         onClick={handleSubmit}
                         disabled={isLocked}
-                        className="bg-green-600 hover:bg-green-700"
+                        className="bg-green-600 hover:bg-green-700 min-h-[40px] text-sm px-3 sm:px-4"
                     >
-                        Submit Module
+                        <span className="hidden sm:inline">Submit Module</span>
+                        <span className="sm:hidden">Submit</span>
                     </Button>
                 </div>
             </header>
@@ -302,10 +345,28 @@ export default function ClapTestTakingPage() {
                 </div>
             )}
 
+            {/* ── Question number pills ─────────────────────────────────────── */}
+            {items.length > 1 && (
+                <div className="flex-shrink-0 bg-white border-b px-4 py-2 flex gap-1.5 overflow-x-auto scrollbar-hide">
+                    {items.map((item, i) => (
+                        <button
+                            key={item.id}
+                            onClick={() => { if (!isLocked) setCurrentItemIndex(i) }}
+                            className={`flex-shrink-0 w-8 h-8 rounded-full text-xs font-semibold touch-manipulation transition-colors
+                                ${i === currentItemIndex ? 'bg-indigo-600 text-white' :
+                                  answers[item.id] !== undefined ? 'bg-green-100 text-green-700 border border-green-300' :
+                                  'bg-gray-100 text-gray-600'}`}
+                        >
+                            {i + 1}
+                        </button>
+                    ))}
+                </div>
+            )}
+
             {/* ── Main content ──────────────────────────────────────────────── */}
-            <main className="flex-1 container mx-auto p-6 max-w-4xl flex flex-col overflow-hidden">
+            <main className="flex-1 px-4 py-4 sm:px-6 max-w-4xl w-full mx-auto flex flex-col overflow-hidden">
                 {/* Progress bar */}
-                <div className="w-full bg-gray-200 h-1.5 rounded-full mb-6">
+                <div className="w-full bg-gray-200 h-1.5 rounded-full mb-4">
                     <div
                         className="bg-indigo-600 h-1.5 rounded-full transition-all duration-300"
                         style={{ width: `${((currentItemIndex + 1) / Math.max(items.length, 1)) * 100}%` }}
@@ -313,7 +374,7 @@ export default function ClapTestTakingPage() {
                 </div>
 
                 <Card className={`flex-1 shadow-md flex flex-col overflow-hidden ${isLocked ? 'pointer-events-none opacity-70' : ''}`}>
-                    <CardContent className="p-8 flex-1 overflow-y-auto">
+                    <CardContent className="p-4 sm:p-6 lg:p-8 flex-1 overflow-y-auto">
                         {currentItem && (
                             <div className="space-y-6">
                                 <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">
@@ -334,21 +395,23 @@ export default function ClapTestTakingPage() {
 
                                 {/* mcq */}
                                 {currentItem.item_type === 'mcq' && (
-                                    <div className="space-y-6">
-                                        <h3 className="text-xl font-medium">{currentItem.content.question}</h3>
-                                        <div className="space-y-3">
+                                    <div className="space-y-4 sm:space-y-6">
+                                        <h3 className="text-base sm:text-xl font-medium leading-relaxed">{currentItem.content.question}</h3>
+                                        <div className="flex flex-col gap-3">
                                             {currentItem.content.options?.map((opt: string, idx: number) => (
-                                                <div
+                                                <button
                                                     key={idx}
-                                                    className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${
-                                                        answers[currentItem.id] === idx
+                                                    type="button"
+                                                    className={`w-full text-left min-h-[52px] px-4 py-3 rounded-xl border-2
+                                                        cursor-pointer transition-all touch-manipulation text-base
+                                                        ${answers[currentItem.id] === idx
                                                             ? 'border-indigo-500 bg-indigo-50 shadow-sm'
-                                                            : 'border-gray-200 hover:border-gray-300'
-                                                    }`}
+                                                            : 'border-gray-200 hover:border-gray-300 bg-white'
+                                                        }`}
                                                     onClick={() => handleSaveAnswer(idx)}
                                                 >
                                                     <div className="flex items-center gap-3">
-                                                        <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                                                        <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
                                                             answers[currentItem.id] === idx
                                                                 ? 'border-indigo-600 bg-indigo-600'
                                                                 : 'border-gray-400'
@@ -357,12 +420,12 @@ export default function ClapTestTakingPage() {
                                                                 <CheckCircle className="w-4 h-4 text-white" />
                                                             }
                                                         </div>
-                                                        <span className="text-xs font-bold text-gray-400 w-4 shrink-0">
+                                                        <span className="text-xs font-bold text-gray-400 w-4 flex-shrink-0">
                                                             {String.fromCharCode(65 + idx)}
                                                         </span>
-                                                        <span className="text-lg">{opt}</span>
+                                                        <span className="text-base leading-snug">{opt}</span>
                                                     </div>
-                                                </div>
+                                                </button>
                                             ))}
                                         </div>
                                     </div>
@@ -371,13 +434,13 @@ export default function ClapTestTakingPage() {
                                 {/* subjective */}
                                 {currentItem.item_type === 'subjective' && (
                                     <div className="space-y-4">
-                                        <h3 className="text-xl font-medium">{currentItem.content.question}</h3>
+                                        <h3 className="text-base sm:text-xl font-medium leading-relaxed">{currentItem.content.question}</h3>
                                         <Textarea
                                             value={answers[currentItem.id] || ''}
                                             onChange={e => handleSaveAnswer(e.target.value)}
-                                            rows={10}
+                                            rows={8}
                                             placeholder="Type your answer here…"
-                                            className="text-lg leading-relaxed p-4"
+                                            className="text-base leading-relaxed p-4 min-h-[200px] resize-none"
                                             disabled={isLocked}
                                         />
                                         <p className="text-sm text-gray-400 text-right">
@@ -443,21 +506,26 @@ export default function ClapTestTakingPage() {
                 </Card>
 
                 {/* Navigation */}
-                <div className="mt-6 flex justify-between">
+                <div className="mt-4 flex items-center justify-between gap-3">
                     <Button
                         variant="outline"
                         onClick={() => { if (!isLocked && currentItemIndex > 0) setCurrentItemIndex(p => p - 1) }}
                         disabled={currentItemIndex === 0 || isLocked}
-                        className="w-32"
+                        className="min-h-[44px] min-w-[90px] sm:w-32 touch-manipulation"
                     >
-                        <ChevronLeft className="w-4 h-4 mr-2" /> Previous
+                        <ChevronLeft className="w-4 h-4 mr-1" />
+                        <span className="hidden sm:inline">Previous</span>
+                        <span className="sm:hidden">Prev</span>
                     </Button>
+                    <span className="text-sm text-gray-500">
+                        {currentItemIndex + 1} / {items.length}
+                    </span>
                     <Button
                         onClick={() => { if (!isLocked && currentItemIndex < items.length - 1) setCurrentItemIndex(p => p + 1) }}
                         disabled={currentItemIndex === items.length - 1 || isLocked}
-                        className="w-32"
+                        className="min-h-[44px] min-w-[90px] sm:w-32 touch-manipulation"
                     >
-                        Next <ChevronRight className="w-4 h-4 ml-2" />
+                        Next <ChevronRight className="w-4 h-4 ml-1" />
                     </Button>
                 </div>
             </main>

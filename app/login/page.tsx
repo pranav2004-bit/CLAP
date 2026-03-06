@@ -26,22 +26,6 @@ type UserRole = 'student' | 'admin'
 
 function LoginContent() {
   const router = useRouter()
-  const searchParams = useSearchParams()
-  const initialRole = (searchParams.get('role') as UserRole) || 'student'
-
-  const [role, setRole] = useState<UserRole>('student')
-
-  // Force initial role from URL params
-  useEffect(() => {
-    const urlRole = searchParams.get('role') as UserRole;
-    if (urlRole === 'admin' || urlRole === 'student') {
-      setRole(urlRole);
-    }
-  }, [searchParams]);
-
-  // Debug logging
-  console.log('Current role:', role);
-  console.log('Initial role:', initialRole);
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [formData, setFormData] = useState({
@@ -59,13 +43,10 @@ function LoginContent() {
       // For student login, we need to get the actual email from username
       let email = formData.identifier
 
-      if (role === 'student') {
-        // In a real app, you'd look up the email by username
-        // For now, we'll assume username is the email
-        email = formData.identifier
-      }
+      // In a real app, you'd look up the email by username
+      // For now, we'll assume username is the email
 
-      const { data, error: signInError } = await signIn(email, formData.password, role)
+      const { data, error: signInError } = await signIn(email, formData.password, 'student')
 
       if (signInError) {
         setError(signInError.message || 'Invalid credentials')
@@ -108,15 +89,15 @@ function LoginContent() {
   }
 
   return (
-    <div className="min-h-screen bg-background flex">
+    <div className="min-h-dvh bg-background flex">
       {/* Left Panel - Decorative */}
       <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-primary via-primary/90 to-speaking relative overflow-hidden">
         <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmYiIGZpbGwtb3BhY2l0eT0iMC4wNSI+PHBhdGggZD0iTTM2IDM0djItSDI0di0yaDEyek0zNiAyNHYySDI0di0yaDF6Ii8+PC9nPjwvZz48L3N2Zz4=')] opacity-50" />
 
         <div className="relative z-10 flex flex-col justify-center px-12 py-16">
           <Link href="/" className="block mb-12">
-            <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={172} height={70} className="w-auto h-16 object-contain mb-2 brightness-0 invert" priority />
-            <div className="text-sm text-primary-foreground/80 font-medium pl-1">by SANJIVO</div>
+            <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={172} height={70} className="w-auto h-16 object-contain mb-2 brightness-0 invert" priority style={{ width: 'auto', height: 'auto' }} />
+            <div className="text-sm text-primary-foreground/80 font-medium pl-1">A SANJIVO Product</div>
           </Link>
 
           <h1 className="text-4xl font-bold text-primary-foreground mb-4">
@@ -159,72 +140,40 @@ function LoginContent() {
       </div>
 
       {/* Right Panel - Login Form */}
-      <div className="flex-1 flex items-center justify-center px-4 py-12">
+      <div className="flex-1 flex flex-col items-center justify-center px-4 sm:px-6 lg:px-8 py-12 md:py-16">
         <div className="w-full max-w-md">
-          <Link href="/" className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground mb-8 transition-colors">
+          {/* Mobile Logo */}
+          <div className="lg:hidden flex justify-center mb-8">
+            <Link href="/" className="inline-block">
+              <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={140} height={56} className="w-auto h-10 sm:h-12 object-contain" priority style={{ width: 'auto', height: 'auto' }} />
+            </Link>
+          </div>
+
+          <Link href="/" className="inline-flex items-center text-sm font-medium text-muted-foreground hover:text-foreground mb-8 transition-colors">
             <ArrowLeft className="w-4 h-4 mr-2" />
             Back to Home
           </Link>
 
-          {/* Role Selector */}
           <div className="flex gap-2 mb-8 p-1 bg-secondary rounded-lg">
-            <button
-              onClick={() => {
-                console.log('Student tab clicked');
-                setRole('student');
-                // Force re-render
-                setTimeout(() => {
-                  console.log('Role after timeout:', role);
-                }, 100);
-              }}
-              className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 ease-in-out ${role === 'student'
-                ? 'bg-card text-foreground shadow-sm transform scale-105'
-                : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'
-                }`}
+            <div
+              className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 ease-in-out bg-card text-foreground shadow-sm transform scale-105`}
             >
               <Users className="w-4 h-4" />
-              Student
-            </button>
-            <button
-              onClick={() => {
-                console.log('Admin tab clicked');
-                setRole('admin');
-                // Force re-render
-                setTimeout(() => {
-                  console.log('Role after timeout:', role);
-                }, 100);
-              }}
-              className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 ease-in-out ${role === 'admin'
-                ? 'bg-card text-foreground shadow-sm transform scale-105'
-                : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'
-                }`}
-            >
-              <Shield className="w-4 h-4" />
-              Admin
-            </button>
+              Student Portal
+            </div>
           </div>
 
-          <Card className="border-0 shadow-lg">
+          <Card className="border-border shadow-soft">
             <CardHeader className="space-y-1 pb-6">
-              <div className="flex items-center gap-2 mb-2">
-                {role === 'student' ? (
-                  <Badge variant="default" className="bg-primary/10 text-primary border-0">
-                    <Users className="w-3 h-3 mr-1" />
-                    Student Portal
-                  </Badge>
-                ) : (
-                  <Badge variant="default" className="bg-speaking/10 text-speaking border-0">
-                    <Shield className="w-3 h-3 mr-1" />
-                    Admin Portal
-                  </Badge>
-                )}
+              <div className="flex items-center gap-2 mb-3">
+                <Badge variant="secondary" className="bg-primary/10 text-primary hover:bg-primary/20 transition-colors border-0 px-3 py-1">
+                  <Users className="w-3.5 h-3.5 mr-1.5" />
+                  Student Portal
+                </Badge>
               </div>
-              <CardTitle className="text-2xl">Sign In</CardTitle>
-              <CardDescription>
-                {role === 'student'
-                  ? 'Enter your credentials provided by your institution'
-                  : 'Access your admin dashboard to manage tests and students'
-                }
+              <CardTitle className="text-2xl sm:text-3xl font-bold tracking-tight">Sign In</CardTitle>
+              <CardDescription className="text-sm sm:text-base">
+                Enter your credentials provided by your institution
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -238,13 +187,13 @@ function LoginContent() {
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="identifier">
-                    {role === 'student' ? 'Username' : 'Email'}
+                    Username
                   </Label>
                   <Input
                     id="identifier"
                     name="identifier"
-                    type={role === 'student' ? 'text' : 'email'}
-                    placeholder={role === 'student' ? 'Enter your username' : 'admin@example.com'}
+                    type={'text'}
+                    placeholder={'Enter your username'}
                     value={formData.identifier}
                     onChange={handleInputChange}
                     required
@@ -276,13 +225,13 @@ function LoginContent() {
 
                 <Button
                   type="submit"
-                  className="w-full h-12 mt-6"
+                  className="w-full h-12 md:h-14 mt-6 text-base font-medium shadow-md shadow-primary/20 hover:shadow-primary/30 transition-all duration-300"
                   variant="hero"
                   disabled={isLoading}
                 >
                   {isLoading ? (
                     <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      <Loader2 className="w-5 h-5 mr-2 animate-spin" />
                       Signing in...
                     </>
                   ) : (
@@ -290,21 +239,8 @@ function LoginContent() {
                   )}
                 </Button>
               </form>
-
-              {role === 'admin' && (
-                <p className="text-xs text-muted-foreground text-center mt-6">
-                  Forgot your password? Contact your system administrator.
-                </p>
-              )}
             </CardContent>
           </Card>
-
-          {/* Demo credentials hint */}
-          <div className="mt-6 p-4 rounded-lg bg-secondary/50 border border-border">
-            <p className="text-xs text-muted-foreground text-center">
-              <span className="font-medium">Demo:</span> Use any credentials to explore the dashboard
-            </p>
-          </div>
         </div>
       </div>
     </div>
@@ -314,7 +250,7 @@ function LoginContent() {
 export default function LoginPage() {
   return (
     <Suspense fallback={
-      <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="min-h-dvh flex items-center justify-center bg-background">
         <Loader2 className="w-10 h-10 animate-spin text-primary" />
       </div>
     }>

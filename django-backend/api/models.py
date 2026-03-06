@@ -164,6 +164,15 @@ class ClapTest(models.Model):
     name = models.CharField(max_length=255)
     batch = models.ForeignKey(Batch, on_delete=models.CASCADE, db_column='batch_id', null=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
+    # Explicit global timer override (minutes). NULL = auto-compute from sum of component durations.
+    global_duration_minutes = models.IntegerField(null=True, blank=True)
+    # ── Live Timer Fields ─────────────────────────────────────────────────────
+    # Server-authoritative deadline (UTC). Set on first student start or by admin.
+    # When admin extends, this is updated atomically. All clients poll and compute
+    # timeLeft = max(0, global_deadline - (now + clockOffset)).
+    global_deadline = models.DateTimeField(null=True, blank=True, db_column='global_deadline')
+    # Immutable audit log: [{action, extend_minutes, old_deadline_utc, new_deadline_utc, by, at, reason}]
+    timer_extension_log = models.JSONField(default=list, blank=True, db_column='timer_extension_log')
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, db_column='created_by')
@@ -174,6 +183,106 @@ class ClapTest(models.Model):
         
     def __str__(self):
         return f"{self.test_id}: {self.name}" if self.test_id else self.name
+
+
+class ClapTestSet(models.Model):
+    """
+    A question-paper variant (Set A, Set B, ...) under a single ClapTest.
+    Each set has its own 5 ClapSetComponents (one per test type).
+    When a student is assigned a set, questions are served from this set
+    instead of the default ClapTestComponents on the parent ClapTest.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    clap_test = models.ForeignKey(
+        ClapTest, on_delete=models.CASCADE,
+        db_column='clap_test_id', related_name='sets'
+    )
+    label = models.CharField(max_length=10)   # 'A', 'B', 'C', ...
+    set_number = models.IntegerField()         # 1, 2, 3, ... (for ordering)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    created_by = models.ForeignKey(
+        'User', on_delete=models.SET_NULL,
+        null=True, blank=True, db_column='created_by'
+    )
+
+    class Meta:
+        db_table = 'clap_test_sets'
+        managed = False
+        unique_together = [['clap_test', 'set_number'], ['clap_test', 'label']]
+        ordering = ['set_number']
+
+    def __str__(self):
+        return f"{self.clap_test.name} — Set {self.label}"
+
+
+class ClapSetComponent(models.Model):
+    """
+    One of the 5 test-type components belonging to a ClapTestSet.
+    Mirrors ClapTestComponent structure but belongs to a set, not the parent test.
+    """
+    TEST_TYPE_CHOICES = [
+        ('listening', 'Listening'),
+        ('speaking', 'Speaking'),
+        ('reading', 'Reading'),
+        ('writing', 'Writing'),
+        ('vocabulary', 'Vocabulary'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    set = models.ForeignKey(
+        ClapTestSet, on_delete=models.CASCADE,
+        db_column='set_id', related_name='components'
+    )
+    test_type = models.CharField(max_length=20, choices=TEST_TYPE_CHOICES)
+    title = models.CharField(max_length=255)
+    description = models.TextField(null=True, blank=True)
+    max_marks = models.IntegerField(default=10)
+    duration_minutes = models.IntegerField(default=30)
+    timer_enabled = models.BooleanField(default=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = 'clap_set_components'
+        managed = False
+
+    def __str__(self):
+        return f"Set {self.set.label} — {self.test_type}"
+
+
+class ClapSetItem(models.Model):
+    """
+    An individual question / content block within a ClapSetComponent.
+    Mirrors ClapTestItem but belongs to a ClapSetComponent.
+    """
+    ITEM_TYPE_CHOICES = [
+        ('mcq', 'Multiple Choice'),
+        ('subjective', 'Subjective / Essay'),
+        ('text_block', 'Text Block / Instructions'),
+        ('audio_block', 'Audio Block'),
+        ('file_upload', 'File Upload'),
+        ('audio_recording', 'Audio Recording'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    set_component = models.ForeignKey(
+        ClapSetComponent, on_delete=models.CASCADE,
+        db_column='set_component_id', related_name='items'
+    )
+    item_type = models.CharField(max_length=50, choices=ITEM_TYPE_CHOICES)
+    order_index = models.IntegerField()
+    points = models.IntegerField(default=0)
+    content = models.JSONField(default=dict)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'clap_set_items'
+        managed = False
+        ordering = ['order_index']
+
+    def __str__(self):
+        return f"Set {self.set_component.set.label} — {self.set_component.test_type} — Item {self.order_index}"
 
 
 class ClapTestIdCounter(models.Model):
@@ -213,6 +322,8 @@ class ClapTestComponent(models.Model):
     description = models.TextField(null=True, blank=True)
     max_marks = models.IntegerField(default=10)
     duration_minutes = models.IntegerField(default=30)
+    # When False, no per-component countdown is shown to the student for this subtest
+    timer_enabled = models.BooleanField(default=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     created_at = models.DateTimeField(default=timezone.now)
     
@@ -243,14 +354,43 @@ class StudentClapAssignment(models.Model):
     completed_at = models.DateTimeField(null=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='assigned')
     total_score = models.IntegerField(null=True, blank=True)
-    
+
+    # --- Retest / Multi-Attempt Fields ---
+    attempt_number = models.IntegerField(default=1)
+    retest_granted = models.BooleanField(default=False)
+    retest_granted_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        db_column='retest_granted_by_id',
+        related_name='retest_grants'
+    )
+    retest_reason = models.TextField(null=True, blank=True)
+    retest_granted_at = models.DateTimeField(null=True, blank=True)
+
+    # --- Sets Feature Fields ---
+    # NULL = student gets the default ClapTestComponents (backward compatible)
+    # non-NULL = student gets questions from this specific ClapTestSet
+    assigned_set = models.ForeignKey(
+        'ClapTestSet',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        db_column='assigned_set_id',
+        related_name='assignments'
+    )
+    assigned_set_label = models.CharField(max_length=10, null=True, blank=True)
+
+    # Tracks per-component completion timestamps: { "<component_id>": "<iso_datetime>", ... }
+    metadata = models.JSONField(default=dict, blank=True)
+
     class Meta:
         db_table = 'student_clap_assignments'
         managed = False
         unique_together = [['student', 'clap_test']]
-        
+
     def __str__(self):
-        return f"{self.student.email} - {self.clap_test.name}"
+        set_info = f" [Set {self.assigned_set_label}]" if self.assigned_set_label else ""
+        return f"{self.student.email} - {self.clap_test.name}{set_info} (attempt {self.attempt_number})"
 
 
 class ClapTestItem(models.Model):
@@ -381,7 +521,15 @@ class AdminAudioFile(models.Model):
         ClapTestItem,
         on_delete=models.CASCADE,
         db_column='item_id',
-        related_name='admin_audio'
+        related_name='admin_audio',
+        null=True, blank=True
+    )
+    set_item = models.OneToOneField(
+        'ClapSetItem',
+        on_delete=models.CASCADE,
+        db_column='set_item_id',
+        related_name='admin_audio',
+        null=True, blank=True
     )
     uploaded_by = models.UUIDField(db_column='uploaded_by', null=True)
 
@@ -401,10 +549,13 @@ class AdminAudioFile(models.Model):
         managed = True  # This is a new table, Django manages it
 
     def __str__(self):
-        return f"Admin Audio: {self.original_filename} for {self.item}"
+        item_ref = self.item or self.set_item
+        return f"Admin Audio: {self.original_filename} for {item_ref}"
 
     def get_file_url(self):
         """Generate authenticated URL for file access"""
+        if self.set_item_id:
+            return f"/api/admin/set-items/{self.set_item_id}/audio"
         return f"/api/student/clap-items/{self.item_id}/audio"
 
     def delete_file(self):
