@@ -12,7 +12,6 @@ import { LoadingSpinner, ErrorMessage } from '@/components/LoadingSpinner'
 import { TestProgressCard } from '@/components/TestProgressCard'
 import { StatsOverview } from '@/components/StatsOverview'
 import { RecentActivity } from '@/components/RecentActivity'
-import { useStudentDashboard } from '@/hooks/useStudentDashboard'
 import {
   Headphones,
   Mic,
@@ -31,7 +30,7 @@ import {
   ArrowRight,
   Info
 } from 'lucide-react'
-import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders, apiFetch } from '@/lib/api-config'
 
 const tests = [
   {
@@ -110,7 +109,7 @@ export default function StudentDashboard() {
       }
 
       try {
-        const response = await fetch(getApiUrl('student/profile'), {
+        const response = await apiFetch(getApiUrl('student/profile'), {
           headers: getAuthHeaders()
         })
 
@@ -137,17 +136,16 @@ export default function StudentDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Fetch real dashboard data
-  const {
-    dashboardData,
-    isLoading,
-    error,
-    lastUpdated,
-    refresh
-  } = useStudentDashboard({
-    userId: user.id, // Use real user ID
-    refreshInterval: 30000
-  })
+  // Dashboard stats are driven by the CLAP assignments page (/student/clap-tests).
+  // The legacy useStudentDashboard hook called old Supabase-era endpoints
+  // (/tests, /attempts) that no longer exist in the Django backend — removed
+  // to stop the 400 Bad Request flood. Students see live data when they
+  // navigate to /student/clap-tests after clicking "Start Assessment Session".
+  const dashboardData = null as any
+  const isLoading = false
+  const error = null as string | null
+  const lastUpdated = null as Date | null
+  const refresh = () => {}
 
   const handleStartSession = () => {
     setSessionStarted(true)
@@ -161,6 +159,11 @@ export default function StudentDashboard() {
   }
 
   const handleLogout = () => {
+    localStorage.removeItem('access_token')
+    localStorage.removeItem('user_id')
+    localStorage.removeItem('user_email')
+    localStorage.removeItem('user_role')
+    localStorage.removeItem('user_name')
     router.push('/login')
   }
 
@@ -169,9 +172,9 @@ export default function StudentDashboard() {
   const totalTests = dashboardData?.stats.total_tests || tests.length
   const overallProgress = totalTests > 0 ? (completedTests / totalTests) * 100 : 0
 
-  const totalDuration = dashboardData?.tests.reduce((acc, t) => acc + t.duration_minutes, 0) || 0
-  const totalMarks = dashboardData?.tests.reduce((acc, t) => acc + (t.score || 0), 0) || 0
-  const maxMarks = dashboardData?.tests.reduce((acc, t) => acc + (t.max_score || 0), 0) || 50
+  const totalDuration = dashboardData?.tests.reduce((acc: number, t: any) => acc + t.duration_minutes, 0) || 0
+  const totalMarks = dashboardData?.tests.reduce((acc: number, t: any) => acc + (t.score || 0), 0) || 0
+  const maxMarks = dashboardData?.tests.reduce((acc: number, t: any) => acc + (t.max_score || 0), 0) || 50
 
   return (
     <div className="min-h-dvh bg-background">
@@ -351,7 +354,7 @@ export default function StudentDashboard() {
             <div>
               <h2 className="text-lg font-semibold mb-4">Your Tests</h2>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {(dashboardData?.tests || []).map((test) => (
+                {(dashboardData?.tests || []).map((test: any) => (
                   <TestProgressCard
                     key={test.id}
                     test={test}
