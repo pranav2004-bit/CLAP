@@ -283,10 +283,10 @@ EMAIL_WEBHOOK_SECRET = config('EMAIL_WEBHOOK_SECRET', default='')
 # WARNING: In production behind a reverse proxy (nginx/ALB), set this to False
 # and ensure the proxy STRIPS the x-user-id header from external requests.
 # When False, only JWT Bearer tokens are accepted for authentication.
-TRUST_X_USER_ID_HEADER = config('TRUST_X_USER_ID_HEADER', default=True, cast=bool)
+TRUST_X_USER_ID_HEADER = config('TRUST_X_USER_ID_HEADER', default=False, cast=bool)
 
 # JWT settings (architecture target: 15 minute access, 7 day refresh)
-JWT_ACCESS_TOKEN_MINUTES = config('JWT_ACCESS_TOKEN_MINUTES', default=15, cast=int)
+JWT_ACCESS_TOKEN_MINUTES = config('JWT_ACCESS_TOKEN_MINUTES', default=60, cast=int)
 JWT_REFRESH_TOKEN_DAYS = config('JWT_REFRESH_TOKEN_DAYS', default=7, cast=int)
 JWT_ROTATE_REFRESH_TOKENS = config('JWT_ROTATE_REFRESH_TOKENS', default=True, cast=bool)
 JWT_BLACKLIST_AFTER_ROTATION = config('JWT_BLACKLIST_AFTER_ROTATION', default=True, cast=bool)
@@ -307,8 +307,27 @@ if importlib.util.find_spec('rest_framework_simplejwt'):
         'SIGNING_KEY': SECRET_KEY,
     }
 
-# OpenAI Configuration
-OPENAI_API_KEY = _resolve_secret('OPENAI_API_KEY', default='')
+# ── OpenAI Multi-Key Pool (enterprise — up to 5 primary + 1 hot standby) ─────
+# Primary key (required — backward compatible with single-key setups)
+OPENAI_API_KEY   = _resolve_secret('OPENAI_API_KEY',   default='')
+# Additional primary keys (optional — add more to increase throughput)
+OPENAI_API_KEY_2 = _resolve_secret('OPENAI_API_KEY_2', default='')
+OPENAI_API_KEY_3 = _resolve_secret('OPENAI_API_KEY_3', default='')
+OPENAI_API_KEY_4 = _resolve_secret('OPENAI_API_KEY_4', default='')
+OPENAI_API_KEY_5 = _resolve_secret('OPENAI_API_KEY_5', default='')
+# Hot standby key — reserved exclusively for when ALL primary keys hit rate limits
+OPENAI_STANDBY_KEY = _resolve_secret('OPENAI_STANDBY_KEY', default='')
+
+# Build the pool list consumed by api/utils/openai_client.py._KeyPool
+OPENAI_API_KEYS = [
+    k for k in [
+        OPENAI_API_KEY,
+        OPENAI_API_KEY_2,
+        OPENAI_API_KEY_3,
+        OPENAI_API_KEY_4,
+        OPENAI_API_KEY_5,
+    ] if k
+]
 
 # Email Configuration (Resend)
 RESEND_API_KEY = _resolve_secret('RESEND_API_KEY', default='')
@@ -401,6 +420,7 @@ CELERY_TASK_ACKS_LATE = True
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 CELERY_TASK_TRACK_STARTED = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True  # Silences CPendingDeprecationWarning in Celery 5.x
 CELERY_RESULT_EXPIRES = config('CELERY_RESULT_EXPIRES', default=3600, cast=int)  # 1 hour
 CELERY_TASK_TIME_LIMIT = config('CELERY_TASK_TIME_LIMIT', default=600, cast=int)  # 10 min hard kill
 CELERY_TASK_SOFT_TIME_LIMIT = config('CELERY_TASK_SOFT_TIME_LIMIT', default=540, cast=int)  # 9 min graceful
@@ -515,9 +535,12 @@ elif EMAIL_PROVIDER == 'sendgrid':
 else:
     EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 
-# Submission rate limits (architecture defaults)
-SUBMISSION_RATE_LIMIT_PER_USER_PER_HOUR = config('SUBMISSION_RATE_LIMIT_PER_USER_PER_HOUR', default=10, cast=int)
-SUBMISSION_RATE_LIMIT_GLOBAL_PER_INSTITUTION_PER_HOUR = config('SUBMISSION_RATE_LIMIT_GLOBAL_PER_INSTITUTION_PER_HOUR', default=100, cast=int)
+# Submission rate limits — enterprise defaults scaled for thousands of concurrent users
+SUBMISSION_RATE_LIMIT_PER_USER_PER_HOUR = config('SUBMISSION_RATE_LIMIT_PER_USER_PER_HOUR', default=500, cast=int)
+SUBMISSION_RATE_LIMIT_GLOBAL_PER_INSTITUTION_PER_HOUR = config('SUBMISSION_RATE_LIMIT_GLOBAL_PER_INSTITUTION_PER_HOUR', default=5000, cast=int)
+
+# Email webhook HMAC secret (SendGrid event verification)
+EMAIL_WEBHOOK_SECRET = config('EMAIL_WEBHOOK_SECRET', default='')
 
 # LLM Provider Configuration (OpenAI / Gemini)
 LLM_PROVIDER = config('LLM_PROVIDER', default='openai')
@@ -625,11 +648,18 @@ def _validate_settings():
         )
 
     # --- LLM provider keys ---
-    if LLM_PROVIDER == 'openai' and not OPENAI_API_KEY:
-        _log.warning(
-            'LLM_PROVIDER=openai but OPENAI_API_KEY is not set — '
-            'writing and speaking evaluation will fail.'
-        )
+    if LLM_PROVIDER == 'openai':
+        if not OPENAI_API_KEYS:
+            _log.warning(
+                'LLM_PROVIDER=openai but OPENAI_API_KEY is not set — '
+                'writing and speaking evaluation will fail.'
+            )
+        else:
+            _log.info(
+                'openai_key_pool configured: primary_keys=%d has_standby=%s — '
+                'add OPENAI_API_KEY_2…_5 and OPENAI_STANDBY_KEY for higher throughput.',
+                len(OPENAI_API_KEYS), bool(OPENAI_STANDBY_KEY),
+            )
 
     if LLM_PROVIDER == 'gemini' and not GEMINI_API_KEY:
         _log.warning(
