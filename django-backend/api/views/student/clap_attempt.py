@@ -202,9 +202,22 @@ def submit_response(request, assignment_id):
         return JsonResponse({'error': 'Unauthorized'}, status=401)
 
     try:
-        assignment = StudentClapAssignment.objects.get(id=assignment_id, student=user)
+        assignment = StudentClapAssignment.objects.select_related('clap_test').get(id=assignment_id, student=user)
     except StudentClapAssignment.DoesNotExist:
         return JsonResponse({'error': 'Assignment not found'}, status=404)
+
+    # C4: Reject if assignment already completed
+    if assignment.status == 'completed':
+        return JsonResponse({'error': 'Assignment already completed', 'code': 'ALREADY_COMPLETED'}, status=403)
+
+    # C3: Enforce global deadline server-side
+    test = assignment.clap_test
+    if test.global_deadline and timezone.now() > test.global_deadline:
+        return JsonResponse({'error': 'Test time has expired', 'code': 'GLOBAL_DEADLINE_EXCEEDED'}, status=403)
+
+    # C5: Reject oversized payloads (1 MB limit)
+    if len(request.body) > 1_048_576:
+        return JsonResponse({'error': 'Response too large', 'code': 'PAYLOAD_TOO_LARGE'}, status=413)
 
     try:
         data = json.loads(request.body)
@@ -287,6 +300,10 @@ def finish_component(request, assignment_id, component_id):
         assignment = StudentClapAssignment.objects.get(id=assignment_id, student=user)
     except StudentClapAssignment.DoesNotExist:
         return JsonResponse({'error': 'Assignment not found'}, status=404)
+
+    # C4: Idempotent — if already completed, return success without re-processing
+    if assignment.status == 'completed':
+        return JsonResponse({'message': 'Component finished successfully', 'component_id': str(component_id), 'all_components_done': True})
 
     try:
         component = ClapTestComponent.objects.get(id=component_id, clap_test=assignment.clap_test)

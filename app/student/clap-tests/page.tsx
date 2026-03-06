@@ -5,21 +5,28 @@ import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { FileText, Clock, CheckCircle } from 'lucide-react'
+import { FileText, Clock, CheckCircle, WifiOff } from 'lucide-react'
 import { toast } from 'sonner'
 import { getApiUrl, getAuthHeaders, apiFetch } from '@/lib/api-config'
+import { useNetworkStatus } from '@/hooks/useNetworkStatus'
 
 export default function StudentClapTestsPage() {
     const router = useRouter()
+    const isOnline = useNetworkStatus()  // H2: offline detection
     const [assignments, setAssignments] = useState<any[]>([])
     const [isLoading, setIsLoading] = useState(true)
 
+    // H1: AbortController — prevents setState on unmounted component
     useEffect(() => {
+        const controller = new AbortController()
+
         const fetchAssignments = async () => {
             try {
                 const response = await apiFetch(getApiUrl('student/clap-assignments'), {
-                    headers: getAuthHeaders()
+                    headers: getAuthHeaders(),
+                    signal: controller.signal,
                 })
+                if (controller.signal.aborted) return
                 const data = await response.json()
 
                 if (response.ok) {
@@ -28,28 +35,53 @@ export default function StudentClapTestsPage() {
                     toast.error('Failed to load tests')
                 }
             } catch (error) {
+                if ((error as Error).name === 'AbortError') return  // H1: expected on unmount
                 console.error(error)
                 toast.error('Network error')
             } finally {
-                setIsLoading(false)
+                if (!controller.signal.aborted) setIsLoading(false)
             }
         }
 
         fetchAssignments()
+        return () => controller.abort()  // H1: cleanup on unmount
     }, [])
-
-    if (isLoading) return (
-        <div className="min-h-dvh flex items-center justify-center">
-            <div className="text-center text-muted-foreground">Loading tests...</div>
-        </div>
-    )
 
     return (
         <div className="px-4 py-6 sm:px-6 max-w-5xl mx-auto">
+            {/* H2: Offline banner */}
+            {!isOnline && (
+                <div className="mb-4 bg-red-50 border border-red-200 rounded-lg px-4 py-3 flex items-center gap-3 text-red-700 text-sm font-medium">
+                    <WifiOff className="w-4 h-4 flex-shrink-0" />
+                    No internet connection — tests may not load correctly. Please reconnect.
+                </div>
+            )}
+
             <h1 className="text-2xl font-bold mb-2">My CLAP Assessments</h1>
             <p className="text-gray-500 mb-8">Complete your assigned Continuous Learning Assessment Program tests.</p>
 
-            {assignments.length === 0 ? (
+            {/* M1: Skeleton screens while loading */}
+            {isLoading ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {[1, 2, 3].map(i => (
+                        <div key={i} className="rounded-2xl border bg-white p-6 animate-pulse border-l-4 border-l-indigo-200">
+                            <div className="flex justify-between items-start mb-3">
+                                <div className="flex-1 mr-4">
+                                    <div className="h-5 bg-gray-200 rounded w-3/4 mb-2" />
+                                    <div className="h-3 bg-gray-100 rounded w-1/2" />
+                                </div>
+                                <div className="h-6 w-20 bg-gray-100 rounded-full" />
+                            </div>
+                            <div className="flex gap-4 mb-4">
+                                <div className="h-4 bg-gray-100 rounded w-20" />
+                                <div className="h-4 bg-gray-100 rounded w-20" />
+                            </div>
+                            <div className="h-2 bg-gray-100 rounded-full mb-4" />
+                            <div className="h-9 bg-gray-200 rounded-lg w-full" />
+                        </div>
+                    ))}
+                </div>
+            ) : assignments.length === 0 ? (
                 <div className="text-center py-12 bg-gray-50 rounded-lg border border-dashed border-gray-300">
                     <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
                     <h3 className="text-lg font-medium text-gray-900 mb-2">No Tests Assigned</h3>
@@ -91,8 +123,7 @@ export default function StudentClapTestsPage() {
                                 </div>
 
                                 <div className="w-full bg-gray-100 rounded-full h-2 mb-4">
-                                    <div className="h-2 rounded-full bg-indigo-600 w-0"></div>
-                                    {/* Add progress logic later */}
+                                    <div className="h-2 rounded-full bg-indigo-600 w-0" />
                                 </div>
 
                                 <Button className="w-full">

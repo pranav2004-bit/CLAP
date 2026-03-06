@@ -15,9 +15,11 @@ import {
   Save,
   AlertCircle,
   CheckCircle,
-  ArrowLeft
+  ArrowLeft,
+  WifiOff
 } from 'lucide-react'
 import { getApiUrl, getAuthHeaders, apiFetch } from '@/lib/api-config'
+import { useNetworkStatus } from '@/hooks/useNetworkStatus'
 
 interface StudentProfile {
   id: string
@@ -31,9 +33,11 @@ interface StudentProfile {
 
 export default function StudentProfilePage() {
   const router = useRouter()
+  const isOnline = useNetworkStatus()  // H2: offline detection
   const [profile, setProfile] = useState<StudentProfile | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [passwordSaving, setPasswordSaving] = useState(false)  // H4: double-submit guard
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
@@ -57,48 +61,54 @@ export default function StudentProfilePage() {
   const [showNewPassword, setShowNewPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
 
-  // Fetch profile data
+  // Fetch profile data — H1: AbortController cleanup
   useEffect(() => {
+    const controller = new AbortController()
+
+    const fetchProfile = async () => {
+      try {
+        setLoading(true)
+        const userId = localStorage.getItem('user_id')
+
+        if (!userId) {
+          router.push('/login')
+          return
+        }
+
+        const response = await apiFetch(getApiUrl('student/profile'), {
+          headers: getAuthHeaders(),
+          signal: controller.signal,
+        })
+        if (controller.signal.aborted) return
+
+        if (!response.ok) {
+          throw new Error('Network response was not ok')
+        }
+
+        const data = await response.json()
+
+        if (data.profile) {
+          setProfile(data.profile)
+          setFormData({
+            username: data.profile.username || '',
+            email: data.profile.email || ''
+          })
+        } else {
+          setError(data.error || 'Failed to load profile')
+        }
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') return  // H1: expected on unmount
+        console.error('Error fetching profile:', err)
+        setError('Failed to load profile. Please check your connection.')
+      } finally {
+        if (!controller.signal.aborted) setLoading(false)
+      }
+    }
+
     fetchProfile()
+    return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-
-  const fetchProfile = async () => {
-    try {
-      setLoading(true)
-      const userId = localStorage.getItem('user_id')
-
-      if (!userId) {
-        router.push('/login')
-        return
-      }
-
-      const response = await apiFetch(getApiUrl('student/profile'), {
-        headers: getAuthHeaders()
-      })
-
-      if (!response.ok) {
-        throw new Error('Network response was not ok')
-      }
-
-      const data = await response.json()
-
-      if (data.profile) {
-        setProfile(data.profile)
-        setFormData({
-          username: data.profile.username || '',
-          email: data.profile.email || ''
-        })
-      } else {
-        setError(data.error || 'Failed to load profile')
-      }
-    } catch (err) {
-      console.error('Error fetching profile:', err)
-      setError('Failed to load profile. Please check your connection.')
-    } finally {
-      setLoading(false)
-    }
-  }
 
   const handleProfileSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -179,8 +189,7 @@ export default function StudentProfilePage() {
     }
 
     try {
-      const userId = localStorage.getItem('user_id')
-
+      setPasswordSaving(true)  // H4: disable button during request
       const response = await apiFetch(getApiUrl('student/change-password'), {
         method: 'POST',
         headers: {
@@ -207,15 +216,34 @@ export default function StudentProfilePage() {
       }
     } catch (err) {
       setPasswordError('Failed to change password')
+    } finally {
+      setPasswordSaving(false)  // H4: re-enable button
     }
   }
 
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-violet-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading profile...</p>
+        {/* M1: Skeleton loading state */}
+        <div className="w-full max-w-2xl mx-auto px-4 animate-pulse">
+          <div className="h-8 bg-blue-200 rounded w-1/3 mb-4" />
+          <div className="h-4 bg-blue-100 rounded w-1/2 mb-8" />
+          <div className="grid gap-8 md:grid-cols-2">
+            <div className="rounded-xl border bg-white p-6">
+              <div className="h-6 bg-gray-200 rounded w-1/2 mb-4" />
+              <div className="space-y-4">
+                {[1,2,3].map(i => <div key={i} className="h-10 bg-gray-100 rounded-lg" />)}
+                <div className="h-10 bg-blue-200 rounded-lg mt-2" />
+              </div>
+            </div>
+            <div className="rounded-xl border bg-white p-6">
+              <div className="h-6 bg-gray-200 rounded w-1/2 mb-4" />
+              <div className="space-y-4">
+                {[1,2,3].map(i => <div key={i} className="h-10 bg-gray-100 rounded-lg" />)}
+                <div className="h-10 bg-gray-200 rounded-lg mt-2" />
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     )
@@ -246,6 +274,13 @@ export default function StudentProfilePage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-8">
+      {/* H2: Offline banner */}
+      {!isOnline && (
+        <div className="mb-0 bg-red-600 text-white text-sm font-medium text-center py-2 px-4 flex items-center justify-center gap-2 -mt-8 mb-8">
+          <WifiOff className="w-4 h-4 flex-shrink-0" />
+          No internet connection — profile changes cannot be saved. Please reconnect.
+        </div>
+      )}
       <div className="container mx-auto px-4 max-w-4xl">
         {profile.profile_completed && (
           <Button
@@ -476,13 +511,15 @@ export default function StudentProfilePage() {
                   </div>
                 </div>
 
+                {/* H4: Disabled during request to prevent double-submit */}
                 <Button
                   type="submit"
                   variant="outline"
                   className="w-full"
+                  disabled={passwordSaving}
                 >
                   <Lock className="w-4 h-4 mr-2" />
-                  Change Password
+                  {passwordSaving ? 'Changing…' : 'Change Password'}
                 </Button>
               </form>
             </CardContent>

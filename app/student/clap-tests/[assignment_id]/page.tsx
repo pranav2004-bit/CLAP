@@ -5,10 +5,11 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { ArrowLeft, Headphones, Mic, BookOpen, PenTool, Brain, CheckCircle, PlayCircle, Loader2, Download, Clock, AlertTriangle, LogOut } from 'lucide-react'
+import { ArrowLeft, Headphones, Mic, BookOpen, PenTool, Brain, CheckCircle, PlayCircle, Loader2, Download, Clock, AlertTriangle, LogOut, WifiOff } from 'lucide-react'
 import { toast } from 'sonner'
 import { getApiUrl, getAuthHeaders, apiFetch } from '@/lib/api-config'
 import { useAntiCheat } from '@/hooks/useAntiCheat'
+import { useNetworkStatus } from '@/hooks/useNetworkStatus'
 
 const STATUS_STEPS = [
   'PENDING',
@@ -60,6 +61,7 @@ export default function StudentClapTestDetailPage() {
   const [globalTotalDuration, setGlobalTotalDuration] = useState<number | null>(null)
 
   const testIsActive = !!assignment && !isLoading && assignment.status !== 'completed' && !submissionId
+  const isOnline = useNetworkStatus()  // H2: offline detection
 
   // iOS Safari detection (no native requestFullscreen)
   const isIOS = typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent)
@@ -82,11 +84,16 @@ export default function StudentClapTestDetailPage() {
   })
 
   useEffect(() => {
+    // H1: AbortController — prevents setState on unmounted component
+    const controller = new AbortController()
+
     const fetchAssignment = async () => {
       try {
         const response = await apiFetch(getApiUrl('student/clap-assignments'), {
-          headers: getAuthHeaders()
+          headers: getAuthHeaders(),
+          signal: controller.signal,
         })
+        if (controller.signal.aborted) return
         const data = await response.json()
 
         if (response.ok) {
@@ -105,8 +112,10 @@ export default function StudentClapTestDetailPage() {
             if (found.status !== 'completed') {
               const startResp = await apiFetch(getApiUrl(`student/clap-assignments/${params.assignment_id}/start`), {
                 method: 'POST',
-                headers: getAuthHeaders()
+                headers: getAuthHeaders(),
+                signal: controller.signal,
               })
+              if (controller.signal.aborted) return
               if (startResp.ok) {
                 const startData = await startResp.json()
                 // Update the assignment with the definitive started_at
@@ -122,10 +131,11 @@ export default function StudentClapTestDetailPage() {
           toast.error('Failed to load assignment')
         }
       } catch (error) {
+        if ((error as Error).name === 'AbortError') return  // H1: expected on unmount
         console.error(error)
         toast.error('Network error')
       } finally {
-        setIsLoading(false)
+        if (!controller.signal.aborted) setIsLoading(false)
       }
     }
 
@@ -141,6 +151,8 @@ export default function StudentClapTestDetailPage() {
         }
       }
     }
+
+    return () => controller.abort()  // H1: cleanup on unmount
   }, [params.assignment_id, router])
 
   // ── handleFinalSubmit (stable — used by auto-submit + manual submit) ───────
@@ -197,6 +209,11 @@ export default function StudentClapTestDetailPage() {
   const pollGlobalTimer = useCallback(async () => {
     if (!params.assignment_id || !assignmentReadyRef.current) return
     if (isAutoSubmitRef.current) return  // already submitting — stop polling
+    // H2: Pause polling when offline — resume automatically when online event fires
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      pollingTimerRef.current = setTimeout(pollGlobalTimer, 3000)
+      return
+    }
 
     try {
       const res = await apiFetch(getApiUrl(`student/clap-assignments/${params.assignment_id}/global-timer`), {
@@ -442,15 +459,39 @@ export default function StudentClapTestDetailPage() {
     }
   }
 
+  // M1: Skeleton loading state
   if (isLoading) return (
-    <div className="min-h-dvh flex items-center justify-center">
-      <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
+    <div className="min-h-dvh bg-background px-4 py-4 sm:px-6 max-w-4xl mx-auto animate-pulse">
+      {/* Header skeleton */}
+      <div className="flex items-center justify-between mb-6 mt-2">
+        <div className="h-8 w-28 bg-gray-200 rounded" />
+        <div className="h-8 w-24 bg-gray-200 rounded" />
+      </div>
+      {/* Hero banner skeleton */}
+      <div className="h-40 bg-indigo-100 rounded-2xl mb-8" />
+      {/* Submission progress skeleton */}
+      <div className="h-20 bg-gray-100 rounded-xl mb-4" />
+      {/* Component tiles */}
+      <div className="grid grid-cols-1 gap-4">
+        {[1,2,3,4,5].map(i => (
+          <div key={i} className="h-20 bg-gray-100 rounded-xl border" />
+        ))}
+      </div>
     </div>
   )
   if (!assignment) return null
 
   return (
     <div className="min-h-dvh bg-background">
+      {/* H2: Offline banner — fixed at top when no internet */}
+      {!isOnline && (
+        <div className="fixed top-0 left-0 right-0 z-50 bg-red-600 text-white text-sm font-medium
+                        text-center py-2 px-4 flex items-center justify-center gap-2">
+          <WifiOff className="w-4 h-4 flex-shrink-0" />
+          No internet connection — timer sync paused. Reconnect immediately.
+        </div>
+      )}
+
       {/* ── Two-step exit confirmation modal ──────────────────────────────── */}
       {exitStep >= 1 && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
@@ -507,10 +548,11 @@ export default function StudentClapTestDetailPage() {
         </div>
       )}
 
-    <div className="px-4 py-4 sm:px-6 max-w-4xl mx-auto">
+    <div className={`px-4 py-4 sm:px-6 max-w-4xl mx-auto ${!isOnline ? 'pt-12' : ''}`}>
       {/* Header row */}
       <div className="flex items-center justify-between mb-6">
-        <Button variant="ghost" className="pl-0 hover:pl-2 transition-all" onClick={() => router.back()}>
+        <Button variant="ghost" className="pl-0 hover:pl-2 transition-all"
+                onClick={() => testIsActive ? setExitStep(1) : router.back()}>
           <ArrowLeft className="w-4 h-4 mr-2" />
           <span className="hidden sm:inline">Back to Dashboard</span>
           <span className="sm:hidden">Back</span>

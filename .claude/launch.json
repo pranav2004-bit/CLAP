@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "nextjs-frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3000
+    },
+    {
+      "name": "django-docker-stack",
+      "runtimeExecutable": "docker",
+      "runtimeArgs": ["compose", "--project-directory", "C:\\Users\\pranavnath\\OneDrive\\Desktop\\CLAP", "up", "--build", "-d"],
+      "port": 8000
+    }
+  ]
+}

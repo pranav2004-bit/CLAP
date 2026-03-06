@@ -28,9 +28,11 @@ import {
   Target,
   Trophy,
   ArrowRight,
-  Info
+  Info,
+  WifiOff
 } from 'lucide-react'
 import { getApiUrl, getAuthHeaders, apiFetch } from '@/lib/api-config'
+import { useNetworkStatus } from '@/hooks/useNetworkStatus'
 
 const tests = [
   {
@@ -91,7 +93,9 @@ const tests = [
 
 export default function StudentDashboard() {
   const router = useRouter()
+  const isOnline = useNetworkStatus()  // H2: offline detection
   const [sessionStarted, setSessionStarted] = useState(false)
+  const [sessionStarting, setSessionStarting] = useState(false)  // H4: double-submit guard
   const [user, setUser] = useState({
     id: '',
     name: 'Loading...',
@@ -99,8 +103,9 @@ export default function StudentDashboard() {
     email: ''
   })
 
-  // Fetch user profile
+  // Fetch user profile — H1: AbortController cleanup
   useEffect(() => {
+    const controller = new AbortController()
     const fetchProfile = async () => {
       const storedUserId = localStorage.getItem('user_id')
       if (!storedUserId) {
@@ -110,8 +115,10 @@ export default function StudentDashboard() {
 
       try {
         const response = await apiFetch(getApiUrl('student/profile'), {
-          headers: getAuthHeaders()
+          headers: getAuthHeaders(),
+          signal: controller.signal,
         })
+        if (controller.signal.aborted) return
 
         if (response.ok) {
           const data = await response.json()
@@ -129,10 +136,12 @@ export default function StudentDashboard() {
           }
         }
       } catch (error) {
+        if ((error as Error).name === 'AbortError') return
         console.error('Failed to fetch profile:', error)
       }
     }
     fetchProfile()
+    return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -146,12 +155,16 @@ export default function StudentDashboard() {
   })
   const [statsLoading, setStatsLoading] = useState(true)
 
+  // Real-time assignment stats — H1: AbortController cleanup
   useEffect(() => {
+    const controller = new AbortController()
     const fetchStats = async () => {
       try {
         const res = await apiFetch(getApiUrl('student/clap-assignments'), {
-          headers: getAuthHeaders()
+          headers: getAuthHeaders(),
+          signal: controller.signal,
         })
+        if (controller.signal.aborted) return
         if (res.ok) {
           const data = await res.json()
           const list: any[] = data.assignments || []
@@ -163,12 +176,14 @@ export default function StudentDashboard() {
           })
         }
       } catch (e) {
+        if ((e as Error).name === 'AbortError') return
         console.error('Stats fetch error:', e)
       } finally {
-        setStatsLoading(false)
+        if (!controller.signal.aborted) setStatsLoading(false)
       }
     }
     fetchStats()
+    return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -178,8 +193,12 @@ export default function StudentDashboard() {
   const lastUpdated = null as Date | null
   const refresh = () => {}
 
+  // H4: double-submit guard — prevents rapid double-click on Start Assessment
   const handleStartSession = () => {
+    if (sessionStarting) return
+    setSessionStarting(true)
     setSessionStarted(true)
+    router.push('/student/clap-tests')
   }
 
   const handleStartTest = (_testId: string) => {
@@ -211,6 +230,13 @@ export default function StudentDashboard() {
 
   return (
     <div className="min-h-dvh bg-background">
+      {/* H2: Offline banner */}
+      {!isOnline && (
+        <div className="bg-red-600 text-white text-sm font-medium text-center py-2 px-4 flex items-center justify-center gap-2">
+          <WifiOff className="w-4 h-4 flex-shrink-0" />
+          No internet connection — please reconnect to continue your session safely.
+        </div>
+      )}
       {/* Header */}
       <header className="sticky top-0 z-50 glass border-b border-border">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
@@ -358,18 +384,35 @@ export default function StudentDashboard() {
                   <span>Tab switching will be monitored</span>
                 </div>
               </div>
-              <Button variant="hero" size="xl" onClick={handleStartSession} className="w-full sm:w-auto h-14 text-base sm:text-lg">
-                Start Assessment Session
+              {/* H4: Disabled during navigation to prevent double-click */}
+              <Button
+                variant="hero"
+                size="xl"
+                onClick={handleStartSession}
+                disabled={sessionStarting}
+                className="w-full sm:w-auto h-14 text-base sm:text-lg disabled:opacity-70"
+              >
+                {sessionStarting ? 'Opening…' : 'Start Assessment Session'}
                 <ArrowRight className="ml-2 w-5 h-5" />
               </Button>
             </CardContent>
           </Card>
         ) : (
           <div className="space-y-6">
-            {/* Loading State */}
-            {isLoading && !dashboardData && (
-              <div className="flex justify-center py-12">
-                <LoadingSpinner />
+            {/* M1: Skeleton loading state for stat cards */}
+            {isLoading && (
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 animate-pulse">
+                {[1,2,3,4].map(i => (
+                  <div key={i} className="rounded-xl border bg-white p-4">
+                    <div className="flex items-center gap-3 mb-2">
+                      <div className="w-10 h-10 bg-gray-100 rounded-lg flex-shrink-0" />
+                      <div className="flex-1">
+                        <div className="h-6 bg-gray-200 rounded w-8 mb-1" />
+                        <div className="h-3 bg-gray-100 rounded w-16" />
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
 

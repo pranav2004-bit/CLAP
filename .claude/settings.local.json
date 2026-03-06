@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs grep -l \"clap_test\\\\|student_clap\")",
+      "Bash(xargs cat)",
+      "Bash(python manage.py makemigrations api --name=\"add_component_attempt\")",
+      "Bash(SECRET_KEY=\"temp-migration-key-do-not-use-in-prod-12345\" python manage.py makemigrations api --name=\"add_component_attempt\")",
+      "Bash(ls \"C:\\\\Users\\\\pranavnath\\\\OneDrive\\\\Desktop\\\\CLAP\\\\django-backend\\\\api\\\\migrations\"\" 2>/dev/null || echo \"NOT FOUND \")",
+      "Bash(git add django-backend/Dockerfile django-backend/clap_backend/celery.py django-backend/api/views/auth.py django-backend/api/migrations/0005_timer_controls.py django-backend/api/migrations/0006_sync_model_state.py lib/api-config.ts lib/supabase.ts \"app/student/clap-tests/[assignment_id]/[type]/page.tsx\")",
+      "Bash(git commit:*)",
+      "Bash(git push origin main)",
+      "Bash(npx tsc --noEmit --skipLibCheck)",
+      "Bash(npx tsc --noEmit --skipLibCheck --project \"C:\\\\Users\\\\pranavnath\\\\OneDrive\\\\Desktop\\\\CLAP\\\\tsconfig.json\")",
+      "Bash(git add hooks/useAntiCheat.ts hooks/useNetworkAwareSave.ts app/globals.css app/login/page.tsx app/student/dashboard/page.tsx app/student/clap-tests/page.tsx \"app/student/clap-tests/[assignment_id]/page.tsx\" \"app/student/clap-tests/[assignment_id]/[type]/page.tsx\" django-backend/api/models.py django-backend/api/views/student/clap_attempt.py django-backend/api/migrations/0007_add_assignment_metadata.py)",
+      "Bash(git add app/about/page.tsx \"app/admin/dashboard/clap-tests/[id]/[type]/page.tsx\" \"app/admin/dashboard/clap-tests/[id]/results/page.tsx\" app/admin/layout.tsx app/admin/tests/page.tsx app/layout.tsx app/page.tsx app/student/profile/page.tsx components/AudioBlockPlayer.tsx components/StatsOverview.tsx components/admin/TestPreviewModal.tsx components/ui/button.tsx django-backend/api/urls.py django-backend/api/utils/jwt_utils.py \"django-backend/api/views/admin/audio_upload.py\" \"django-backend/api/views/admin/clap_components.py\" \"django-backend/api/views/admin/clap_test_detail.py\" \"django-backend/api/views/admin/clap_tests.py\" docker-compose.yml middleware.ts package-lock.json package.json app/admin-login/ \"app/admin/dashboard/clap-tests/[id]/bundle-preview/\" \"app/admin/dashboard/clap-tests/[id]/sets/\" \"django-backend/api/views/admin/clap_test_sets.py\" \"django-backend/api/views/admin/retest_management.py\" \"django-backend/api/views/admin/set_distribution.py\" \"django-backend/api/views/admin/timer_management.py\" \"django-backend/api/views/student/timer_status.py\")",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(docker compose exec django python manage.py makemigrations --check --dry-run)",
+      "Bash(docker compose exec django python manage.py makemigrations)",
+      "Bash(docker compose exec django python manage.py migrate)",
+      "Bash(git add django-backend/api/migrations/0008_adminaudiofile_set_item_alter_adminaudiofile_item.py)",
+      "Bash(docker cp clap-django-1:/app/api/migrations/0008_adminaudiofile_set_item_alter_adminaudiofile_item.py /c/Users/pranavnath/OneDrive/Desktop/CLAP/django-backend/api/migrations/)",
+      "Bash(ls -la /c/Users/pranavnath/OneDrive/Desktop/CLAP/django-backend/*.example /c/Users/pranavnath/OneDrive/Desktop/CLAP/django-backend/.env*)",
+      "Bash(docker compose -f \"C:\\\\Users\\\\pranavnath\\\\OneDrive\\\\Desktop\\\\CLAP\\\\docker-compose.yml\" exec django python -c \"from django.conf import settings; print\\(''TRUST_X_USER_ID_HEADER:'', settings.TRUST_X_USER_ID_HEADER\\)\")",
+      "Bash(docker cp clap-django-1:/app/api/migrations/0009_alter_assessmentsubmission_status.py \"C:\\\\Users\\\\pranavnath\\\\OneDrive\\\\Desktop\\\\CLAP\\\\django-backend\\\\api\\\\migrations\\\\0009_alter_assessmentsubmission_status.py\")",
+      "Bash(xargs grep -l \"timer\\\\|exit\\\\|live\")",
+      "Bash(xargs grep -l -i \"timer\\\\|live\\\\|exit\")",
+      "Bash(ls \"C:\\\\Users\\\\pranavnath\\\\OneDrive\\\\Desktop\\\\CLAP\\\\.claude\\\\worktrees\\\\sweet-montalcini\\\\django-backend\\\\api\\\\views\\\\admin\"\" 2>&1 && ls \"C:UserspranavnathOneDriveDesktopCLAP.claudeworktreessweet-montalcinidjango-backendapiviewsstudent\"\")",
+      "Bash(xargs grep -l \"start.*test\\\\|stop.*test\")",
+      "Bash(docker compose --project-directory \"C:\\\\Users\\\\pranavnath\\\\OneDrive\\\\Desktop\\\\CLAP\" exec -T django python manage.py check)",
+      "Bash(docker compose -f \"C:\\\\Users\\\\pranavnath\\\\OneDrive\\\\Desktop\\\\CLAP\\\\docker-compose.yml\" exec django python manage.py check)",
+      "Bash(docker compose exec django python manage.py makemigrations --merge --no-input)",
+      "Bash(docker cp \"clap-django-1:/app/api/migrations/0010_merge_20260306_1315.py\" \"C:/Users/pranavnath/OneDrive/Desktop/CLAP/django-backend/api/migrations/0010_merge_20260306_1315.py\")",
+      "Bash(docker compose up --build -d django)",
+      "Bash(grep -A 10 \"handleSaveAnswer\\\\|auto-save\\\\|autosave\" /c/Users/pranavnath/OneDrive/Desktop/CLAP/.claude/worktrees/sweet-montalcini/app/student/clap-tests/*/page.tsx)",
+      "Bash(xargs grep -l \"requestFullscreen\\\\|visibilitychange\")",
+      "Bash(xargs grep -l \"ios-test-fullscreen\\\\|exitFullscreen\\\\|strike\\\\|oncopy\\\\|onpaste\")",
+      "Bash(xargs grep -l \"ios-test-fullscreen\")",
+      "Bash(grep -n \"getNextPollMs\\\\|adaptive\\\\|polling\" /c/Users/pranavnath/OneDrive/Desktop/CLAP/.claude/worktrees/sweet-montalcini/app/student/clap-tests/[assignment_id]/page.tsx)"
+    ]
+  }
+}
