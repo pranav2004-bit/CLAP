@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { ArrowLeft, Save, Plus, Trash2, GripVertical, FileText, Mic, Image as ImageIcon, CheckSquare, Eye, X, Loader2, ArrowUp, ArrowDown, Check } from 'lucide-react'
 import { toast } from 'sonner'
-import { getApiUrl, apiFetch } from '@/lib/api-config'
+import { getApiUrl, apiFetch, getAuthHeaders } from '@/lib/api-config'
 import { TestPreviewModal } from '@/components/admin/TestPreviewModal'
 
 // Question classification helper
@@ -68,9 +68,7 @@ function ClapTestEditorContent() {
                 // So `foundComponent.id` is the component ID! 
 
                 const itemsResponse = await apiFetch(getApiUrl(`admin/clap-components/${foundComponent.id}/items`), {
-                    headers: {
-                        'x-user-id': localStorage.getItem('user_id') || ''
-                    }
+                    headers: getAuthHeaders()
                 })
                 const itemsData = await itemsResponse.json()
 
@@ -109,7 +107,7 @@ function ClapTestEditorContent() {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'x-user-id': localStorage.getItem('user_id') || ''
+                    ...getAuthHeaders()
                 },
                 body: JSON.stringify(newItem)
             })
@@ -135,9 +133,7 @@ function ClapTestEditorContent() {
         try {
             const response = await apiFetch(getApiUrl(`admin/clap-items/${itemId}`), {
                 method: 'DELETE',
-                headers: {
-                    'x-user-id': localStorage.getItem('user_id') || ''
-                }
+                headers: getAuthHeaders()
             })
 
             if (response.ok) {
@@ -173,7 +169,7 @@ function ClapTestEditorContent() {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'x-user-id': localStorage.getItem('user_id') || ''
+                    ...getAuthHeaders()
                 },
                 body: JSON.stringify({ item_ids: newItems.map(i => i.id) })
             })
@@ -221,7 +217,7 @@ function ClapTestEditorContent() {
                 method: 'PATCH',
                 headers: {
                     'Content-Type': 'application/json',
-                    'x-user-id': localStorage.getItem('user_id') || ''
+                    ...getAuthHeaders()
                 },
                 body: JSON.stringify(payload)
             })
@@ -256,11 +252,11 @@ function ClapTestEditorContent() {
         formData.append('audio', selectedFile)
 
         try {
-            const response = await fetch(
+            const response = await apiFetch(
                 getApiUrl(`admin/clap-items/${itemId}/upload-audio`),
                 {
                     method: 'POST',
-                    headers: { 'x-user-id': localStorage.getItem('user_id') || '' },
+                    headers: getAuthHeaders(),
                     body: formData
                 }
             )
@@ -285,11 +281,11 @@ function ClapTestEditorContent() {
         if (!confirm('Delete audio file? Students will not be able to play it.')) return
 
         try {
-            const response = await fetch(
+            const response = await apiFetch(
                 getApiUrl(`admin/clap-items/${itemId}/audio`),
                 {
                     method: 'DELETE',
-                    headers: { 'x-user-id': localStorage.getItem('user_id') || '' }
+                    headers: getAuthHeaders()
                 }
             )
 
