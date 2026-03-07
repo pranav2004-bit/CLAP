@@ -29,7 +29,7 @@ import {
   Printer,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { getApiUrl } from '@/lib/api-config'
+import { getApiUrl, apiFetch, getAuthHeaders } from '@/lib/api-config'
 import { getGradeInfo, formatDuration } from '@/lib/grade-utils'
 
 interface IntegrityFlags {
@@ -126,9 +126,9 @@ export default function ClapTestResultsPage() {
         params.set('sort_order', sortOrder)
       }
 
-      const response = await fetch(
+      const response = await apiFetch(
         getApiUrl(`admin/clap-tests/${testId}/results?${params.toString()}`),
-        { headers: { 'x-user-id': localStorage.getItem('user_id') || '' } }
+        { headers: getAuthHeaders() }
       )
       const data = await response.json()
 
@@ -143,10 +143,8 @@ export default function ClapTestResultsPage() {
         })
         setTotalPages(data.pagination.total_pages)
         setTotalCount(data.pagination.total_count)
-      } else if (response.status === 401) {
-        toast.error('Unauthorized. Please log in again.')
-        router.push('/admin-login')
-      } else {
+      } else if (response.status !== 401) {
+        // 401 is already handled by apiFetch (auto-refresh + redirect if needed)
         setError(data.error || 'Failed to load results')
       }
     } catch (err) {
@@ -199,9 +197,9 @@ export default function ClapTestResultsPage() {
           params.set('sort_order', sortOrder)
         }
 
-        const response = await fetch(
+        const response = await apiFetch(
           getApiUrl(`admin/clap-tests/${testId}/results?${params.toString()}`),
-          { headers: { 'x-user-id': localStorage.getItem('user_id') || '' } }
+          { headers: getAuthHeaders() }
         )
         const data = await response.json()
 

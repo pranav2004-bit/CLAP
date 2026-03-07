@@ -76,9 +76,16 @@ EXPOSE 8000
 
 # ── Startup ───────────────────────────────────────────────────────
 # collectstatic is run here so WhiteNoise can serve compressed assets.
-# migrate applies any pending migrations (safe: Django migrations are idempotent).
+# migrate retries up to 10 times (10 s apart) to survive transient DNS/DB
+#   failures that occur after WSL2 sleep/wake or a cold Supabase connection.
 # gunicorn reads config from gunicorn.conf.py (workers, threads, timeouts).
 CMD ["sh", "-c", \
      "python manage.py collectstatic --noinput && \
-      python manage.py migrate --noinput && \
+      attempt=0; \
+      until python manage.py migrate --noinput; do \
+        attempt=$((attempt+1)); \
+        if [ $attempt -ge 10 ]; then echo 'migrate failed after 10 attempts, aborting'; exit 1; fi; \
+        echo \"migrate attempt $attempt failed, retrying in 10s...\"; \
+        sleep 10; \
+      done && \
       gunicorn clap_backend.wsgi:application --config gunicorn.conf.py"]
