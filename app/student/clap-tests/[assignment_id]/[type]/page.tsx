@@ -1,11 +1,11 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
-import { ArrowLeft, Clock, Save, ChevronRight, ChevronLeft, CheckCircle, AlertTriangle, Wifi, WifiOff } from 'lucide-react'
+import { ChevronRight, ChevronLeft, CheckCircle, WifiOff } from 'lucide-react'
 import { toast } from 'sonner'
 import { getApiUrl, getAuthHeaders, apiFetch } from '@/lib/api-config'
 import AudioRecorderItem from '@/components/audio-recorder'
@@ -45,40 +45,11 @@ export default function ClapTestTakingPage() {
     const [currentItemIndex, setCurrentItemIndex] = useState(0)
     const [answers, setAnswers] = useState<Record<string, any>>({})
     const [isLoading, setIsLoading] = useState(true)
-    const [timeLeft, setTimeLeft] = useState(0)
     const [componentId, setComponentId] = useState<string | null>(null)
 
     // H3: Auto-save status indicator
     const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
     const saveStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-    // C2: Server-anchored timer — clock offset calibrated from X-Server-Time response header
-    const clockOffsetRef = useRef(0)  // ms: server_time - client_time
-
-    // Server-anchored timer state
-    const [serverDeadline, setServerDeadline] = useState<Date | null>(null)
-    const [isExpired, setIsExpired] = useState(false)
-    const autoSubmitFiredRef = useRef(false)
-
-    // Auto-submit when timer expires — no confirm dialog
-    const handleAutoSubmit = useCallback(async () => {
-        if (autoSubmitFiredRef.current) return
-        autoSubmitFiredRef.current = true
-
-        try {
-            const compId = componentId
-            if (compId) {
-                await fetchWithRetry(
-                    getApiUrl(`student/clap-assignments/${params.assignment_id}/components/${compId}/finish`),
-                    { method: 'POST', headers: { 'Content-Type': 'application/json', ...getAuthHeaders() } }
-                )
-            }
-            toast.warning('Time is up! Your answers have been submitted.')
-            router.push(`/student/clap-tests/${params.assignment_id}`)
-        } catch {
-            toast.error('Auto-submit failed. Please click Submit manually immediately.')
-        }
-    }, [componentId, params.assignment_id, router])
 
     // Fetch Items — H1: AbortController prevents setState on unmounted component
     useEffect(() => {
@@ -103,7 +74,7 @@ export default function ClapTestTakingPage() {
 
                 setComponentId(component.id)
 
-                // 3. Fetch Items — server creates ComponentAttempt + returns server_deadline
+                // 3. Fetch Items — server creates ComponentAttempt for server-side deadline enforcement
                 const itemsResponse = await apiFetch(
                     getApiUrl(`student/clap-assignments/${params.assignment_id}/components/${component.id}/items`),
                     { headers: getAuthHeaders(), signal: controller.signal }
@@ -113,32 +84,6 @@ export default function ClapTestTakingPage() {
 
                 if (itemsResponse.ok) {
                     setItems(itemsData.items)
-
-                    // C2: Calibrate clock offset from X-Server-Time header (sent by Django)
-                    const serverTimeStr = itemsResponse.headers.get('X-Server-Time')
-                    if (serverTimeStr) {
-                        clockOffsetRef.current = new Date(serverTimeStr).getTime() - Date.now()
-                    }
-
-                    // Sync timer from server deadline (authoritative source of truth)
-                    if (itemsData.component?.server_deadline) {
-                        const deadline = new Date(itemsData.component.server_deadline)
-                        setServerDeadline(deadline)
-
-                        // If already expired when page loads (e.g. student returns after tab crash)
-                        if (itemsData.component.is_expired) {
-                            setIsExpired(true)
-                            setTimeLeft(0)
-                        } else {
-                            // C2: Use clock-offset-adjusted time calculation
-                            const adjusted = Date.now() + clockOffsetRef.current
-                            const remaining = Math.max(0, Math.floor((deadline.getTime() - adjusted) / 1000))
-                            setTimeLeft(remaining)
-                        }
-                    } else {
-                        // Fallback: use component duration if server deadline not yet returned
-                        setTimeLeft(component.duration * 60)
-                    }
 
                     // Load saved answers
                     const savedAnswers: Record<string, any> = {}
@@ -167,46 +112,6 @@ export default function ClapTestTakingPage() {
 
         return () => controller.abort()  // H1: cleanup on unmount
     }, [params.assignment_id, params.type])
-
-    // C2: Server-anchored countdown timer
-    // Uses clock offset to account for client/server time drift.
-    // Cannot be cheated by modifying localStorage or React state in DevTools.
-    useEffect(() => {
-        if (isLoading || !serverDeadline) return
-        if (isExpired) return
-
-        const updateTimer = () => {
-            // C2: Apply server clock offset to client time
-            const adjusted = Date.now() + clockOffsetRef.current
-            const remaining = Math.max(0, Math.floor((serverDeadline.getTime() - adjusted) / 1000))
-            setTimeLeft(remaining)
-
-            if (remaining === 0 && !autoSubmitFiredRef.current) {
-                setIsExpired(true)
-                handleAutoSubmit()
-            }
-        }
-
-        updateTimer() // immediate tick on mount
-        const timer = setInterval(updateTimer, 1000)
-        return () => clearInterval(timer)
-    }, [isLoading, serverDeadline, isExpired, handleAutoSubmit])
-
-    // If already expired on initial load (tab crash recovery)
-    useEffect(() => {
-        if (!isLoading && isExpired && !autoSubmitFiredRef.current) {
-            handleAutoSubmit()
-        }
-    }, [isLoading, isExpired, handleAutoSubmit])
-
-    const formatTime = (seconds: number) => {
-        const mins = Math.floor(seconds / 60)
-        const secs = seconds % 60
-        return `${mins}:${secs.toString().padStart(2, '0')}`
-    }
-
-    const isTimeCritical = timeLeft <= 60 && timeLeft > 0
-    const isTimeWarning = timeLeft <= 300 && timeLeft > 60
 
     const handleSaveAnswer = async (val: any) => {
         const currentItem = items[currentItemIndex]
@@ -248,7 +153,6 @@ export default function ClapTestTakingPage() {
 
     // M4: Manual submit with retry logic for critical network failures
     const handleSubmit = async () => {
-        if (isExpired) return // Already auto-submitted
         if (!confirm('Submit test?')) return
 
         try {
@@ -364,33 +268,9 @@ export default function ClapTestTakingPage() {
                          saveStatus === 'error'  ? '⚠ Save failed' : '·'}
                     </span>
 
-                    {/* Timer display — color shifts based on urgency */}
-                    {!isExpired ? (
-                        <div className={`px-4 py-2 rounded-full font-mono font-medium flex items-center gap-2 ${
-                            isTimeCritical
-                                ? 'bg-red-100 text-red-700 animate-pulse'
-                                : isTimeWarning
-                                ? 'bg-yellow-100 text-yellow-700'
-                                : 'bg-indigo-50 text-indigo-700'
-                        }`}>
-                            <Clock className="w-4 h-4" />
-                            {formatTime(timeLeft)}
-                        </div>
-                    ) : (
-                        <div className="bg-red-100 text-red-700 px-4 py-2 rounded-full font-medium flex items-center gap-2">
-                            <AlertTriangle className="w-4 h-4" />
-                            Time Expired
-                        </div>
-                    )}
-
-                    {/* Submit button — disabled and replaced with message after auto-submit */}
-                    {!isExpired ? (
-                        <Button onClick={handleSubmit} className="bg-green-600 hover:bg-green-700">
-                            Submit Test
-                        </Button>
-                    ) : (
-                        <span className="text-sm text-red-600 font-medium">Auto-submitted</span>
-                    )}
+                    <Button onClick={handleSubmit} className="bg-green-600 hover:bg-green-700">
+                        Submit Test
+                    </Button>
                 </div>
             </header>
 
@@ -432,12 +312,12 @@ export default function ClapTestTakingPage() {
                                             {currentItem.content.options?.map((opt: string, index: number) => (
                                                 <div
                                                     key={index}
-                                                    className={`p-4 rounded-lg border-2 transition-all ${isExpired ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'} ${
+                                                    className={`p-4 rounded-lg border-2 transition-all cursor-pointer ${
                                                         answers[currentItem.id] === index
                                                             ? 'border-indigo-500 bg-indigo-50 shadow-sm'
                                                             : 'border-gray-200 hover:border-gray-300'
                                                     }`}
-                                                    onClick={() => !isExpired && handleSaveAnswer(index)}
+                                                    onClick={() => handleSaveAnswer(index)}
                                                 >
                                                     <div className="flex items-center gap-3">
                                                         <div className={`w-6 h-6 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${
@@ -461,13 +341,12 @@ export default function ClapTestTakingPage() {
                                         {/* M3: Copy-paste prevention on writing/subjective types */}
                                         <Textarea
                                             value={answers[currentItem.id] || ''}
-                                            onChange={(e) => !isExpired && handleSaveAnswer(e.target.value)}
+                                            onChange={(e) => handleSaveAnswer(e.target.value)}
                                             onCopy={preventCopyPaste}
                                             onPaste={preventCopyPaste}
                                             onCut={preventCopyPaste}
                                             placeholder="Type your answer here..."
                                             className="text-base sm:text-lg leading-relaxed p-4 min-h-[150px] sm:min-h-[240px] resize-y"
-                                            disabled={isExpired}
                                         />
                                         <p className="text-sm text-gray-500 text-right">
                                             Min words: {currentItem.content.min_words || 50}
@@ -496,13 +375,11 @@ export default function ClapTestTakingPage() {
                                         maxDuration={currentItem.content.max_duration || 300}
                                         savedAudioUrl={answers[currentItem.id]?.file_url}
                                         onSave={(data) => {
-                                            if (!isExpired) {
-                                                handleSaveAnswer({
-                                                    type: 'audio',
-                                                    file_url: data.audio_response.file_url,
-                                                    duration: data.audio_response.duration
-                                                })
-                                            }
+                                            handleSaveAnswer({
+                                                type: 'audio',
+                                                file_url: data.audio_response.file_url,
+                                                duration: data.audio_response.duration
+                                            })
                                         }}
                                     />
                                 )}
