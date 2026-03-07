@@ -7,7 +7,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
 import { ChevronRight, ChevronLeft, CheckCircle, WifiOff } from 'lucide-react'
 import { toast } from 'sonner'
-import { getApiUrl, getAuthHeaders, apiFetch } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders, apiFetch, silentFetch } from '@/lib/api-config'
 import AudioRecorderItem from '@/components/audio-recorder'
 import AudioBlockPlayer from '@/components/AudioBlockPlayer'
 import { useNetworkStatus } from '@/hooks/useNetworkStatus'
@@ -204,15 +204,16 @@ export default function ClapTestTakingPage() {
     const preventCopyOrCut = isWritingType
         ? (e: React.ClipboardEvent) => { e.preventDefault() }
         : undefined
-    // Paste also fires a server-side malpractice event (fire-and-forget)
+    // Paste also fires a server-side malpractice event (fire-and-forget).
+    // Uses silentFetch so a 401 on this call NEVER logs the student out mid-exam.
     const preventPaste = isWritingType
         ? (e: React.ClipboardEvent) => {
             e.preventDefault()
-            apiFetch(getApiUrl(`student/clap-assignments/${params.assignment_id}/malpractice-event`), {
+            silentFetch(getApiUrl(`student/clap-assignments/${params.assignment_id}/malpractice-event`), {
                 method: 'POST',
                 headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
                 body: JSON.stringify({ event_type: 'paste_attempt', meta: { component_type: params.type } }),
-            }).catch(() => { /* silent */ })
+            }).catch(() => { /* network error — silent */ })
           }
         : undefined
 

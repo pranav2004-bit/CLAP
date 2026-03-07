@@ -46,6 +46,7 @@ urlpatterns = [
 
     # Auth
     path('auth/login', auth.login, name='auth_login'),
+    path('auth/refresh', auth.refresh_token, name='auth_refresh'),
 
     # ============================================
     # ADMIN - BATCH MANAGEMENT (5 endpoints)

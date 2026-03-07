@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ArrowLeft, Headphones, Mic, BookOpen, PenTool, Brain, CheckCircle, PlayCircle, Loader2, Download, Clock, AlertTriangle, LogOut, WifiOff } from 'lucide-react'
 import { toast } from 'sonner'
-import { getApiUrl, getAuthHeaders, apiFetch } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders, apiFetch, silentFetch } from '@/lib/api-config'
 import { useAntiCheat } from '@/hooks/useAntiCheat'
 import { useNetworkStatus } from '@/hooks/useNetworkStatus'
 
@@ -66,13 +66,14 @@ export default function StudentClapTestDetailPage() {
   // iOS Safari detection (no native requestFullscreen)
   const isIOS = typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent)
 
-  // Fire-and-forget malpractice event — never blocks the student session
+  // Fire-and-forget malpractice event — uses silentFetch so a 401 on this
+  // background call NEVER kicks the student out of their active exam.
   const reportMalpractice = useCallback((eventType: string, meta: Record<string, unknown> = {}) => {
-    apiFetch(getApiUrl(`student/clap-assignments/${params.assignment_id}/malpractice-event`), {
+    silentFetch(getApiUrl(`student/clap-assignments/${params.assignment_id}/malpractice-event`), {
       method: 'POST',
       headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ event_type: eventType, meta }),
-    }).catch(() => { /* silent — integrity log, never interrupts exam */ })
+    }).catch(() => { /* network error — silent, integrity log only */ })
   }, [params.assignment_id])
 
   const { requestFullscreen, exitFullscreen } = useAntiCheat({

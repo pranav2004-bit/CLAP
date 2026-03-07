@@ -151,6 +151,71 @@ def _issue_jwt(user: User) -> str | None:
         return None
 
 
+# ── Token refresh view ────────────────────────────────────────────────────────
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def refresh_token(request):
+    """
+    POST /api/auth/refresh
+    Authorization: Bearer <current_access_token>
+
+    Re-issues a fresh access token for the same user without requiring the password.
+    Accepts tokens up to 30 minutes past their expiry (grace window for network hiccups
+    and brief server restarts).  Returns 401 if the token is older than that, malformed,
+    or the user account has been disabled.
+
+    This is the backend half of the frontend auto-refresh that prevents users from being
+    unexpectedly logged out mid-session by a transient 401.
+    """
+    try:
+        import jwt as pyjwt
+    except ImportError:
+        logger.warning('Auth: PyJWT not installed — token refresh unavailable')
+        return JsonResponse({'error': 'JWT not available'}, status=500)
+
+    auth_header = request.headers.get('Authorization', '')
+    if not auth_header.startswith('Bearer '):
+        return JsonResponse({'error': 'Missing Bearer token'}, status=401)
+
+    token = auth_header.split(' ', 1)[1].strip()
+    if not token:
+        return JsonResponse({'error': 'Empty token'}, status=401)
+
+    try:
+        # Allow up to 30 minutes past expiry — covers clock drift and brief outages
+        payload = pyjwt.decode(
+            token,
+            settings.SECRET_KEY,
+            algorithms=['HS256'],
+            leeway=timedelta(minutes=30),
+        )
+        user_id = payload.get('sub') or payload.get('user_id')
+        if not user_id:
+            return JsonResponse({'error': 'Invalid token payload'}, status=401)
+
+        user = User.objects.get(id=user_id)
+        if not user.is_active:
+            return JsonResponse({'error': 'Account disabled'}, status=403)
+
+        new_token = _issue_jwt(user)
+        access_minutes = getattr(settings, 'JWT_ACCESS_TOKEN_MINUTES', 60)
+        return JsonResponse({
+            'access_token': new_token,
+            'token_type': 'Bearer',
+            'expires_in': access_minutes * 60,
+        })
+
+    except pyjwt.ExpiredSignatureError:
+        # Token is older than the 30-minute grace window — must re-login
+        return JsonResponse({'error': 'Token too old to refresh — please log in again'}, status=401)
+    except (pyjwt.InvalidTokenError, User.DoesNotExist):
+        return JsonResponse({'error': 'Invalid token'}, status=401)
+    except Exception as exc:
+        logger.error('Token refresh error: %s', exc, exc_info=True)
+        return JsonResponse({'error': 'Refresh failed'}, status=500)
+
+
 # ── Login view ────────────────────────────────────────────────────────────────
 
 @csrf_exempt

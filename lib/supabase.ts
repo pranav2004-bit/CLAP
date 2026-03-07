@@ -97,6 +97,10 @@ export const signIn = async (identifier: string, password: string, role: 'studen
     // Store JWT access token — used by getAuthHeaders() for all subsequent API calls
     if (data.access_token) {
       localStorage.setItem('access_token', data.access_token)
+      // Store expiry so proactive refresh can fire before the token dies
+      if (data.expires_in) {
+        localStorage.setItem('token_expires_at', String(Date.now() + data.expires_in * 1000))
+      }
     }
 
     return {
