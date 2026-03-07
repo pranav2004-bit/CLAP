@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { ArrowLeft, Save, Plus, Trash2, GripVertical, FileText, Mic, Image as ImageIcon, CheckSquare, Eye, Settings, Clock, X, Loader2, ArrowUp, ArrowDown, Check } from 'lucide-react'
+import { ArrowLeft, Save, Plus, Trash2, GripVertical, FileText, Mic, Image as ImageIcon, CheckSquare, Eye, X, Loader2, ArrowUp, ArrowDown, Check } from 'lucide-react'
 import { toast } from 'sonner'
 import { getApiUrl, apiFetch } from '@/lib/api-config'
 import { TestPreviewModal } from '@/components/admin/TestPreviewModal'
@@ -41,9 +41,6 @@ function ClapTestEditorContent() {
     const [items, setItems] = useState<any[]>([])
     const [showAddMenu, setShowAddMenu] = useState(false)
     const [showPreview, setShowPreview] = useState(false)
-    const [showSettings, setShowSettings] = useState(false)
-    const [testDuration, setTestDuration] = useState(0)
-    const [isTimeLimitEnabled, setIsTimeLimitEnabled] = useState(false)
 
     // Initialize and fetch data
     useEffect(() => {
@@ -64,10 +61,6 @@ function ClapTestEditorContent() {
                 if (!foundComponent) throw new Error('Component not found')
 
                 setComponent(foundComponent)
-                if (foundComponent.duration) {
-                    setTestDuration(foundComponent.duration)
-                    setIsTimeLimitEnabled(foundComponent.duration > 0)
-                }
 
                 // 2. Fetch items for this component
                 // Note: The `foundComponent` currently might just have basic info.
@@ -317,45 +310,6 @@ function ClapTestEditorContent() {
     }
 
 
-    const [isSavingSettings, setIsSavingSettings] = useState(false)
-
-    const handleSaveSettings = async () => {
-        try {
-            if (!component) return
-            setIsSavingSettings(true)
-
-            const finalDuration = isTimeLimitEnabled ? testDuration : 0
-
-            // Optimistic update
-            setComponent({ ...component, duration: finalDuration })
-
-            // We are using the component ID to update settings
-            // Assuming endpoint admin/clap-components/[id] accepts PATCH
-            const response = await apiFetch(getApiUrl(`admin/clap-components/${component.id}`), {
-                method: 'PATCH',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'x-user-id': localStorage.getItem('user_id') || ''
-                },
-                body: JSON.stringify({
-                    duration: finalDuration
-                })
-            })
-
-            if (response.ok) {
-                toast.success('Test settings saved')
-                setShowSettings(false)
-            } else {
-                toast.error('Failed to save settings')
-            }
-        } catch (error) {
-            console.error('Error saving settings:', error)
-            toast.error('Network error')
-        } finally {
-            setIsSavingSettings(false)
-        }
-    }
-
     const getDefaultContent = (type: string) => {
         switch (type) {
             case 'text_block': return { text: 'Enter instructions or reading passage here...' }
@@ -395,76 +349,6 @@ function ClapTestEditorContent() {
                     <Button size="sm" onClick={() => toast.success('All changes saved')}>Saved</Button>
                 </div>
             </header>
-
-            {/* Settings Modal */}
-            {showSettings && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-                    <div className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
-                        <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-                            <h3 className="text-xl font-bold text-gray-900">Test Settings</h3>
-                            <Button variant="ghost" size="sm" onClick={() => setShowSettings(false)}>
-                                <X className="w-5 h-5" />
-                            </Button>
-                        </div>
-                        <div className="p-6 space-y-6">
-                            <div className="flex items-center justify-between">
-                                <Label htmlFor="time-limit-toggle" className="text-base font-medium">Enable Time Limit</Label>
-                                <div className="flex items-center gap-2">
-                                    <input
-                                        id="time-limit-toggle"
-                                        type="checkbox"
-                                        checked={isTimeLimitEnabled}
-                                        onChange={(e) => setIsTimeLimitEnabled(e.target.checked)}
-                                        className="w-5 h-5 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
-                                    />
-                                </div>
-                            </div>
-
-                            {isTimeLimitEnabled && (
-                                <div className="space-y-2 animate-in fade-in slide-in-from-top-2 duration-200">
-                                    <Label htmlFor="duration" className="text-sm font-medium text-gray-700">Duration (in minutes)</Label>
-                                    <div className="relative">
-                                        <Clock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                                        <Input
-                                            id="duration"
-                                            type="number"
-                                            min="1"
-                                            value={testDuration}
-                                            onChange={(e) => setTestDuration(parseInt(e.target.value) || 0)}
-                                            className="pl-10"
-                                            placeholder="e.g. 30"
-                                        />
-                                    </div>
-                                    <p className="text-xs text-gray-500">Students will have this much time to complete the test once started.</p>
-                                </div>
-                            )}
-
-                            {!isTimeLimitEnabled && (
-                                <div className="p-4 bg-gray-50 rounded-lg border border-gray-100 text-sm text-gray-600">
-                                    <p>Students can take as much time as they need to complete this test.</p>
-                                </div>
-                            )}
-                        </div>
-                        <div className="p-6 border-t bg-gray-50 flex justify-end gap-3">
-                            <Button variant="outline" onClick={() => setShowSettings(false)}>Cancel</Button>
-                            <Button
-                                onClick={handleSaveSettings}
-                                disabled={isSavingSettings}
-                                className="bg-indigo-600 hover:bg-indigo-700 text-white min-w-[140px]"
-                            >
-                                {isSavingSettings ? (
-                                    <>
-                                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                        Saving...
-                                    </>
-                                ) : (
-                                    'Save Changes'
-                                )}
-                            </Button>
-                        </div>
-                    </div>
-                </div>
-            )}
 
             <main className="flex-1 container mx-auto p-6 max-w-4xl">
 
@@ -776,7 +660,7 @@ function ClapTestEditorContent() {
                 // But my Preview Modal handles logic based on these string types.
                 items={items}
                 testTitle={component?.title || 'Test Preview'}
-                duration={isTimeLimitEnabled ? testDuration : 0}
+                duration={0}
             />
         </div>
     )

@@ -654,7 +654,6 @@ export default function AdminTestsPage() {
         id: comp.id,
         name: comp.name,
         type: comp.type,
-        duration: comp.duration ?? 0,
         max_marks: comp.max_marks ?? 10,
       }))
     )
@@ -679,7 +678,7 @@ export default function AdminTestsPage() {
         throw new Error(err.error || 'Failed to update test')
       }
 
-      // 2. Update each component's duration and max_marks
+      // 2. Update each component's max_marks
       for (const comp of configComponents) {
         const compRes = await apiFetch(getApiUrl(`admin/clap-components/${comp.id}`), {
           method: 'PATCH',
@@ -688,7 +687,6 @@ export default function AdminTestsPage() {
             ...getAuthHeaders()
           },
           body: JSON.stringify({
-            duration: comp.duration,
             max_marks: comp.max_marks
           })
         })
@@ -708,7 +706,6 @@ export default function AdminTestsPage() {
         status: configStatus,
         tests: configComponents.map((c: any) => ({
           ...((prev?.tests || []).find((t: any) => t.id === c.id) || {}),
-          duration: c.duration,
           max_marks: c.max_marks,
         }))
       }))
@@ -1232,79 +1229,45 @@ export default function AdminTestsPage() {
                         <div className="flex-1">
                           <p className="text-sm font-bold text-indigo-900">Global Test Timer</p>
                           <p className="text-xs text-indigo-600">
-                            Controls the single countdown shown to students across all 5 modules
+                            Single countdown shown to students across all modules — no per-module timers
                           </p>
                         </div>
                       </div>
 
                       <div className="p-5 space-y-4">
-                        {/* Auto vs Manual toggle */}
                         <div className="flex items-center gap-4">
-                          <button
-                            onClick={() => setSelectedClapTest({ ...selectedClapTest, global_duration_minutes: null })}
-                            className={`flex-1 py-2.5 px-4 rounded-lg border-2 text-sm font-bold transition-all ${selectedClapTest.global_duration_minutes === null || selectedClapTest.global_duration_minutes === undefined
-                              ? 'border-indigo-500 bg-indigo-600 text-white shadow-md'
-                              : 'border-gray-200 bg-white text-gray-600 hover:border-indigo-300'
-                              }`}
-                          >
-                            ⚡ Auto (Sum of Components)
-                          </button>
-                          <button
-                            onClick={() => setSelectedClapTest({ ...selectedClapTest, global_duration_minutes: selectedClapTest.global_duration_minutes ?? (selectedClapTest.tests || []).reduce((s: number, c: any) => s + (c.duration || 0), 0) })}
-                            className={`flex-1 py-2.5 px-4 rounded-lg border-2 text-sm font-bold transition-all ${selectedClapTest.global_duration_minutes !== null && selectedClapTest.global_duration_minutes !== undefined
-                              ? 'border-indigo-500 bg-indigo-600 text-white shadow-md'
-                              : 'border-gray-200 bg-white text-gray-600 hover:border-indigo-300'
-                              }`}
-                          >
-                            ✏️ Manual Override
-                          </button>
+                          <div className="flex-1">
+                            <label className="text-[10px] font-bold text-gray-400 uppercase block mb-1">
+                              Total Duration (Minutes)
+                            </label>
+                            <div className="flex items-center gap-3">
+                              <input
+                                type="number"
+                                min={1}
+                                value={selectedClapTest.global_duration_minutes ?? ''}
+                                onChange={(e) => setSelectedClapTest({ ...selectedClapTest, global_duration_minutes: parseInt(e.target.value) || null })}
+                                placeholder="e.g. 90"
+                                className="w-28 p-2.5 border-2 border-indigo-300 rounded-lg text-lg font-mono font-bold text-indigo-700 focus:ring-2 focus:ring-indigo-500 outline-none"
+                              />
+                              {selectedClapTest.global_duration_minutes ? (
+                                <span className="text-sm text-gray-500">
+                                  = {Math.floor((selectedClapTest.global_duration_minutes || 0) / 60)}h {(selectedClapTest.global_duration_minutes || 0) % 60}m
+                                </span>
+                              ) : (
+                                <span className="text-sm text-amber-600 font-medium">⚠ Required before starting the live timer</span>
+                              )}
+                            </div>
+                          </div>
                         </div>
-
-                        {/* Live display */}
-                        {(selectedClapTest.global_duration_minutes === null || selectedClapTest.global_duration_minutes === undefined) && (
-                          <div className="flex items-center justify-between p-3 bg-white rounded-lg border border-indigo-100">
-                            <span className="text-sm text-gray-500">Computed Global Timer</span>
-                            <div className="flex items-center gap-2">
-                              <Clock className="w-4 h-4 text-indigo-500" />
-                              <span className="font-mono text-lg font-bold text-indigo-700">
-                                {(selectedClapTest.tests || []).reduce((s: number, c: any) => s + (c.duration || 0), 0)} min
-                              </span>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Manual input */}
-                        {selectedClapTest.global_duration_minutes !== null && selectedClapTest.global_duration_minutes !== undefined && (
-                          <div className="flex items-center gap-4">
-                            <div className="flex-1">
-                              <label className="text-[10px] font-bold text-gray-400 uppercase block mb-1">
-                                Override Duration (Minutes)
-                              </label>
-                              <div className="flex items-center gap-3">
-                                <input
-                                  type="number"
-                                  min={1}
-                                  value={selectedClapTest.global_duration_minutes}
-                                  onChange={(e) => setSelectedClapTest({ ...selectedClapTest, global_duration_minutes: parseInt(e.target.value) || 0 })}
-                                  className="w-28 p-2.5 border-2 border-indigo-300 rounded-lg text-lg font-mono font-bold text-indigo-700 focus:ring-2 focus:ring-indigo-500 outline-none"
-                                />
-                                <span className="text-sm text-gray-500">minutes = {Math.floor((selectedClapTest.global_duration_minutes || 0) / 60)}h {(selectedClapTest.global_duration_minutes || 0) % 60}m</span>
-                              </div>
-                            </div>
-                            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
-                              ⚠️ This overrides the auto-computed timer.<br />Per-component durations are still used for ordering.
-                            </div>
-                          </div>
-                        )}
                       </div>
                     </div>
 
-                    {/* ── Section 2: Per-Module Global Rules ─────────────────── */}
+                    {/* ── Section 2: Per-Module Settings ─────────────────────── */}
                     <div>
                       <div className="flex items-center justify-between mb-3">
                         <p className="text-sm font-bold text-gray-700 flex items-center gap-2">
-                          <Clock className="w-4 h-4 text-gray-500" />
-                          Per-Module Global Rules
+                          <FileText className="w-4 h-4 text-gray-500" />
+                          Per-Module Settings
                         </p>
                         <span className="text-xs text-gray-400 italic">
                           Enforced identically across all sets
@@ -1315,8 +1278,7 @@ export default function AdminTestsPage() {
                         {(selectedClapTest.tests || []).map((comp: any, idx: number) => (
                           <div
                             key={comp.id}
-                            className={`p-4 rounded-xl border-2 flex flex-col gap-4 transition-all ${comp.timer_enabled === false ? 'border-dashed border-gray-300 bg-gray-50/50 opacity-80' : 'border-gray-200 bg-white'
-                              }`}
+                            className="p-4 rounded-xl border-2 border-gray-200 bg-white flex flex-col gap-4 transition-all"
                           >
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-3">
@@ -1333,64 +1295,25 @@ export default function AdminTestsPage() {
                                 </div>
                               </div>
 
-                              {/* Timer Enable Toggle */}
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs font-medium text-gray-500">Timer</span>
-                                <button
-                                  onClick={() => {
-                                    const newTests = [...selectedClapTest.tests];
-                                    newTests[idx] = { ...newTests[idx], timer_enabled: !(newTests[idx].timer_enabled ?? true) };
-                                    setSelectedClapTest({ ...selectedClapTest, tests: newTests });
-                                  }}
-                                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${(comp.timer_enabled ?? true) ? 'bg-indigo-600' : 'bg-gray-300'
-                                    }`}
+                              {/* Action buttons */}
+                              <div className="flex items-center gap-1.5">
+                                <Button variant="outline" size="sm" className="text-xs h-7 px-2" onClick={() => handlePreviewComponent(comp.type)}>
+                                  <Play className="w-3 h-3 mr-1" />Preview
+                                </Button>
+                                <Button
+                                  variant="outline" size="sm"
+                                  disabled={navigatingTo === `configure-${comp.type}`}
+                                  className="text-xs h-7 px-2 border-indigo-200 text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
+                                  onClick={() => { setNavigatingTo(`configure-${comp.type}`); router.push(`/admin/dashboard/clap-tests/${selectedClapTest.id}/${comp.type}`); }}
                                 >
-                                  <span
-                                    className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition-transform ${(comp.timer_enabled ?? true) ? 'translate-x-6' : 'translate-x-1'
-                                      }`}
-                                  />
-                                </button>
-                                <span className={`text-xs font-bold ${(comp.timer_enabled ?? true) ? 'text-indigo-600' : 'text-gray-400'}`}>
-                                  {(comp.timer_enabled ?? true) ? 'ON' : 'OFF'}
-                                </span>
-
-                                {/* Action buttons */}
-                                <div className="ml-2 flex items-center gap-1.5">
-                                  <Button variant="outline" size="sm" className="text-xs h-7 px-2" onClick={() => handlePreviewComponent(comp.type)}>
-                                    <Play className="w-3 h-3 mr-1" />Preview
-                                  </Button>
-                                  <Button
-                                    variant="outline" size="sm"
-                                    disabled={navigatingTo === `configure-${comp.type}`}
-                                    className="text-xs h-7 px-2 border-indigo-200 text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
-                                    onClick={() => { setNavigatingTo(`configure-${comp.type}`); router.push(`/admin/dashboard/clap-tests/${selectedClapTest.id}/${comp.type}`); }}
-                                  >
-                                    {navigatingTo === `configure-${comp.type}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Edit className="w-3 h-3 mr-1" />}
-                                    {navigatingTo === `configure-${comp.type}` ? '' : 'Edit'}
-                                  </Button>
-                                </div>
+                                  {navigatingTo === `configure-${comp.type}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Edit className="w-3 h-3 mr-1" />}
+                                  {navigatingTo === `configure-${comp.type}` ? '' : 'Edit'}
+                                </Button>
                               </div>
                             </div>
 
-                            <div className={`grid grid-cols-2 gap-6 pt-3 border-t border-gray-100 ${comp.timer_enabled === false ? 'opacity-50' : ''}`}>
-                              <div className="space-y-1">
-                                <label className="text-[10px] font-bold text-gray-400 uppercase">
-                                  Duration (Min){comp.timer_enabled === false ? ' — disabled' : ''}
-                                </label>
-                                <input
-                                  type="number"
-                                  min={0}
-                                  value={comp.duration ?? 0}
-                                  disabled={comp.timer_enabled === false}
-                                  onChange={(e) => {
-                                    const newTests = [...selectedClapTest.tests];
-                                    newTests[idx].duration = parseInt(e.target.value) || 0;
-                                    setSelectedClapTest({ ...selectedClapTest, tests: newTests });
-                                  }}
-                                  className="w-20 p-2 border border-gray-200 rounded text-sm focus:ring-1 focus:ring-indigo-500 outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
-                                />
-                              </div>
-                              <div className="space-y-1">
+                            <div className="pt-3 border-t border-gray-100">
+                              <div className="space-y-1 w-32">
                                 <label className="text-[10px] font-bold text-gray-400 uppercase">Max Marks</label>
                                 <input
                                   type="number"
@@ -1439,16 +1362,14 @@ export default function AdminTestsPage() {
                                 })
                               });
 
-                              // 2. Save per-component settings (duration + timer_enabled + max_marks)
+                              // 2. Save per-component max_marks
                               // Backend auto-syncs these to all matching ClapSetComponents
                               for (const comp of selectedClapTest.tests) {
                                 await apiFetch(getApiUrl(`admin/clap-components/${comp.id}`), {
                                   method: 'PATCH',
                                   headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
                                   body: JSON.stringify({
-                                    duration: comp.duration,
                                     max_marks: comp.max_marks,
-                                    timer_enabled: comp.timer_enabled ?? true
                                   })
                                 });
                               }
