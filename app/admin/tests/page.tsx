@@ -43,7 +43,7 @@ export default function AdminTestsPage() {
   const [showEditClapTestModal, setShowEditClapTestModal] = useState(false)
   const [showClapTestDetails, setShowClapTestDetails] = useState(false)
   const [selectedClapTest, setSelectedClapTest] = useState<any>(null)
-  const [activeDetailTab, setActiveDetailTab] = useState<'overview' | 'configure' | 'results' | 'retest' | 'sets' | 'live-timer'>('overview')
+  const [activeDetailTab, setActiveDetailTab] = useState<'question-papers' | 'configure' | 'results' | 'retest' | 'live-timer'>('question-papers')
 
   // ── Live Timer state ──────────────────────────────────────────────────────
   const [liveTimer, setLiveTimer]               = useState<any>(null)  // status from API
@@ -559,10 +559,11 @@ export default function AdminTestsPage() {
   const handleViewClapTest = (clapTest: any) => {
     setSelectedClapTest(clapTest);
     setShowClapTestDetails(true);
-    setActiveDetailTab('overview');
-    // Pre-fetch sets so Overview and Configure tabs can show global scope indicators
+    setActiveDetailTab('question-papers');
+    // Pre-fetch sets for the Question Papers tab
     setSets([])
     fetchSets(clapTest.id)
+    fetchDistributionStatus(clapTest.id)
     // Reset live timer state for the new test
     setLiveTimer(null)
     setLiveTimerTimeLeft(null)
@@ -944,31 +945,25 @@ export default function AdminTestsPage() {
             {/* Tabs */}
             <div className="flex border-b border-gray-200">
               <button
-                className={`py-2 px-6 font-medium text-sm transition-colors ${activeDetailTab === 'overview' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
-                onClick={() => setActiveDetailTab('overview')}
-              >
-                Overview
-              </button>
-              <button
-                className={`py-2 px-6 font-medium text-sm transition-colors ${activeDetailTab === 'configure' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
-                onClick={() => setActiveDetailTab('configure')}
-              >
-                Configure
-              </button>
-              <button
-                className={`py-2 px-6 font-medium text-sm transition-colors flex items-center gap-1.5 ${activeDetailTab === 'sets' ? 'border-b-2 border-violet-600 text-violet-700' : 'text-gray-500 hover:text-gray-700'}`}
+                className={`py-2 px-6 font-medium text-sm transition-colors flex items-center gap-1.5 ${activeDetailTab === 'question-papers' ? 'border-b-2 border-violet-600 text-violet-700' : 'text-gray-500 hover:text-gray-700'}`}
                 onClick={() => {
-                  setActiveDetailTab('sets')
+                  setActiveDetailTab('question-papers')
                   if (selectedClapTest) {
                     fetchSets(selectedClapTest.id)
                     fetchDistributionStatus(selectedClapTest.id)
                   }
                 }}
               >
-                <FileText className="w-3.5 h-3.5" /> Sets
+                <FileText className="w-3.5 h-3.5" /> Question Papers
                 {sets.length > 0 && (
                   <span className="ml-1 bg-violet-100 text-violet-700 text-xs font-bold px-1.5 py-0.5 rounded-full">{sets.length}</span>
                 )}
+              </button>
+              <button
+                className={`py-2 px-6 font-medium text-sm transition-colors ${activeDetailTab === 'configure' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
+                onClick={() => setActiveDetailTab('configure')}
+              >
+                Configure
               </button>
               <button
                 className={`py-2 px-6 font-medium text-sm transition-colors ${activeDetailTab === 'results' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
@@ -998,7 +993,7 @@ export default function AdminTestsPage() {
 
             {/* Tab Content */}
             <div className="mt-6">
-              {activeDetailTab === 'overview' && (() => {
+              {activeDetailTab === 'question-papers' && (() => {
                 const COMPONENTS = [
                   { name: 'Listening', type: 'listening', icon: Headphones, color: 'blue' },
                   { name: 'Speaking', type: 'speaking', icon: Mic, color: 'purple' },
@@ -1127,19 +1122,8 @@ export default function AdminTestsPage() {
                                   </span>
                                 </div>
                                 <div className="flex justify-between">
-                                  <span>Duration</span>
-                                  <span className="font-medium">{stats?.duration ?? '—'} {stats ? 'mins' : ''}</span>
-                                </div>
-                                <div className="flex justify-between">
                                   <span>Max Marks</span>
                                   <span className="font-medium">{stats?.max_marks ?? '—'}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                  <span>Timer</span>
-                                  <span className={`font-medium text-xs px-1.5 py-0.5 rounded ${stats?.timer_enabled ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-500'
-                                    }`}>
-                                    {isConfigured ? (stats?.timer_enabled ? 'Enabled' : 'Disabled') : '—'}
-                                  </span>
                                 </div>
                               </div>
 
@@ -1160,26 +1144,380 @@ export default function AdminTestsPage() {
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  disabled={navigatingTo === `overview-${comp.type}`}
+                                  disabled={navigatingTo === `qp-${comp.type}`}
                                   className="flex-1 border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800 disabled:opacity-50"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    setNavigatingTo(`overview-${comp.type}`);
+                                    setNavigatingTo(`qp-${comp.type}`);
                                     router.push(`/admin/dashboard/clap-tests/${selectedClapTest.id}/${comp.type}`);
                                   }}
                                 >
-                                  {navigatingTo === `overview-${comp.type}` ? (
+                                  {navigatingTo === `qp-${comp.type}` ? (
                                     <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
                                   ) : (
                                     <Edit className="w-3.5 h-3.5 mr-1" />
                                   )}
-                                  {navigatingTo === `overview-${comp.type}` ? 'Loading...' : isReady ? 'Edit' : 'Add Questions'}
+                                  {navigatingTo === `qp-${comp.type}` ? 'Loading...' : isReady ? 'Edit' : 'Add Questions'}
                                 </Button>
                               </div>
                             </CardContent>
                           </Card>
                         );
                       })}
+                    </div>
+
+                    {/* ── Question Paper Sets Section ───────────────────── */}
+                    <div className="border-t-2 border-dashed border-gray-200 pt-6 space-y-6">
+
+                      {/* ── Header Row ──────────────────────────────────── */}
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h3 className="text-lg font-bold text-gray-900">Question Paper Sets</h3>
+                          <p className="text-sm text-gray-500 mt-0.5">
+                            Create multiple sets so no two neighbouring students get the same question paper.
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleValidateSets}
+                            disabled={sets.length < 2}
+                            className="border-violet-200 text-violet-700 hover:bg-violet-50"
+                          >
+                            <TrendingUp className="w-4 h-4 mr-1.5" /> Validate Sets
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={() => handleCreateSet()}
+                            disabled={creatingSet || sets.length >= 26}
+                            className="bg-violet-600 hover:bg-violet-700 text-white"
+                          >
+                            {creatingSet ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" />Creating...</> : <><Plus className="w-4 h-4 mr-1.5" />New Empty Set</>}
+                          </Button>
+                        </div>
+                      </div>
+
+                      {/* ── Minimum 2 sets info banner ───────────────────── */}
+                      {sets.length > 0 && sets.length < 2 && (
+                        <div className="bg-violet-50 border border-violet-200 rounded-xl p-4 text-sm text-violet-800 flex gap-3">
+                          <FileText className="w-5 h-5 text-violet-500 shrink-0 mt-0.5" />
+                          <div>
+                            <p className="font-semibold">At least 2 sets are required for distribution.</p>
+                            <p className="mt-0.5 text-violet-700">
+                              Create a second set (blank or cloned) and add questions to it, then use Smart Distribute.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ── Sets List ────────────────────────────────────── */}
+                      {setsLoading ? (
+                        <div className="flex items-center justify-center py-12 text-gray-400">
+                          <Loader2 className="w-6 h-6 animate-spin mr-2" /> Loading sets...
+                        </div>
+                      ) : sets.length === 0 ? (
+                        <div className="border-2 border-dashed border-gray-200 rounded-xl py-10 text-center">
+                          <FileText className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+                          <p className="text-gray-500 font-medium">No question paper sets yet</p>
+                          <p className="text-sm text-gray-400 mt-1">Use &ldquo;New Empty Set&rdquo; above to create your first set.</p>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                          {sets.map((s: any) => (
+                            <div key={s.id} className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm hover:shadow-md transition-shadow">
+                              <div className="flex items-center justify-between mb-3">
+                                <div className="flex items-center gap-2">
+                                  <span className="w-9 h-9 rounded-lg bg-violet-100 text-violet-700 font-bold text-lg flex items-center justify-center">
+                                    {s.label}
+                                  </span>
+                                  <div>
+                                    <p className="font-semibold text-gray-900 text-sm">Set {s.label}</p>
+                                    <p className="text-xs text-gray-400">{s.component_count} components · {s.total_item_count} items</p>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  {s.assigned_student_count > 0 && (
+                                    <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
+                                      {s.assigned_student_count} students
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className="flex gap-2 mt-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="flex-1 text-xs border-indigo-200 text-indigo-600 hover:bg-indigo-50"
+                                  onClick={() => router.push(`/admin/dashboard/clap-tests/${selectedClapTest?.id}/sets/${s.id}/bundle-preview`)}
+                                >
+                                  <Play className="w-3 h-3 mr-1" /> Preview Set
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="text-xs border-violet-200 text-violet-600 hover:bg-violet-50"
+                                  disabled={creatingSet || sets.length >= 26}
+                                  onClick={() => handleCreateSet(s.id)}
+                                >
+                                  <Plus className="w-3 h-3 mr-1" /> Clone
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="text-xs border-red-200 text-red-500 hover:bg-red-50"
+                                  onClick={() => handleDeleteSet(s.id, s.label, s.assigned_student_count)}
+                                >
+                                  ✕
+                                </Button>
+                              </div>
+
+                              {/* Component list — each row navigates to that component's editor */}
+                              <div className="mt-3 pt-3 border-t border-gray-100 flex flex-col gap-1.5">
+                                {s.components && s.components.length > 0 ? (
+                                  s.components.map((c: any) => (
+                                    <div
+                                      key={c.id}
+                                      className="flex justify-between items-center hover:bg-blue-50 p-1.5 rounded transition-colors cursor-pointer group"
+                                      onClick={() => router.push(`/admin/dashboard/clap-tests/${selectedClapTest?.id}/sets/${s.id}/${c.test_type}`)}
+                                    >
+                                      <span className="text-xs font-medium text-gray-700 capitalize">{c.test_type}</span>
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">{c.item_count} items</span>
+                                        <span className="text-[10px] text-blue-600 font-medium px-1.5 group-hover:underline">Edit →</span>
+                                      </div>
+                                    </div>
+                                  ))
+                                ) : s.component_count > 0 ? (
+                                  /* Fallback: components not yet loaded in state — show generic edit buttons */
+                                  (['listening', 'speaking', 'reading', 'writing', 'vocabulary'] as const).map((type) => (
+                                    <div
+                                      key={type}
+                                      className="flex justify-between items-center hover:bg-blue-50 p-1.5 rounded transition-colors cursor-pointer group"
+                                      onClick={() => router.push(`/admin/dashboard/clap-tests/${selectedClapTest?.id}/sets/${s.id}/${type}`)}
+                                    >
+                                      <span className="text-xs font-medium text-gray-700 capitalize">{type}</span>
+                                      <span className="text-[10px] text-blue-600 font-medium px-1.5 group-hover:underline">Edit →</span>
+                                    </div>
+                                  ))
+                                ) : (
+                                  <p className="text-xs text-amber-600 bg-amber-50 rounded px-2 py-1">
+                                    ⚠ No components yet — use Clone to populate this set
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* ── Validation Panel ─────────────────────────────── */}
+                      {setsValidation && (
+                        <div className={`rounded-xl border p-4 text-sm ${setsValidation.valid ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
+                          <p className="font-semibold mb-1">
+                            {setsValidation.valid ? '✅ All sets are balanced and ready for distribution.' : `❌ ${setsValidation.issues.length} issue(s) found — fix before distributing.`}
+                          </p>
+                          {!setsValidation.valid && (
+                            <ul className="mt-2 space-y-1 list-disc list-inside text-red-700 text-xs">
+                              {setsValidation.issues.map((issue: any, i: number) => (
+                                <li key={i}>
+                                  Set {issue.set_label} — {issue.test_type}:
+                                  {issue.issue ? ` ${issue.issue}` : ` expected ${issue.expected_items} items, got ${issue.actual_items}`}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      )}
+
+                      {/* ── Smart Distribution Panel ──────────────────────── */}
+                      {sets.length >= 2 && (
+                        <div className="bg-white border border-violet-200 rounded-xl p-5 space-y-4">
+                          <div className="flex items-center gap-2 mb-1">
+                            <Settings className="w-4 h-4 text-violet-600" />
+                            <h4 className="font-semibold text-gray-900">Smart Distribution</h4>
+                          </div>
+                          <p className="text-xs text-gray-500">
+                            Distribute sets across all assigned students so no two adjacent students share the same question paper.
+                          </p>
+
+                          {/* Strategy Selector */}
+                          <div className="flex flex-wrap gap-2">
+                            {[
+                              { id: 'round_robin', label: 'Round Robin', desc: 'Best when seating layout is unknown' },
+                              { id: 'latin_square', label: 'Latin Square', desc: 'Perfect for grid seating (requires rows × cols)' },
+                            ].map((s) => (
+                              <label
+                                key={s.id}
+                                className={`flex-1 min-w-[180px] border rounded-lg p-3 cursor-pointer transition-colors ${distributeStrategy === s.id ? 'border-violet-500 bg-violet-50' : 'border-gray-200 hover:border-violet-300'}`}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="radio"
+                                    name="dist_strategy"
+                                    value={s.id}
+                                    checked={distributeStrategy === s.id as any}
+                                    onChange={() => setDistributeStrategy(s.id as any)}
+                                    className="accent-violet-600"
+                                  />
+                                  <div>
+                                    <p className="text-sm font-semibold text-gray-800">{s.label}</p>
+                                    <p className="text-xs text-gray-500 mt-0.5">{s.desc}</p>
+                                  </div>
+                                </div>
+                              </label>
+                            ))}
+                          </div>
+
+                          {/* Latin Square Config */}
+                          {distributeStrategy === 'latin_square' && (
+                            <div className="flex items-center gap-4 bg-violet-50 rounded-lg px-4 py-3 text-sm">
+                              <label className="flex items-center gap-2 text-gray-700">
+                                Rows:
+                                <input
+                                  type="number"
+                                  min={1}
+                                  value={distributeRows}
+                                  onChange={e => setDistributeRows(Math.max(1, parseInt(e.target.value) || 1))}
+                                  className="w-16 border border-violet-300 rounded px-2 py-1 text-center focus:ring-1 focus:ring-violet-500 outline-none"
+                                />
+                              </label>
+                              <span className="text-gray-400">×</span>
+                              <label className="flex items-center gap-2 text-gray-700">
+                                Cols:
+                                <input
+                                  type="number"
+                                  min={1}
+                                  value={distributeCols}
+                                  onChange={e => setDistributeCols(Math.max(1, parseInt(e.target.value) || 1))}
+                                  className="w-16 border border-violet-300 rounded px-2 py-1 text-center focus:ring-1 focus:ring-violet-500 outline-none"
+                                />
+                              </label>
+                              <span className="text-xs text-violet-600 font-medium">= {distributeRows * distributeCols} seats</span>
+                            </div>
+                          )}
+
+                          {/* Action Buttons */}
+                          <div className="flex flex-wrap gap-3 pt-1">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleDistribute(true)}
+                              disabled={distributing}
+                              className="border-violet-200 text-violet-700 hover:bg-violet-50"
+                            >
+                              {distributing ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <TrendingUp className="w-4 h-4 mr-1.5" />}
+                              Dry Run Preview
+                            </Button>
+                            <Button
+                              size="sm"
+                              onClick={() => handleDistribute(false)}
+                              disabled={distributing || !setsCanDistribute}
+                              className="bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50"
+                            >
+                              {distributing ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" />Distributing...</> : <><ArrowRight className="w-4 h-4 mr-1.5" />Distribute Now</>}
+                            </Button>
+                            {distributionStatus?.distributed > 0 && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={handleClearDistribution}
+                                className="border-red-200 text-red-600 hover:bg-red-50"
+                              >
+                                Clear Distribution
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ── Distribution Status Table ─────────────────────── */}
+                      {distributionStatus && (
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <h4 className="font-semibold text-gray-900 text-sm">Distribution Status</h4>
+                            <div className="flex items-center gap-3">
+                              {Object.entries(distributionStatus.by_set || {}).map(([label, count]: any) => (
+                                <span key={label} className="text-xs bg-violet-100 text-violet-700 px-2.5 py-1 rounded-full font-medium">
+                                  Set {label}: {count}
+                                </span>
+                              ))}
+                              <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${distributionStatus.distribution_complete ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                                {distributionStatus.distributed}/{distributionStatus.total_students} distributed
+                              </span>
+                            </div>
+                          </div>
+
+                          {distributionStatusLoading ? (
+                            <div className="flex items-center justify-center py-8 text-gray-400">
+                              <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading...
+                            </div>
+                          ) : (
+                            <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                              <table className="w-full text-sm">
+                                <thead className="bg-gray-50 border-b border-gray-200">
+                                  <tr>
+                                    <th className="text-left px-4 py-3 font-semibold text-gray-600">Student</th>
+                                    <th className="text-left px-4 py-3 font-semibold text-gray-600">Roll No.</th>
+                                    <th className="text-center px-4 py-3 font-semibold text-gray-600">Assigned Set</th>
+                                    <th className="text-left px-4 py-3 font-semibold text-gray-600">Test Status</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-100">
+                                  {(distributionStatus.students || []).slice((setsDistPage - 1) * setsDistPageSize, setsDistPage * setsDistPageSize).map((s: any) => (
+                                    <tr key={s.assignment_id} className="hover:bg-gray-50 transition-colors">
+                                      <td className="px-4 py-2.5 font-medium text-gray-900">{s.student_name}</td>
+                                      <td className="px-4 py-2.5 text-gray-500 font-mono text-xs">{s.student_roll || '—'}</td>
+                                      <td className="px-4 py-2.5 text-center">
+                                        {s.assigned_set_label ? (
+                                          <span className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-violet-100 text-violet-700 font-bold text-sm">
+                                            {s.assigned_set_label}
+                                          </span>
+                                        ) : (
+                                          <span className="text-gray-300 text-xs">Unassigned</span>
+                                        )}
+                                      </td>
+                                      <td className="px-4 py-2.5">
+                                        <Badge className={`text-xs ${s.status === 'completed' ? 'bg-green-100 text-green-700 border-green-200' : s.status === 'started' ? 'bg-blue-100 text-blue-700 border-blue-200' : s.status === 'expired' ? 'bg-red-100 text-red-700 border-red-200' : 'bg-gray-100 text-gray-600 border-gray-200'}`}>
+                                          {s.status}
+                                        </Badge>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+
+                          {(distributionStatus?.students?.length || 0) > setsDistPageSize && (
+                            <div className="flex items-center justify-between bg-white px-4 py-3 border border-gray-200 rounded-xl mt-3">
+                              <div className="text-sm text-gray-500">
+                                Showing <span className="font-medium">{(setsDistPage - 1) * setsDistPageSize + 1}</span> to <span className="font-medium">{Math.min(setsDistPage * setsDistPageSize, distributionStatus.students.length)}</span> of <span className="font-medium">{distributionStatus.students.length}</span> students
+                              </div>
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setSetsDistPage(p => Math.max(1, p - 1))}
+                                  disabled={setsDistPage === 1}
+                                >
+                                  Previous
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setSetsDistPage(p => Math.min(Math.ceil(distributionStatus.students.length / setsDistPageSize), p + 1))}
+                                  disabled={setsDistPage === Math.ceil(distributionStatus.students.length / setsDistPageSize)}
+                                >
+                                  Next
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                     </div>
                   </div>
                 );
@@ -1345,7 +1683,7 @@ export default function AdminTestsPage() {
                         automatically.
                       </p>
                       <div className="flex gap-3 shrink-0">
-                        <Button variant="outline" onClick={() => setActiveDetailTab('overview')}>Cancel</Button>
+                        <Button variant="outline" onClick={() => setActiveDetailTab('question-papers')}>Cancel</Button>
                         <Button
                           className="bg-indigo-600 hover:bg-indigo-700 text-white"
                           onClick={async () => {
@@ -1803,458 +2141,6 @@ export default function AdminTestsPage() {
                 )
               })()}
 
-              {activeDetailTab === 'sets' && (
-                <div className="space-y-6">
-
-                  {/* ── Header Row ──────────────────────────────────────────── */}
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-lg font-bold text-gray-900">Question Paper Sets</h3>
-                      <p className="text-sm text-gray-500 mt-0.5">
-                        Create multiple sets so no two neighbouring students get the same question paper.
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleValidateSets}
-                        disabled={sets.length < 2}
-                        className="border-violet-200 text-violet-700 hover:bg-violet-50"
-                      >
-                        <TrendingUp className="w-4 h-4 mr-1.5" /> Validate Sets
-                      </Button>
-                      <Button
-                        size="sm"
-                        onClick={() => handleCreateSet()}
-                        disabled={creatingSet || sets.length >= 26}
-                        className="bg-violet-600 hover:bg-violet-700 text-white"
-                      >
-                        {creatingSet ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" />Creating...</> : <><Plus className="w-4 h-4 mr-1.5" />New Empty Set</>}
-                      </Button>
-                    </div>
-                  </div>
-
-                  {/* ── Minimum 2 sets info banner ───────────────────────────── */}
-                  {sets.length < 2 && (
-                    <div className="bg-violet-50 border border-violet-200 rounded-xl p-4 text-sm text-violet-800 flex gap-3">
-                      <FileText className="w-5 h-5 text-violet-500 shrink-0 mt-0.5" />
-                      <div>
-                        <p className="font-semibold">At least 2 sets are required for distribution.</p>
-                        <p className="mt-0.5 text-violet-700">
-                          Create a second set (blank or cloned) and add questions to it, then use Smart Distribute.
-                        </p>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* ── Sets List ────────────────────────────────────────────── */}
-                  {setsLoading ? (
-                    <div className="flex items-center justify-center py-12 text-gray-400">
-                      <Loader2 className="w-6 h-6 animate-spin mr-2" /> Loading sets...
-                    </div>
-                  ) : sets.length === 0 ? (
-                    <div className="space-y-4">
-                      {/* ── Import Callout ─────────────────────────────────── */}
-                      <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-5 flex gap-4">
-                        <div className="w-10 h-10 rounded-lg bg-indigo-100 flex items-center justify-center shrink-0 mt-0.5">
-                          <ArrowRight className="w-5 h-5 text-indigo-600" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-semibold text-indigo-900">
-                            Import existing question paper as Set A
-                          </p>
-                          <p className="text-sm text-indigo-700 mt-1">
-                            This test already has a question paper built in the{' '}
-                            <strong>Configure</strong> tab. Import it here as <strong>Set A</strong>,
-                            then clone and customise to create Set B, C, etc.
-                          </p>
-                          <div className="flex flex-wrap gap-2 mt-3">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="border-indigo-300 text-indigo-700 hover:bg-indigo-100"
-                              onClick={() => handleImportFromComponents(true)}
-                              disabled={importDryRunLoading || importing}
-                            >
-                              {importDryRunLoading
-                                ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Previewing...</>
-                                : <><FileText className="w-3.5 h-3.5 mr-1.5" />Preview Import</>}
-                            </Button>
-                            {importPreview && (
-                              <Button
-                                size="sm"
-                                className="bg-indigo-600 hover:bg-indigo-700 text-white"
-                                onClick={() => handleImportFromComponents(false)}
-                                disabled={importing}
-                              >
-                                {importing
-                                  ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Importing...</>
-                                  : <><ArrowRight className="w-3.5 h-3.5 mr-1.5" />Confirm Import as Set A</>}
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* ── Preview Breakdown ─────────────────────────────── */}
-                      {importPreview && (
-                        <div className="bg-white border border-indigo-200 rounded-xl overflow-hidden">
-                          <div className="bg-indigo-50 px-4 py-3 border-b border-indigo-200 flex items-center justify-between">
-                            <p className="font-semibold text-indigo-900 text-sm">
-                              Import Preview — Set A
-                            </p>
-                            <div className="flex items-center gap-2 text-xs">
-                              <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-medium">
-                                {importPreview.components} components
-                              </span>
-                              <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-medium">
-                                {importPreview.total_items} questions total
-                              </span>
-                            </div>
-                          </div>
-                          <table className="w-full text-sm">
-                            <thead className="bg-gray-50 border-b border-gray-200">
-                              <tr>
-                                <th className="text-left px-4 py-2.5 font-semibold text-gray-600">Component</th>
-                                <th className="text-left px-4 py-2.5 font-semibold text-gray-600">Title</th>
-                                <th className="text-center px-4 py-2.5 font-semibold text-gray-600">Questions</th>
-                                <th className="text-center px-4 py-2.5 font-semibold text-gray-600">Duration</th>
-                                <th className="text-center px-4 py-2.5 font-semibold text-gray-600">Max Marks</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100">
-                              {(importPreview.component_breakdown || []).map((comp: any) => (
-                                <tr key={comp.test_type} className="hover:bg-gray-50">
-                                  <td className="px-4 py-2.5">
-                                    <span className="capitalize font-medium text-gray-900">{comp.test_type}</span>
-                                  </td>
-                                  <td className="px-4 py-2.5 text-gray-600">{comp.title}</td>
-                                  <td className="px-4 py-2.5 text-center font-mono text-indigo-700 font-semibold">{comp.item_count}</td>
-                                  <td className="px-4 py-2.5 text-center text-gray-500">{comp.duration_minutes}m</td>
-                                  <td className="px-4 py-2.5 text-center text-gray-500">{comp.max_marks}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                          <div className="px-4 py-3 bg-amber-50 border-t border-amber-100 text-xs text-amber-800">
-                            ⚠ This is a <strong>read-only preview</strong>. Click <strong>"Confirm Import as Set A"</strong> above to write the data. No data has been saved yet.
-                          </div>
-                        </div>
-                      )}
-
-                      {/* ── Divider ───────────────────────────────────────── */}
-                      <div className="flex items-center gap-3 text-xs text-gray-400">
-                        <div className="flex-1 h-px bg-gray-200" />
-                        <span>or start from scratch</span>
-                        <div className="flex-1 h-px bg-gray-200" />
-                      </div>
-
-                      {/* ── Create Empty ─────────────────────────────────── */}
-                      <div className="border-2 border-dashed border-gray-200 rounded-xl py-10 text-center">
-                        <FileText className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-                        <p className="text-gray-500 font-medium">Create a blank Set A</p>
-                        <p className="text-sm text-gray-400 mt-1 mb-4">Use "New Empty Set" if you prefer to build sets from scratch.</p>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {sets.map((s: any) => (
-                        <div key={s.id} className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm hover:shadow-md transition-shadow">
-                          <div className="flex items-center justify-between mb-3">
-                            <div className="flex items-center gap-2">
-                              <span className="w-9 h-9 rounded-lg bg-violet-100 text-violet-700 font-bold text-lg flex items-center justify-center">
-                                {s.label}
-                              </span>
-                              <div>
-                                <p className="font-semibold text-gray-900 text-sm">Set {s.label}</p>
-                                <p className="text-xs text-gray-400">{s.component_count} components · {s.total_item_count} items</p>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              {s.assigned_student_count > 0 && (
-                                <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
-                                  {s.assigned_student_count} students
-                                </span>
-                              )}
-                            </div>
-                          </div>
-
-                          <div className="flex gap-2 mt-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="flex-1 text-xs border-indigo-200 text-indigo-600 hover:bg-indigo-50"
-                              onClick={() => router.push(`/admin/dashboard/clap-tests/${selectedClapTest?.id}/sets/${s.id}/bundle-preview`)}
-                            >
-                              <Play className="w-3 h-3 mr-1" /> Preview Set
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="text-xs border-violet-200 text-violet-600 hover:bg-violet-50"
-                              disabled={creatingSet || sets.length >= 26}
-                              onClick={() => handleCreateSet(s.id)}
-                            >
-                              <Plus className="w-3 h-3 mr-1" /> Clone
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="text-xs border-red-200 text-red-500 hover:bg-red-50"
-                              onClick={() => handleDeleteSet(s.id, s.label, s.assigned_student_count)}
-                            >
-                              ✕
-                            </Button>
-                          </div>
-
-                          {/* Component list — each row navigates to that component's editor */}
-                          <div className="mt-3 pt-3 border-t border-gray-100 flex flex-col gap-1.5">
-                            {s.components && s.components.length > 0 ? (
-                              s.components.map((c: any) => (
-                                <div
-                                  key={c.id}
-                                  className="flex justify-between items-center hover:bg-blue-50 p-1.5 rounded transition-colors cursor-pointer group"
-                                  onClick={() => router.push(`/admin/dashboard/clap-tests/${selectedClapTest?.id}/sets/${s.id}/${c.test_type}`)}
-                                >
-                                  <span className="text-xs font-medium text-gray-700 capitalize">{c.test_type}</span>
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">{c.item_count} items</span>
-                                    <span className="text-[10px] text-blue-600 font-medium px-1.5 group-hover:underline">Edit →</span>
-                                  </div>
-                                </div>
-                              ))
-                            ) : s.component_count > 0 ? (
-                              /* Fallback: components not yet loaded in state — show generic edit buttons */
-                              (['listening', 'speaking', 'reading', 'writing', 'vocabulary'] as const).map((type) => (
-                                <div
-                                  key={type}
-                                  className="flex justify-between items-center hover:bg-blue-50 p-1.5 rounded transition-colors cursor-pointer group"
-                                  onClick={() => router.push(`/admin/dashboard/clap-tests/${selectedClapTest?.id}/sets/${s.id}/${type}`)}
-                                >
-                                  <span className="text-xs font-medium text-gray-700 capitalize">{type}</span>
-                                  <span className="text-[10px] text-blue-600 font-medium px-1.5 group-hover:underline">Edit →</span>
-                                </div>
-                              ))
-                            ) : (
-                              <p className="text-xs text-amber-600 bg-amber-50 rounded px-2 py-1">
-                                ⚠ No components yet — use Clone or import to populate this set
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* ── Validation Panel ─────────────────────────────────────── */}
-                  {setsValidation && (
-                    <div className={`rounded-xl border p-4 text-sm ${setsValidation.valid ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
-                      <p className="font-semibold mb-1">
-                        {setsValidation.valid ? '✅ All sets are balanced and ready for distribution.' : `❌ ${setsValidation.issues.length} issue(s) found — fix before distributing.`}
-                      </p>
-                      {!setsValidation.valid && (
-                        <ul className="mt-2 space-y-1 list-disc list-inside text-red-700 text-xs">
-                          {setsValidation.issues.map((issue: any, i: number) => (
-                            <li key={i}>
-                              Set {issue.set_label} — {issue.test_type}:
-                              {issue.issue ? ` ${issue.issue}` : ` expected ${issue.expected_items} items, got ${issue.actual_items}`}
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  )}
-
-                  {/* ── Smart Distribution Panel ─────────────────────────────── */}
-                  {sets.length >= 2 && (
-                    <div className="bg-white border border-violet-200 rounded-xl p-5 space-y-4">
-                      <div className="flex items-center gap-2 mb-1">
-                        <Settings className="w-4 h-4 text-violet-600" />
-                        <h4 className="font-semibold text-gray-900">Smart Distribution</h4>
-                      </div>
-                      <p className="text-xs text-gray-500">
-                        Distribute sets across all assigned students so no two adjacent students share the same question paper.
-                      </p>
-
-                      {/* Strategy Selector */}
-                      <div className="flex flex-wrap gap-2">
-                        {[
-                          { id: 'round_robin', label: 'Round Robin', desc: 'Best when seating layout is unknown' },
-                          { id: 'latin_square', label: 'Latin Square', desc: 'Perfect for grid seating (requires rows × cols)' },
-                        ].map((s) => (
-                          <label
-                            key={s.id}
-                            className={`flex-1 min-w-[180px] border rounded-lg p-3 cursor-pointer transition-colors ${distributeStrategy === s.id ? 'border-violet-500 bg-violet-50' : 'border-gray-200 hover:border-violet-300'}`}
-                          >
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="radio"
-                                name="dist_strategy"
-                                value={s.id}
-                                checked={distributeStrategy === s.id as any}
-                                onChange={() => setDistributeStrategy(s.id as any)}
-                                className="accent-violet-600"
-                              />
-                              <div>
-                                <p className="text-sm font-semibold text-gray-800">{s.label}</p>
-                                <p className="text-xs text-gray-500 mt-0.5">{s.desc}</p>
-                              </div>
-                            </div>
-                          </label>
-                        ))}
-                      </div>
-
-                      {/* Latin Square Config */}
-                      {distributeStrategy === 'latin_square' && (
-                        <div className="flex items-center gap-4 bg-violet-50 rounded-lg px-4 py-3 text-sm">
-                          <label className="flex items-center gap-2 text-gray-700">
-                            Rows:
-                            <input
-                              type="number"
-                              min={1}
-                              value={distributeRows}
-                              onChange={e => setDistributeRows(Math.max(1, parseInt(e.target.value) || 1))}
-                              className="w-16 border border-violet-300 rounded px-2 py-1 text-center focus:ring-1 focus:ring-violet-500 outline-none"
-                            />
-                          </label>
-                          <span className="text-gray-400">×</span>
-                          <label className="flex items-center gap-2 text-gray-700">
-                            Cols:
-                            <input
-                              type="number"
-                              min={1}
-                              value={distributeCols}
-                              onChange={e => setDistributeCols(Math.max(1, parseInt(e.target.value) || 1))}
-                              className="w-16 border border-violet-300 rounded px-2 py-1 text-center focus:ring-1 focus:ring-violet-500 outline-none"
-                            />
-                          </label>
-                          <span className="text-xs text-violet-600 font-medium">= {distributeRows * distributeCols} seats</span>
-                        </div>
-                      )}
-
-                      {/* Action Buttons */}
-                      <div className="flex flex-wrap gap-3 pt-1">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleDistribute(true)}
-                          disabled={distributing}
-                          className="border-violet-200 text-violet-700 hover:bg-violet-50"
-                        >
-                          {distributing ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <TrendingUp className="w-4 h-4 mr-1.5" />}
-                          Dry Run Preview
-                        </Button>
-                        <Button
-                          size="sm"
-                          onClick={() => handleDistribute(false)}
-                          disabled={distributing || !setsCanDistribute}
-                          className="bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50"
-                        >
-                          {distributing ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" />Distributing...</> : <><ArrowRight className="w-4 h-4 mr-1.5" />Distribute Now</>}
-                        </Button>
-                        {distributionStatus?.distributed > 0 && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={handleClearDistribution}
-                            className="border-red-200 text-red-600 hover:bg-red-50"
-                          >
-                            Clear Distribution
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* ── Distribution Status Table ─────────────────────────────── */}
-                  {distributionStatus && (
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <h4 className="font-semibold text-gray-900 text-sm">Distribution Status</h4>
-                        <div className="flex items-center gap-3">
-                          {Object.entries(distributionStatus.by_set || {}).map(([label, count]: any) => (
-                            <span key={label} className="text-xs bg-violet-100 text-violet-700 px-2.5 py-1 rounded-full font-medium">
-                              Set {label}: {count}
-                            </span>
-                          ))}
-                          <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${distributionStatus.distribution_complete ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
-                            {distributionStatus.distributed}/{distributionStatus.total_students} distributed
-                          </span>
-                        </div>
-                      </div>
-
-                      {distributionStatusLoading ? (
-                        <div className="flex items-center justify-center py-8 text-gray-400">
-                          <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading...
-                        </div>
-                      ) : (
-                        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-                          <table className="w-full text-sm">
-                            <thead className="bg-gray-50 border-b border-gray-200">
-                              <tr>
-                                <th className="text-left px-4 py-3 font-semibold text-gray-600">Student</th>
-                                <th className="text-left px-4 py-3 font-semibold text-gray-600">Roll No.</th>
-                                <th className="text-center px-4 py-3 font-semibold text-gray-600">Assigned Set</th>
-                                <th className="text-left px-4 py-3 font-semibold text-gray-600">Test Status</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100">
-                              {(distributionStatus.students || []).slice((setsDistPage - 1) * setsDistPageSize, setsDistPage * setsDistPageSize).map((s: any) => (
-                                <tr key={s.assignment_id} className="hover:bg-gray-50 transition-colors">
-                                  <td className="px-4 py-2.5 font-medium text-gray-900">{s.student_name}</td>
-                                  <td className="px-4 py-2.5 text-gray-500 font-mono text-xs">{s.student_roll || '—'}</td>
-                                  <td className="px-4 py-2.5 text-center">
-                                    {s.assigned_set_label ? (
-                                      <span className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-violet-100 text-violet-700 font-bold text-sm">
-                                        {s.assigned_set_label}
-                                      </span>
-                                    ) : (
-                                      <span className="text-gray-300 text-xs">Unassigned</span>
-                                    )}
-                                  </td>
-                                  <td className="px-4 py-2.5">
-                                    <Badge className={`text-xs ${s.status === 'completed' ? 'bg-green-100 text-green-700 border-green-200' : s.status === 'started' ? 'bg-blue-100 text-blue-700 border-blue-200' : s.status === 'expired' ? 'bg-red-100 text-red-700 border-red-200' : 'bg-gray-100 text-gray-600 border-gray-200'}`}>
-                                      {s.status}
-                                    </Badge>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-
-                      {(distributionStatus?.students?.length || 0) > setsDistPageSize && (
-                        <div className="flex items-center justify-between bg-white px-4 py-3 border border-gray-200 rounded-xl mt-3">
-                          <div className="text-sm text-gray-500">
-                            Showing <span className="font-medium">{(setsDistPage - 1) * setsDistPageSize + 1}</span> to <span className="font-medium">{Math.min(setsDistPage * setsDistPageSize, distributionStatus.students.length)}</span> of <span className="font-medium">{distributionStatus.students.length}</span> students
-                          </div>
-                          <div className="flex gap-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => setSetsDistPage(p => Math.max(1, p - 1))}
-                              disabled={setsDistPage === 1}
-                            >
-                              Previous
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => setSetsDistPage(p => Math.min(Math.ceil(distributionStatus.students.length / setsDistPageSize), p + 1))}
-                              disabled={setsDistPage === Math.ceil(distributionStatus.students.length / setsDistPageSize)}
-                            >
-                              Next
-                            </Button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                </div>
-              )}
 
             </div>
 
