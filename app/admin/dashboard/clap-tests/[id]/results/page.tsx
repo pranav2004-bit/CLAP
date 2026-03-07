@@ -32,6 +32,13 @@ import { toast } from 'sonner'
 import { getApiUrl } from '@/lib/api-config'
 import { getGradeInfo, formatDuration } from '@/lib/grade-utils'
 
+interface IntegrityFlags {
+  tab_switches: number
+  fullscreen_exits: number
+  paste_attempts: number
+  similarity_flags: number
+}
+
 interface ResultRow {
   student_name: string
   student_id: string
@@ -48,6 +55,8 @@ interface ResultRow {
   duration_minutes: number | null
   started_at: string | null
   completed_at: string | null
+  malpractice_count: number
+  integrity_flags: IntegrityFlags
 }
 
 interface Summary {
@@ -514,6 +523,7 @@ export default function ClapTestResultsPage() {
                               </button>
                             </th>
                             <th className="py-3 px-3 text-center font-medium text-gray-600 whitespace-nowrap">Grade</th>
+                            <th className="py-3 px-3 text-center font-medium text-gray-600 whitespace-nowrap">Integrity</th>
                             <th className="py-3 px-3 text-center font-medium text-gray-600 whitespace-nowrap">Report</th>
                           </tr>
                         </thead>
@@ -564,6 +574,9 @@ export default function ClapTestResultsPage() {
                                   ) : (
                                     <span className="text-gray-400">-</span>
                                   )}
+                                </td>
+                                <td className="py-3 px-3 text-center">
+                                  <IntegrityBadge row={r} />
                                 </td>
                                 <td className="py-3 px-3 text-center">
                                   {r.status === 'completed' && r.total_score != null ? (
@@ -691,4 +704,34 @@ function formatStatus(status: string): string {
     test_deleted: 'Blocked',
   }
   return map[status] || status
+}
+
+function IntegrityBadge({ row }: { row: ResultRow }) {
+  const count = row.malpractice_count ?? 0
+  const flags = row.integrity_flags ?? { tab_switches: 0, fullscreen_exits: 0, paste_attempts: 0, similarity_flags: 0 }
+
+  if (count === 0) {
+    return <span className="text-green-600 font-medium text-xs">✓ Clean</span>
+  }
+
+  const hasSimilarity = flags.similarity_flags > 0
+
+  const parts: string[] = []
+  if (flags.tab_switches)     parts.push(`${flags.tab_switches}× tab switch`)
+  if (flags.fullscreen_exits) parts.push(`${flags.fullscreen_exits}× fullscreen exit`)
+  if (flags.paste_attempts)   parts.push(`${flags.paste_attempts}× paste attempt`)
+  if (flags.similarity_flags) parts.push(`${flags.similarity_flags}× high similarity`)
+
+  return (
+    <span
+      title={parts.join(', ')}
+      className={`text-xs font-medium cursor-help underline decoration-dotted ${
+        hasSimilarity ? 'text-red-600' : 'text-amber-600'
+      }`}
+    >
+      {hasSimilarity
+        ? `⚠ Similarity (${flags.similarity_flags})`
+        : `⚠ ${count} flag${count !== 1 ? 's' : ''}`}
+    </span>
+  )
 }

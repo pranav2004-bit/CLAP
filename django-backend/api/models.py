@@ -743,3 +743,46 @@ class DeadLetterQueue(models.Model):
 
     def __str__(self):
         return f"DLQ [{self.task_name}] retry={self.retry_count} resolved={self.resolved}"
+
+
+class MalpracticeEvent(models.Model):
+    """
+    Server-side integrity log for student exam sessions.
+    Events are fired from the frontend (fire-and-forget) and by the
+    post-test text similarity Celery task.
+
+    event_type meta schema:
+        tab_switch:           { "strike": 1|2 }
+        fullscreen_exit:      { "auto_reentry": true }
+        paste_attempt:        { "component_type": "writing" }
+        high_text_similarity: { "similarity_score": 0.92,
+                                "other_assignment_id": "<uuid>",
+                                "other_student_name": "...",
+                                "item_id": "<uuid>" }
+    """
+    EVENT_TYPES = [
+        ('tab_switch',           'Tab Switch'),
+        ('fullscreen_exit',      'Fullscreen Exit'),
+        ('paste_attempt',        'Paste Attempt'),
+        ('high_text_similarity', 'High Text Similarity'),
+    ]
+
+    assignment  = models.ForeignKey(
+        'StudentClapAssignment',
+        on_delete=models.CASCADE,
+        related_name='malpractice_events',
+    )
+    event_type  = models.CharField(max_length=50, choices=EVENT_TYPES, db_index=True)
+    occurred_at = models.DateTimeField(auto_now_add=True)
+    meta        = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = 'api_malpracticeevent'
+        ordering = ['-occurred_at']
+        indexes = [
+            models.Index(fields=['assignment'], name='idx_malpractice_assignment'),
+            models.Index(fields=['event_type'], name='idx_malpractice_type'),
+        ]
+
+    def __str__(self):
+        return f"MalpracticeEvent [{self.event_type}] assignment={self.assignment_id} @ {self.occurred_at}"

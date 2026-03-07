@@ -23,6 +23,7 @@ from api.models import (
     AssessmentSubmission,
     AuditLog,
     ClapTestComponent,
+    MalpracticeEvent,
     StudentAudioResponse,
     StudentClapAssignment,
     StudentClapResponse,
@@ -780,3 +781,92 @@ def dlq_sweeper(self):
             cursor.execute('SELECT pg_advisory_unlock(%s);', [lock_key])
         # Close stale DB connections after long-running sweeper
         connection.close()
+
+
+@shared_task(bind=True, queue='rule_scoring', soft_time_limit=180, max_retries=2)
+def check_text_similarity(self, assignment_id: str):
+    """
+    Post-test integrity check: compare this student's text responses against all
+    other completed students for the same CLAP test.
+
+    Uses difflib.SequenceMatcher (no AI cost, O(N) per assignment).
+    Flags pairs with ratio >= 0.85 as MalpracticeEvent(high_text_similarity).
+    Idempotent — checks for existing flags before creating.
+
+    Triggered asynchronously from finish_component when all_done=True.
+    Never blocks or delays the student.
+    """
+    import difflib
+
+    try:
+        assignment = StudentClapAssignment.objects.select_related(
+            'clap_test', 'student'
+        ).get(id=assignment_id)
+    except StudentClapAssignment.DoesNotExist:
+        logger.warning(f"check_text_similarity: assignment {assignment_id} not found")
+        return
+
+    # Collect this student's meaningful text responses (length > 50 chars)
+    my_text = {}
+    for r in StudentClapResponse.objects.filter(assignment=assignment):
+        if isinstance(r.response_data, dict):
+            text = r.response_data.get('text', '').strip()
+            if len(text) > 50:
+                my_text[str(r.item_id)] = text
+
+    if not my_text:
+        logger.info(f"check_text_similarity: no text responses for {assignment_id}, skipping")
+        return
+
+    # Compare against all OTHER completed assignments for the same test
+    others = StudentClapAssignment.objects.filter(
+        clap_test=assignment.clap_test,
+        status='completed',
+    ).exclude(id=assignment_id)
+
+    flagged_count = 0
+    for other in others:
+        other_text = {}
+        for r in StudentClapResponse.objects.filter(assignment=other):
+            if isinstance(r.response_data, dict):
+                text = r.response_data.get('text', '').strip()
+                if len(text) > 50:
+                    other_text[str(r.item_id)] = text
+
+        for item_id, my_ans in my_text.items():
+            other_ans = other_text.get(item_id, '')
+            if not other_ans:
+                continue
+
+            ratio = difflib.SequenceMatcher(None, my_ans, other_ans).ratio()
+            if ratio >= 0.85:
+                # Idempotent: skip if this pair+item was already flagged
+                already = MalpracticeEvent.objects.filter(
+                    assignment=assignment,
+                    event_type='high_text_similarity',
+                    meta__other_assignment_id=str(other.id),
+                    meta__item_id=item_id,
+                ).exists()
+                if not already:
+                    MalpracticeEvent.objects.create(
+                        assignment=assignment,
+                        event_type='high_text_similarity',
+                        meta={
+                            'similarity_score': round(ratio, 3),
+                            'other_assignment_id': str(other.id),
+                            'other_student_name': (
+                                other.student.full_name
+                                or str(getattr(other.student, 'student_id', other.student_id))
+                            ),
+                            'item_id': item_id,
+                        },
+                    )
+                    flagged_count += 1
+                    logger.warning(
+                        f"Similarity {ratio:.0%}: {assignment_id} ↔ {other.id}, item {item_id}"
+                    )
+
+    logger.info(
+        f"check_text_similarity done for {assignment_id}: "
+        f"{flagged_count} new flag(s) across {others.count()} peer(s)"
+    )

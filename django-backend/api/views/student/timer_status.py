@@ -53,9 +53,25 @@ def global_timer_status(request, assignment_id):
 
     Security: only the authenticated student who owns this assignment may call this.
     """
+    import time
+    from api.middleware.rate_limit import _get_redis, _rate_limited
+
     user = get_user_from_request(request)
     if not user or user.role != 'student':
         return JsonResponse({'error': 'Unauthorized'}, status=401)
+
+    # Per-endpoint burst limit: 1 poll per 2-second window per user.
+    # Frontend already uses adaptive intervals (1s–30s); this guards against bugs/abuse.
+    # Fails open if Redis is unavailable.
+    _rc = _get_redis()
+    if _rc:
+        _bucket = int(time.time()) // 2
+        _key = f'rl:timer:{user.id}:{_bucket}'
+        _limited, _, _ttl = _rate_limited(_rc, _key, limit=1, window_seconds=2)
+        if _limited:
+            _resp = JsonResponse({'error': 'Too many requests', 'code': 'RATE_LIMITED'}, status=429)
+            _resp['Retry-After'] = str(_ttl)
+            return _resp
 
     try:
         assignment = StudentClapAssignment.objects.select_related('clap_test').get(

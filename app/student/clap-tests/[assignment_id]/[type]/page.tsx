@@ -201,8 +201,19 @@ export default function ClapTestTakingPage() {
 
     // M3: Copy-paste prevention applies only to writing/subjective components
     const isWritingType = params.type === 'writing' || params.type === 'subjective'
-    const preventCopyPaste = isWritingType
+    const preventCopyOrCut = isWritingType
         ? (e: React.ClipboardEvent) => { e.preventDefault() }
+        : undefined
+    // Paste also fires a server-side malpractice event (fire-and-forget)
+    const preventPaste = isWritingType
+        ? (e: React.ClipboardEvent) => {
+            e.preventDefault()
+            apiFetch(getApiUrl(`student/clap-assignments/${params.assignment_id}/malpractice-event`), {
+                method: 'POST',
+                headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+                body: JSON.stringify({ event_type: 'paste_attempt', meta: { component_type: params.type } }),
+            }).catch(() => { /* silent */ })
+          }
         : undefined
 
     if (isLoading) {
@@ -342,9 +353,9 @@ export default function ClapTestTakingPage() {
                                         <Textarea
                                             value={answers[currentItem.id] || ''}
                                             onChange={(e) => handleSaveAnswer(e.target.value)}
-                                            onCopy={preventCopyPaste}
-                                            onPaste={preventCopyPaste}
-                                            onCut={preventCopyPaste}
+                                            onCopy={preventCopyOrCut}
+                                            onPaste={preventPaste}
+                                            onCut={preventCopyOrCut}
                                             placeholder="Type your answer here..."
                                             className="text-base sm:text-lg leading-relaxed p-4 min-h-[150px] sm:min-h-[240px] resize-y"
                                         />

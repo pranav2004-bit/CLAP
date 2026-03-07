@@ -66,10 +66,20 @@ export default function StudentClapTestDetailPage() {
   // iOS Safari detection (no native requestFullscreen)
   const isIOS = typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent)
 
+  // Fire-and-forget malpractice event — never blocks the student session
+  const reportMalpractice = useCallback((eventType: string, meta: Record<string, unknown> = {}) => {
+    apiFetch(getApiUrl(`student/clap-assignments/${params.assignment_id}/malpractice-event`), {
+      method: 'POST',
+      headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event_type: eventType, meta }),
+    }).catch(() => { /* silent — integrity log, never interrupts exam */ })
+  }, [params.assignment_id])
+
   const { requestFullscreen, exitFullscreen } = useAntiCheat({
     enabled: testIsActive,
     onTabSwitch: (count) => {
       setTabWarnings(count)
+      reportMalpractice('tab_switch', { strike: count })
       if (count >= 2 && !isAutoSubmitRef.current) {
         toast.error('Tab switch limit reached — auto-submitting your assessment.')
         handleFinalSubmit(true)
@@ -79,6 +89,7 @@ export default function StudentClapTestDetailPage() {
     },
     onFullscreenExit: () => {
       toast.warning('Fullscreen exited — returning to fullscreen.')
+      reportMalpractice('fullscreen_exit', { auto_reentry: true })
       requestFullscreen()
     },
   })

@@ -7,7 +7,7 @@ import json
 import logging
 from api.models import (
     User, ClapTest, ClapTestComponent, StudentClapAssignment,
-    ClapTestItem, StudentClapResponse, ComponentAttempt
+    ClapTestItem, StudentClapResponse, ComponentAttempt, MalpracticeEvent
 )
 from api.utils.jwt_utils import get_user_from_request
 
@@ -197,9 +197,24 @@ def submit_response(request, assignment_id):
     Enforces server-side deadline: rejects submissions after component deadline.
     Body: { "item_id": "uuid", "response_data": {...} }
     """
+    import time
+    from api.middleware.rate_limit import _get_redis, _rate_limited
+
     user = get_user_from_request(request)
     if not user or user.role != 'student':
         return JsonResponse({'error': 'Unauthorized'}, status=401)
+
+    # Per-endpoint burst limit: 5 auto-saves per 10-second window per user.
+    # Fails open if Redis is unavailable (never blocks legitimate traffic).
+    _rc = _get_redis()
+    if _rc:
+        _bucket = int(time.time()) // 10
+        _key = f'rl:submit:{user.id}:{_bucket}'
+        _limited, _, _ttl = _rate_limited(_rc, _key, limit=5, window_seconds=10)
+        if _limited:
+            _resp = JsonResponse({'error': 'Too many submissions', 'code': 'RATE_LIMITED'}, status=429)
+            _resp['Retry-After'] = str(_ttl)
+            return _resp
 
     try:
         assignment = StudentClapAssignment.objects.select_related('clap_test').get(id=assignment_id, student=user)
@@ -343,11 +358,58 @@ def finish_component(request, assignment_id, component_id):
         assignment.completed_at = now
         assignment.save(update_fields=['status', 'completed_at'])
         logger.info(f"Assignment {assignment_id} marked completed for student {user.id}")
+        # Kick off async post-test text similarity check (fire-and-forget, never blocks student)
+        try:
+            from api.tasks import check_text_similarity
+            check_text_similarity.delay(str(assignment_id))
+        except Exception as task_err:
+            logger.warning(f"Could not enqueue similarity task for {assignment_id}: {task_err}")
 
     return JsonResponse({
         'message': 'Component finished successfully',
         'component_id': str(component_id),
         'all_components_done': all_done
     })
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def log_malpractice_event(request, assignment_id):
+    """
+    POST /api/student/clap-assignments/{id}/malpractice-event
+    Fire-and-forget from the student frontend on detected integrity events.
+    Never interrupts or blocks the student session — always returns 200/400 quickly.
+    Body: { "event_type": "tab_switch|fullscreen_exit|paste_attempt", "meta": {} }
+    """
+    user = get_user_from_request(request)
+    if not user or user.role != 'student':
+        return JsonResponse({'error': 'Unauthorized'}, status=401)
+
+    try:
+        assignment = StudentClapAssignment.objects.get(id=assignment_id, student=user)
+    except StudentClapAssignment.DoesNotExist:
+        return JsonResponse({'error': 'Not found'}, status=404)
+
+    try:
+        data = json.loads(request.body)
+        event_type = data.get('event_type', '')
+        meta = data.get('meta', {})
+
+        VALID_TYPES = {'tab_switch', 'fullscreen_exit', 'paste_attempt'}
+        if event_type not in VALID_TYPES:
+            return JsonResponse({'error': 'Invalid event type'}, status=400)
+
+        MalpracticeEvent.objects.create(
+            assignment=assignment,
+            event_type=event_type,
+            meta=meta if isinstance(meta, dict) else {},
+        )
+        logger.info(
+            f"Malpractice [{event_type}] assignment={assignment_id} student={user.id} meta={meta}"
+        )
+        return JsonResponse({'logged': True})
+    except Exception as e:
+        logger.error(f"Error logging malpractice event for {assignment_id}: {e}")
+        return JsonResponse({'error': 'Failed to log event'}, status=500)
 
 

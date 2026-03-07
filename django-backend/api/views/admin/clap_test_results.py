@@ -14,7 +14,7 @@ import logging
 
 from api.models import (
     ClapTest, ClapTestComponent, StudentClapAssignment,
-    StudentClapResponse,
+    StudentClapResponse, MalpracticeEvent,
 )
 from api.utils.jwt_utils import get_user_from_request
 
@@ -99,8 +99,16 @@ def clap_test_results_handler(request, test_id):
             queryset=StudentClapResponse.objects.select_related('item__component'),
         )
 
+        # Prefetch malpractice events — avoids N+1 on the Integrity column
+        malpractice_prefetch = Prefetch(
+            'malpractice_events',
+            queryset=MalpracticeEvent.objects.only('event_type'),
+        )
+
         # Build filtered queryset
-        assignments_qs = base_qs.select_related('student').prefetch_related(response_prefetch)
+        assignments_qs = base_qs.select_related('student').prefetch_related(
+            response_prefetch, malpractice_prefetch
+        )
 
         # Search by student_id or full_name
         search = request.GET.get('search', '').strip()
@@ -161,6 +169,15 @@ def clap_test_results_handler(request, test_id):
             # Calculate grade
             grade = calculate_grade(assignment.total_score, max_possible)
 
+            # Integrity flags from prefetched malpractice events (no extra query)
+            events = list(assignment.malpractice_events.all())
+            integrity_flags = {
+                'tab_switches':     sum(1 for e in events if e.event_type == 'tab_switch'),
+                'fullscreen_exits': sum(1 for e in events if e.event_type == 'fullscreen_exit'),
+                'paste_attempts':   sum(1 for e in events if e.event_type == 'paste_attempt'),
+                'similarity_flags': sum(1 for e in events if e.event_type == 'high_text_similarity'),
+            }
+
             results.append({
                 'student_name': student.full_name or student.email or '',
                 'student_id': student.student_id or '',
@@ -177,6 +194,8 @@ def clap_test_results_handler(request, test_id):
                 'duration_minutes': duration_minutes,
                 'started_at': assignment.started_at.isoformat() if assignment.started_at else None,
                 'completed_at': assignment.completed_at.isoformat() if assignment.completed_at else None,
+                'malpractice_count': len(events),
+                'integrity_flags': integrity_flags,
             })
 
         return JsonResponse({

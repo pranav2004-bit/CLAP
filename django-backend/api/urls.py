@@ -169,6 +169,8 @@ urlpatterns = [
     path('student/clap-assignments/<uuid:assignment_id>/components/<uuid:component_id>/items', clap_attempt.student_test_items, name='student_test_items'),
     path('student/clap-assignments/<uuid:assignment_id>/submit', clap_attempt.submit_response, name='student_submit_response'),
     path('student/clap-assignments/<uuid:assignment_id>/components/<uuid:component_id>/finish', clap_attempt.finish_component, name='student_finish_component'),
+    # Integrity event logging — fire-and-forget from frontend (tab switch, fullscreen exit, paste)
+    path('student/clap-assignments/<uuid:assignment_id>/malpractice-event', clap_attempt.log_malpractice_event, name='student_malpractice_event'),
 
     # Audio Recording
     path('student/clap-assignments/<uuid:assignment_id>/audio-upload-url', audio_upload.get_audio_upload_url, name='student_audio_upload_url'),
