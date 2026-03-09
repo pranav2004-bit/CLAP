@@ -193,12 +193,9 @@ def create_student(request):
             bcrypt.gensalt(rounds=settings.BCRYPT_ROUNDS)
         ).decode('utf-8')
         
-        # Generate dummy email based on student_id
-        dummy_email = f'{student_id}@clap-student.local'
-        
-        # Prepare insert data
+        # Prepare insert data — email intentionally omitted (NULL).
+        # Students set their own email on first login via the profile page.
         insert_data = {
-            'email': dummy_email,
             'student_id': student_id,
             'password_hash': password_hash,
             'role': 'student',

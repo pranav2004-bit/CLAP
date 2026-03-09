@@ -1,5 +1,6 @@
 // API Configuration
 // Central configuration for API base URL, auth headers, and resilient fetch helpers.
+import { authStorage } from '@/lib/auth-storage'
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api'
 
@@ -14,12 +15,12 @@ export const getApiUrl = (endpoint: string) => {
 export const getAuthHeaders = (): Record<string, string> => {
     if (typeof window === 'undefined') return {}
     // Prefer JWT Bearer token (more secure — server validates signature)
-    const accessToken = localStorage.getItem('access_token')
+    const accessToken = authStorage.get('access_token')
     if (accessToken) {
         return { 'Authorization': `Bearer ${accessToken}` }
     }
     // Fallback to x-user-id for backward compatibility during migration
-    const userId = localStorage.getItem('user_id')
+    const userId = authStorage.get('user_id')
     return userId ? { 'x-user-id': userId } : {}
 }
 
@@ -38,14 +39,9 @@ export const handle401 = () => {
     if (_redirecting) return   // another 401 already triggered the redirect
     _redirecting = true
 
-    const role = localStorage.getItem('user_role')
+    const role = authStorage.get('user_role')
     // Clear all auth tokens — the session is truly expired
-    localStorage.removeItem('access_token')
-    localStorage.removeItem('user_id')
-    localStorage.removeItem('user_email')
-    localStorage.removeItem('user_role')
-    localStorage.removeItem('user_name')
-    localStorage.removeItem('token_expires_at')
+    authStorage.clear()
 
     const loginPath = role === 'admin' ? '/admin-login' : '/login'
     window.location.href = `${loginPath}?reason=session_expired`
@@ -70,7 +66,7 @@ export const refreshAuthToken = async (): Promise<boolean> => {
     if (_refreshPromise) return _refreshPromise
 
     _refreshPromise = (async () => {
-        const token = localStorage.getItem('access_token')
+        const token = authStorage.get('access_token')
         if (!token) return false
 
         try {
@@ -82,9 +78,9 @@ export const refreshAuthToken = async (): Promise<boolean> => {
 
             const data = await res.json()
             if (data.access_token) {
-                localStorage.setItem('access_token', data.access_token)
+                authStorage.set('access_token', data.access_token)
                 if (data.expires_in) {
-                    localStorage.setItem('token_expires_at', String(Date.now() + data.expires_in * 1000))
+                    authStorage.set('token_expires_at', String(Date.now() + data.expires_in * 1000))
                 }
                 return true
             }

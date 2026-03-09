@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Mic, Square, Play, Pause, RotateCcw, Check, AlertCircle } from 'lucide-react'
 import { toast } from 'sonner'
+import { getAuthHeaders, API_BASE_URL } from '@/lib/api-config'
 
 type RecorderStatus = 'idle' | 'requesting_permission' | 'recording' | 'stopped' | 'playing' | 'uploading' | 'uploaded' | 'error'
 
@@ -177,17 +178,16 @@ export default function AudioRecorderItem({
     setUploadProgress(0)
 
     try {
-      const user_id = localStorage.getItem('user_id')
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api'
+      const authHeaders = getAuthHeaders()
 
       // Preferred path: request presigned URL and upload directly to S3.
       const presignResponse = await fetch(
-        `${apiUrl}/student/clap-assignments/${assignmentId}/audio-upload-url`,
+        `${API_BASE_URL}/student/clap-assignments/${assignmentId}/audio-upload-url`,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            ...(user_id ? { 'x-user-id': user_id } : {})
+            ...authHeaders,
           },
           body: JSON.stringify({
             item_id: itemId,
@@ -211,12 +211,12 @@ export default function AudioRecorderItem({
         }
 
         const finalizeResp = await fetch(
-          `${apiUrl}/student/clap-assignments/${assignmentId}/submit-audio`,
+          `${API_BASE_URL}/student/clap-assignments/${assignmentId}/submit-audio`,
           {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              ...(user_id ? { 'x-user-id': user_id } : {})
+              ...authHeaders,
             },
             body: JSON.stringify({
               item_id: itemId,
@@ -249,11 +249,11 @@ export default function AudioRecorderItem({
       formData.append('mime_type', audioBlob.type)
 
       const response = await fetch(
-        `${apiUrl}/student/clap-assignments/${assignmentId}/submit-audio`,
+        `${API_BASE_URL}/student/clap-assignments/${assignmentId}/submit-audio`,
         {
           method: 'POST',
           body: formData,
-          headers: user_id ? { 'x-user-id': user_id } : {}
+          headers: authHeaders,
         }
       )
 

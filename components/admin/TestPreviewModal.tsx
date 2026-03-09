@@ -29,6 +29,7 @@ import {
 } from 'lucide-react'
 import { Textarea } from '@/components/ui/textarea'
 import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
+import { authStorage } from '@/lib/auth-storage'
 
 // Question classification helper
 const isQuestion = (itemType: string): boolean => {
@@ -586,7 +587,7 @@ function AdminPreviewAudioPlayer({ item }: { item: any }) {
     const limitReached = hasLimit && playCount >= playLimit
 
     useEffect(() => {
-        const userId = typeof window !== 'undefined' ? localStorage.getItem('user_id') : null
+        const userId = typeof window !== 'undefined' ? authStorage.get('user_id') : null
 
         if (item.content?.has_audio_file) {
             const baseUrl = getApiUrl(`admin/clap-items/${item.id}/audio`)

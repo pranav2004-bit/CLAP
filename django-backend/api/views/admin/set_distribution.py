@@ -291,8 +291,11 @@ def distribution_status(request, test_id):
     except ClapTest.DoesNotExist:
         return error_response('Test not found', status=404)
 
+    # student__is_active=True keeps total_students in sync with the batch page student count.
+    # Inactive students are excluded from both views so the numbers always match.
     assignments = StudentClapAssignment.objects.filter(
-        clap_test_id=test_id
+        clap_test_id=test_id,
+        student__is_active=True,
     ).select_related('student', 'assigned_set').order_by('student__student_id')
 
     total = assignments.count()

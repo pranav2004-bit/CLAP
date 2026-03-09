@@ -21,6 +21,7 @@ import {
   AlertCircle
 } from 'lucide-react'
 import { signIn } from '@/lib/supabase'
+import { authStorage } from '@/lib/auth-storage'
 
 type UserRole = 'student' | 'admin'
 
@@ -50,11 +51,11 @@ function LoginContent() {
       }
 
       if (data?.user) {
-        // Store user data
-        localStorage.setItem('user_id', data.user.id)
-        localStorage.setItem('user_email', data.user.email)
-        localStorage.setItem('user_role', data.user.user_metadata?.role || 'student')
-        localStorage.setItem('user_name', data.user.user_metadata?.full_name || '')
+        // Store user data (tab-isolated via sessionStorage)
+        authStorage.set('user_id', data.user.id)
+        authStorage.set('user_email', data.user.email)
+        authStorage.set('user_role', data.user.user_metadata?.role || 'student')
+        authStorage.set('user_name', data.user.user_metadata?.full_name || '')
 
         // Check if profile is completed
         const profileCompleted = data.user.user_metadata?.profile_completed || false

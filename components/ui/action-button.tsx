@@ -20,10 +20,13 @@ export function ActionButton({
     ...props
 }: ActionButtonProps) {
     const router = useRouter()
+    const [isPending, startTransition] = React.useTransition()
     const [isLoading, setIsLoading] = React.useState(false)
 
+    const loading = isPending || isLoading
+
     const handleClick = async (e: React.MouseEvent<HTMLButtonElement>) => {
-        if (isLoading) return
+        if (loading) return
 
         // If it's just a normal click handler
         if (onClick) {
@@ -51,23 +54,23 @@ export function ActionButton({
                 return
             }
 
-            // Standard navigation
-            setIsLoading(true)
-            // We don't verify navigation completion here, checking pathname change would be ideal 
-            // but for simple feedback, setting loading is enough. 
-            // Next.js will eventually replace the page.
-            router.push(href)
+            // useTransition keeps isPending=true until the full page navigation
+            // completes (including server data fetching), so the spinner stays
+            // visible for exactly as long as navigation takes — no manual cleanup needed.
+            startTransition(() => {
+                router.push(href)
+            })
         }
     }
 
     return (
         <Button
             className={cn("relative", className)}
-            disabled={disabled || isLoading}
+            disabled={disabled || loading}
             onClick={handleClick}
             {...props}
         >
-            {isLoading && (
+            {loading && (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             )}
             {children}

@@ -19,6 +19,7 @@ from api.views.admin import (
     clap_components,
     audio_upload as admin_audio_upload,
     clap_test_results,
+    assignment_answers,
     dlq,
     submissions_monitor,
     score_management,
@@ -73,6 +74,7 @@ urlpatterns = [
     path('admin/clap-tests/<uuid:test_id>/assign', clap_test_assignment.assign_clap_test, name='admin_clap_test_assign'),
     path('admin/clap-tests/<uuid:test_id>/unassign', clap_test_assignment.unassign_clap_test, name='admin_clap_test_unassign'),
     path('admin/clap-tests/<uuid:test_id>/results', clap_test_results.clap_test_results_handler, name='admin_clap_test_results'),
+    path('admin/clap-tests/<uuid:test_id>/assignments/<uuid:assignment_id>/answers', assignment_answers.assignment_answers, name='admin_assignment_answers'),
     path('admin/clap-tests/<uuid:test_id>/retest-candidates', retest_management.list_retest_candidates, name='admin_retest_candidates'),
     path('admin/assignments/<uuid:assignment_id>/grant-retest', retest_management.grant_retest, name='admin_grant_retest'),
 

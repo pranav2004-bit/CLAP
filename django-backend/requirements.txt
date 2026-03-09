@@ -23,6 +23,9 @@ cryptography==42.0.8
 openai==1.10.0
 # openai==1.10.0 is incompatible with httpx>=0.28 (proxies arg removed)
 httpx==0.27.2
+# tiktoken: token counter for pre-flight OpenAI quota estimation (gpt-4o-mini = cl100k_base).
+# Soft dependency — token_counter.py falls back to char-ratio if not installed.
+tiktoken==0.7.0
 
 # Utilities
 python-dateutil==2.8.2
@@ -44,6 +47,10 @@ django-storages==1.14.4
 
 # PDF generation (report worker)
 weasyprint==62.3
+
+# Audio conversion (WebM/MP4 → MP3 64kbps mono, runs in celery-reports worker)
+# Requires ffmpeg system binary — installed in Dockerfile runtime stage.
+pydub==0.25.1
 
 # Error tracking / observability (D4/E5)
 # Set SENTRY_DSN in .env to activate; safe no-op if DSN is absent.

@@ -5,7 +5,7 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { ArrowLeft, Headphones, Mic, BookOpen, PenTool, Brain, CheckCircle, PlayCircle, Loader2, Download, Clock, AlertTriangle, LogOut, WifiOff } from 'lucide-react'
+import { Headphones, Mic, BookOpen, PenTool, Brain, CheckCircle, PlayCircle, Loader2, Clock, AlertTriangle, LogOut, WifiOff, ArrowLeft } from 'lucide-react'
 import { toast } from 'sonner'
 import { getApiUrl, getAuthHeaders, apiFetch, silentFetch } from '@/lib/api-config'
 import { useAntiCheat } from '@/hooks/useAntiCheat'
@@ -31,8 +31,15 @@ export default function StudentClapTestDetailPage() {
 
   const [submission, setSubmission] = useState<any>(null)
   const [polling, setPolling] = useState(false)
-  const [results, setResults] = useState<any>(null)
-  const [history, setHistory] = useState<any[]>([])
+
+  // Fullscreen prompt — shown once when test loads so user gesture can grant fullscreen
+  const [showFullscreenPrompt, setShowFullscreenPrompt] = useState(false)
+  // Fullscreen exit warning — blocking modal when student exits fullscreen mid-test
+  const [showFullscreenExitWarning, setShowFullscreenExitWarning] = useState(false)
+  // Fullscreen exit strike tracking: 1st/2nd → modal + 20 s countdown; 3rd → instant auto-submit
+  const fullscreenExitCountRef = useRef(0)
+  const [fullscreenExitCount, setFullscreenExitCount] = useState(0)
+  const [fsExitCountdown, setFsExitCountdown] = useState(20)
 
   // ── Server-authoritative timer state ──────────────────────────────────────
   const [globalTimeLeft, setGlobalTimeLeft]     = useState<number | null>(null)
@@ -50,6 +57,10 @@ export default function StudentClapTestDetailPage() {
 
   // Completed Components State
   const [submittedComponents, setSubmittedComponents] = useState<string[]>([])
+
+  // Button loading states
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [loadingComponent, setLoadingComponent] = useState<string | null>(null)
 
   // Anti-cheat / exit modal state
   const [exitStep, setExitStep] = useState<0 | 1 | 2>(0)
@@ -89,9 +100,31 @@ export default function StudentClapTestDetailPage() {
       }
     },
     onFullscreenExit: () => {
-      toast.warning('Fullscreen exited — returning to fullscreen.')
-      reportMalpractice('fullscreen_exit', { auto_reentry: true })
-      requestFullscreen()
+      const newCount = fullscreenExitCountRef.current + 1
+      fullscreenExitCountRef.current = newCount
+      setFullscreenExitCount(newCount)
+      reportMalpractice('fullscreen_exit', { count: newCount, auto_reentry: false })
+
+      if (newCount >= 3) {
+        // 3rd strike — skip the modal, immediately auto grand submit
+        toast.error(
+          'You have reached the limit of exiting fullscreen — all 5 tests are auto grand submitted.',
+          { duration: 8000 }
+        )
+        if (!isAutoSubmitRef.current) {
+          isAutoSubmitRef.current = true
+          handleFinalSubmit(true)
+        }
+      } else {
+        // 1st or 2nd exit — show blocking modal with 20-second countdown
+        if (newCount === 1) {
+          toast.warning('1/2 reached limit of the full screen existing', { duration: 6000 })
+        } else {
+          toast.warning('2/2 reached limit of the full screen existing', { duration: 6000 })
+        }
+        setFsExitCountdown(20)
+        setShowFullscreenExitWarning(true)
+      }
     },
   })
 
@@ -170,6 +203,7 @@ export default function StudentClapTestDetailPage() {
   // ── handleFinalSubmit (stable — used by auto-submit + manual submit) ───────
   const handleFinalSubmit = useCallback(async (autoSubmit = false) => {
     if (!autoSubmit && !confirm('Are you sure you want to submit the ENTIRE assessment? You will not be able to make changes.')) return;
+    setIsSubmitting(true)
     try {
       const idempotencyKey = crypto.randomUUID();
       const submitResp = await apiFetch(getApiUrl('submissions'), {
@@ -193,6 +227,7 @@ export default function StudentClapTestDetailPage() {
       toast.error('Failed to submit test completely.');
       console.error(e);
       isAutoSubmitRef.current = false;   // allow retry on error
+      setIsSubmitting(false)             // re-enable button on error
     }
   }, [params.assignment_id, router])
 
@@ -280,24 +315,30 @@ export default function StudentClapTestDetailPage() {
         return
       }
 
-      pollingTimerRef.current = setTimeout(pollGlobalTimer, getNextPollMs(data.remaining_seconds ?? 9999))
+      // When timer hasn't started yet (no deadline), poll every 5 s so the
+      // student sees it go live within seconds of the admin starting it.
+      const nextMs = data.deadline_utc
+        ? getNextPollMs(data.remaining_seconds ?? 9999)
+        : 5000
+      pollingTimerRef.current = setTimeout(pollGlobalTimer, nextMs)
     } catch {
       setTimerSyncError(true)
       pollingTimerRef.current = setTimeout(pollGlobalTimer, 5000)
     }
   }, [params.assignment_id, handleFinalSubmit])
 
-  // ── Start polling + enter fullscreen when assignment is loaded ────────────
+  // ── Start polling + show fullscreen prompt when assignment is loaded ────────
   useEffect(() => {
     if (!assignment || assignment.status === 'completed' || submissionId) return
     assignmentReadyRef.current = true
     pollGlobalTimer()
 
-    // Enter fullscreen (iOS: CSS class simulation)
+    // iOS: apply CSS fullscreen simulation immediately (no gesture needed)
     if (isIOS) {
       document.documentElement.classList.add('ios-test-fullscreen')
     } else {
-      requestFullscreen()
+      // Desktop/Android: must be triggered from a user click — show the prompt
+      setShowFullscreenPrompt(true)
     }
 
     return () => {
@@ -315,6 +356,24 @@ export default function StudentClapTestDetailPage() {
       // This is only a seed; poll will override with the authoritative value
     }
   }, [globalTotalDuration, assignment?.started_at])
+
+  // ── Fullscreen-exit 20 s countdown tick ────────────────────────────────────
+  // Each second, decrement the counter while the warning modal is open.
+  useEffect(() => {
+    if (!showFullscreenExitWarning || fsExitCountdown <= 0) return
+    const id = setTimeout(() => setFsExitCountdown(prev => Math.max(0, prev - 1)), 1000)
+    return () => clearTimeout(id)
+  }, [showFullscreenExitWarning, fsExitCountdown])
+
+  // ── Auto-submit when the 20 s countdown expires ────────────────────────────
+  useEffect(() => {
+    if (!showFullscreenExitWarning || fsExitCountdown !== 0) return
+    setShowFullscreenExitWarning(false)
+    if (!isAutoSubmitRef.current) {
+      isAutoSubmitRef.current = true
+      handleFinalSubmit(true)
+    }
+  }, [showFullscreenExitWarning, fsExitCountdown, handleFinalSubmit])
 
   // ── Page Visibility — re-poll immediately when tab re-focuses ────────────
   useEffect(() => {
@@ -402,42 +461,6 @@ export default function StudentClapTestDetailPage() {
     }
   }, [submissionId])
 
-  useEffect(() => {
-    if (!submissionId || !submission?.status) return
-    if (submission.status !== 'COMPLETE' && !submission.status.startsWith('REPORT_')) return
-
-    const fetchResults = async () => {
-      try {
-        const resp = await apiFetch(getApiUrl(`submissions/${submissionId}/results`), {
-          headers: getAuthHeaders(),
-        })
-        if (!resp.ok) return
-        const data = await resp.json()
-        setResults(data)
-      } catch (e) {
-        console.error('Failed loading results', e)
-      }
-    }
-
-    fetchResults()
-  }, [submissionId, submission])
-
-  useEffect(() => {
-    const fetchHistory = async () => {
-      try {
-        const assessmentId = assignment?.test_id || assignment?.clap_test_id || assignment?.id || ''
-        const url = assessmentId ? getApiUrl(`submissions/history?assessment_id=${assessmentId}`) : getApiUrl('submissions/history')
-        const resp = await apiFetch(url, { headers: getAuthHeaders() })
-        if (!resp.ok) return
-        const data = await resp.json()
-        setHistory(Array.isArray(data.rows) ? data.rows : [])
-      } catch (e) {
-        console.error('Failed loading history', e)
-      }
-    }
-
-    if (assignment) fetchHistory()
-  }, [assignment])
 
   const statusProgress = useMemo(() => {
     if (!submission?.status) return 0
@@ -445,20 +468,6 @@ export default function StudentClapTestDetailPage() {
     if (idx < 0) return 0
     return Math.round(((idx + 1) / STATUS_STEPS.length) * 100)
   }, [submission])
-
-  const overallScore = useMemo(() => {
-    if (!results?.scores?.length) return null
-    const vals = results.scores.map((s: any) => Number(s.score || 0))
-    return Math.round((vals.reduce((a: number, b: number) => a + b, 0) / vals.length) * 100) / 100
-  }, [results])
-
-  const reportDownloadUrl = useMemo(() => {
-    if (results?.report_download_url) return results.report_download_url
-    const ready = history.find((h: any) => Boolean(h.report_download_url))
-    return ready?.report_download_url || ''
-  }, [results, history])
-
-  const reportIsReady = Boolean(reportDownloadUrl)
 
   const getIcon = (type: string) => {
     switch (type) {
@@ -480,7 +489,7 @@ export default function StudentClapTestDetailPage() {
         <div className="h-8 w-24 bg-gray-200 rounded" />
       </div>
       {/* Hero banner skeleton */}
-      <div className="h-40 bg-indigo-100 rounded-2xl mb-8" />
+      <div className="h-28 sm:h-40 bg-indigo-100 rounded-2xl mb-6 sm:mb-8" />
       {/* Submission progress skeleton */}
       <div className="h-20 bg-gray-100 rounded-xl mb-4" />
       {/* Component tiles */}
@@ -560,36 +569,162 @@ export default function StudentClapTestDetailPage() {
         </div>
       )}
 
-    <div className={`px-4 py-4 sm:px-6 max-w-4xl mx-auto ${!isOnline ? 'pt-12' : ''}`}>
+      {/* ── Fullscreen exit warning — blocks exam until student re-enters or submits ── */}
+      {showFullscreenExitWarning && !isAutoSubmitRef.current && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 px-4">
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl text-center">
+
+            {/* Strike count badge */}
+            <div className="inline-flex items-center gap-1.5 bg-red-100 text-red-700 text-xs font-bold px-3 py-1 rounded-full mb-5">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5}
+                  d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+              </svg>
+              {fullscreenExitCount}/2 reached limit of full screen existing
+            </div>
+
+            {/* Warning icon */}
+            <div className="w-14 h-14 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-3">
+              <svg className="w-7 h-7 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+              </svg>
+            </div>
+            <h2 className="text-lg font-bold text-gray-900 mb-2">Fullscreen Exited</h2>
+            <p className="text-sm text-gray-500 mb-4 leading-relaxed">
+              You are not allowed to continue the exam outside fullscreen.
+              Return to fullscreen to resume, or submit what you have completed so far.
+            </p>
+
+            {/* 2nd exit extra warning */}
+            {fullscreenExitCount === 2 && (
+              <div className="bg-orange-50 border border-orange-300 rounded-lg px-3 py-2.5 mb-4 text-left">
+                <p className="text-xs text-orange-800 font-semibold leading-relaxed">
+                  ⚠ Next time exiting fullscreen will auto grand submit all 5 component tests immediately.
+                </p>
+              </div>
+            )}
+
+            {/* 20-second countdown ring */}
+            <div className="flex flex-col items-center gap-2 mb-5">
+              <div className={`w-16 h-16 rounded-full border-4 flex items-center justify-center transition-colors ${
+                fsExitCountdown <= 5
+                  ? 'border-red-500 bg-red-50'
+                  : fsExitCountdown <= 10
+                    ? 'border-orange-400 bg-orange-50'
+                    : 'border-yellow-400 bg-yellow-50'
+              }`}>
+                <span className={`text-2xl font-bold font-mono tabular-nums ${
+                  fsExitCountdown <= 5 ? 'text-red-600' :
+                  fsExitCountdown <= 10 ? 'text-orange-600' : 'text-yellow-700'
+                }`}>{fsExitCountdown}</span>
+              </div>
+              <p className="text-xs text-gray-500 leading-relaxed max-w-[240px]">
+                If you do not click any button, the test will be{' '}
+                <strong className="text-red-600">auto grand submitted</strong>{' '}
+                when the timer reaches 0.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              {/* Primary: return to fullscreen */}
+              <button
+                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 rounded-xl transition-colors"
+                onClick={async () => {
+                  await requestFullscreen()
+                  setShowFullscreenExitWarning(false)
+                }}
+              >
+                Return to Fullscreen
+              </button>
+              {/* Destructive: grand submit immediately */}
+              <button
+                className="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-3 rounded-xl transition-colors"
+                onClick={() => {
+                  setShowFullscreenExitWarning(false)
+                  if (!isAutoSubmitRef.current) {
+                    isAutoSubmitRef.current = true
+                    handleFinalSubmit(true)
+                  }
+                }}
+              >
+                Submit Full Exam &amp; Exit
+              </button>
+            </div>
+            <p className="text-xs text-gray-400 mt-4">
+              This incident has been recorded.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* ── Fullscreen prompt — must be a direct click to satisfy browser policy ── */}
+      {showFullscreenPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4">
+          <div className="bg-white rounded-2xl p-8 max-w-sm w-full shadow-2xl text-center">
+            <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />
+              </svg>
+            </div>
+            <h2 className="text-lg font-bold text-gray-900 mb-2">Fullscreen Required</h2>
+            <p className="text-sm text-gray-500 mb-6">
+              This assessment must be taken in fullscreen mode. Tab switching is monitored.
+            </p>
+            <button
+              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 rounded-xl transition-colors"
+              onClick={async () => {
+                await requestFullscreen()
+                setShowFullscreenPrompt(false)
+              }}
+            >
+              Enter Fullscreen & Begin
+            </button>
+          </div>
+        </div>
+      )}
+
+    <div className={`px-4 py-4 sm:px-6 max-w-4xl mx-auto ${!isOnline ? 'pt-10 sm:pt-12' : ''}`}>
       {/* Header row */}
-      <div className="flex items-center justify-between mb-6">
-        <Button variant="ghost" className="pl-0 hover:pl-2 transition-all"
-                onClick={() => testIsActive ? setExitStep(1) : router.back()}>
-          <ArrowLeft className="w-4 h-4 mr-2" />
-          <span className="hidden sm:inline">Back to Dashboard</span>
-          <span className="sm:hidden">Back</span>
-        </Button>
-        {testIsActive && (
+      <div className="flex items-center justify-end mb-6">
+        {testIsActive ? (
           <Button variant="ghost" size="sm" onClick={() => setExitStep(1)}
                   className="text-red-600 hover:text-red-700 hover:bg-red-50 min-h-[40px]">
             <LogOut className="w-4 h-4 mr-1.5" />
             <span className="hidden sm:inline">Exit Test</span>
           </Button>
+        ) : (
+          <Button variant="ghost" size="sm"
+                  onClick={() => router.push('/student/clap-tests')}
+                  className="text-gray-600 hover:text-gray-900 hover:bg-gray-100 min-h-[40px]">
+            <ArrowLeft className="w-4 h-4 mr-1.5" />
+            Back to Dashboard
+          </Button>
         )}
       </div>
 
-      <div className="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-2xl p-8 text-white mb-8 shadow-xl">
-        <h1 className="text-3xl font-bold mb-2">{assignment.test_name}</h1>
-        <p className="text-indigo-100">Complete all 5 modules to finish the assessment.</p>
-        <div className="mt-4 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-          <div className="flex gap-4 items-center">
-            <Badge className="bg-white/20 hover:bg-white/30 text-white border-0">
-              {assignment.status || 'Pending'}
+      <div className="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-2xl p-4 sm:p-8 text-white mb-6 sm:mb-8 shadow-xl">
+        <h1 className="text-xl sm:text-3xl font-bold mb-1 sm:mb-2">{assignment.test_name}</h1>
+        <p className="text-sm sm:text-base text-indigo-100">
+          Complete all {assignment.components?.length ?? 0} modules to finish the assessment.
+        </p>
+
+        {/* ── Meta row: status · date · timer ── */}
+        <div className="mt-3 sm:mt-4 flex items-center justify-between gap-3 flex-wrap">
+          {/* Left: badge + date */}
+          <div className="flex items-center gap-2 min-w-0">
+            <Badge className="bg-white/20 hover:bg-white/30 text-white border-0 capitalize shrink-0">
+              {assignment.status || 'pending'}
             </Badge>
-            <span className="text-sm text-indigo-200">Assigned: {new Date(assignment.assigned_at).toLocaleDateString()}</span>
+            <span className="text-xs text-indigo-200 truncate">
+              {new Date(assignment.assigned_at).toLocaleDateString()}
+            </span>
           </div>
+
+          {/* Right: timer pill */}
           {globalTimeLeft !== null && !submissionId && (
-            <div className={`px-4 py-2 rounded-xl flex items-center gap-2 font-mono text-xl font-bold border transition-all duration-500 ${
+            <div className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-mono text-lg font-bold border transition-all duration-500 shrink-0 ${
               timerExtended
                 ? 'bg-green-500/30 border-green-300/60 scale-105'
                 : globalTimeLeft < 120
@@ -598,7 +733,7 @@ export default function StudentClapTestDetailPage() {
                     ? 'bg-orange-400/25 border-orange-300/50'
                     : 'bg-white/10 border-white/20'
             }`}>
-              <Clock className={`w-5 h-5 ${timerExtended ? 'text-green-300' : globalTimeLeft < 120 ? 'text-red-300' : ''}`} />
+              <Clock className={`w-4 h-4 ${timerExtended ? 'text-green-300' : globalTimeLeft < 120 ? 'text-red-300' : ''}`} />
               <span className={
                 timerExtended ? 'text-green-200' :
                 globalTimeLeft < 120 ? 'text-red-200' :
@@ -619,93 +754,17 @@ export default function StudentClapTestDetailPage() {
           <CardContent className="p-5 space-y-3">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-500">Submission Processing</p>
-                <p className="font-semibold">Status: {submission?.status || 'Loading...'}</p>
+                <p className="text-sm text-gray-500">Assessment Submitted</p>
+                <p className="font-semibold">
+                  {submission?.status === 'COMPLETE'
+                    ? 'Your assessment has been evaluated successfully.'
+                    : 'Your assessment is being evaluated. You will be notified once results are ready.'}
+                </p>
               </div>
               {polling && <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />}
             </div>
             <div className="w-full bg-gray-200 h-2 rounded-full">
               <div className="bg-indigo-600 h-2 rounded-full transition-all duration-300" style={{ width: `${statusProgress}%` }} />
-            </div>
-            <p className="text-xs text-gray-500">
-              {submission?.status === 'COMPLETE'
-                ? 'Processing complete. Your report/results are ready.'
-                : 'We are processing your submission (rule scoring → LLM evaluation → report generation).'}
-            </p>
-          </CardContent>
-        </Card>
-      )}
-
-      <Card className="mb-6 border-sky-200">
-        <CardContent className="p-5 flex items-center justify-between gap-4">
-          <div>
-            <p className="text-sm text-gray-500">Assessment Report</p>
-            <p className="font-semibold">
-              {reportIsReady ? 'Your PDF report is ready to download.' : 'Report is still being generated.'}
-            </p>
-            {!reportIsReady && (
-              <p className="text-xs text-gray-500 mt-1">Fallback: check your latest results in the CLAP dashboard while processing continues.</p>
-            )}
-          </div>
-
-          {reportIsReady ? (
-            <a href={reportDownloadUrl} target="_blank" rel="noreferrer">
-              <Button><Download className="w-4 h-4 mr-2" />Download PDF</Button>
-            </a>
-          ) : (
-            <Button variant="outline" onClick={() => router.push('/student/clap-tests')}>
-              Go to Dashboard
-            </Button>
-          )}
-        </CardContent>
-      </Card>
-
-      {results && (
-        <Card className="mb-6 border-green-200">
-          <CardContent className="p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-500">Latest Result Summary</p>
-                <p className="text-xl font-bold">Overall Score: {overallScore ?? '-'} / 10</p>
-              </div>
-              {results.report_download_url && (
-                <a href={results.report_download_url} target="_blank" rel="noreferrer">
-                  <Button><Download className="w-4 h-4 mr-2" />Download Report</Button>
-                </a>
-              )}
-            </div>
-
-            <div className="grid md:grid-cols-2 gap-3">
-              {results.scores?.map((s: any) => (
-                <div key={s.domain} className="rounded-lg border p-3 bg-white">
-                  <div className="flex items-center justify-between">
-                    <p className="capitalize font-medium">{s.domain}</p>
-                    <Badge>{s.score}</Badge>
-                  </div>
-                  {s.feedback?.overall && <p className="text-sm text-gray-600 mt-2">{s.feedback.overall}</p>}
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {history.length > 0 && (
-        <Card className="mb-6">
-          <CardContent className="p-5">
-            <p className="font-semibold mb-3">Score History</p>
-            <div className="space-y-2">
-              {history.slice(0, 8).map((row: any) => (
-                <div key={row.submission_id} className="flex items-center justify-between rounded border p-3">
-                  <div>
-                    <p className="text-sm">{new Date(row.created_at).toLocaleString()}</p>
-                    <p className="text-xs text-gray-500">Status: {row.status}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-semibold">{row.overall_score ?? '-'} / 10</p>
-                  </div>
-                </div>
-              ))}
             </div>
           </CardContent>
         </Card>
@@ -728,6 +787,8 @@ export default function StudentClapTestDetailPage() {
           const isSubmitted = submittedComponents.includes(comp.type);
           const isDisabled = isTestLocked || !!submissionId || isSubmitted;
 
+          const isNavigating = loadingComponent === comp.type
+
           return (
             <Card
               key={comp.id}
@@ -735,20 +796,26 @@ export default function StudentClapTestDetailPage() {
                 ${isSubmitted ? 'border-l-green-500 bg-green-50/10' : 'border-l-indigo-500 cursor-pointer hover:shadow-md'}
                 ${isDisabled && !isSubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
               onClick={() => {
-                if (!isDisabled) router.push(`/student/clap-tests/${params.assignment_id}/${comp.type}`)
+                if (!isDisabled && !loadingComponent) {
+                  setLoadingComponent(comp.type)
+                  router.push(`/student/clap-tests/${params.assignment_id}/${comp.type}`)
+                }
               }}
             >
-              <CardContent className="p-4 sm:p-6 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3 sm:gap-4 min-w-0">
-                  <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center flex-shrink-0
+              <CardContent className="p-3 sm:p-5 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className={`w-9 h-9 sm:w-11 sm:h-11 rounded-full flex items-center justify-center flex-shrink-0
                     ${isSubmitted ? 'bg-green-100 text-green-600' : 'bg-indigo-50 text-indigo-600'}`}>
-                    <Icon className="w-5 h-5 sm:w-6 sm:h-6" />
+                    {isNavigating
+                      ? <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" />
+                      : <Icon className="w-4 h-4 sm:w-5 sm:h-5" />
+                    }
                   </div>
                   <div className="min-w-0">
-                    <h3 className={`font-semibold text-base sm:text-lg capitalize truncate
-                      ${isSubmitted ? 'text-green-800' : ''}`}>{comp.title}</h3>
-                    <p className="text-xs sm:text-sm text-gray-500">
-                      {comp.timer_enabled !== false ? `${comp.duration || 10} min` : 'No component timer'} • 10 Marks
+                    <h3 className={`font-semibold text-sm sm:text-base capitalize truncate
+                      ${isSubmitted ? 'text-green-800' : 'text-gray-900'}`}>{comp.title}</h3>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {comp.timer_enabled !== false ? `${comp.duration || 10} min` : 'No timer'}
                     </p>
                   </div>
                 </div>
@@ -759,9 +826,15 @@ export default function StudentClapTestDetailPage() {
                     </Badge>
                   ) : (
                     <Button size="sm" className="rounded-full px-4 sm:px-6 min-h-[40px] whitespace-nowrap"
-                            disabled={isDisabled}>
-                      {assignment.started_at ? 'Resume' : 'Start'}
-                      <PlayCircle className="w-4 h-4 ml-1.5" />
+                            disabled={isDisabled || isNavigating}>
+                      {isNavigating ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <>
+                          {assignment.started_at ? 'Resume' : 'Start'}
+                          <PlayCircle className="w-4 h-4 ml-1.5" />
+                        </>
+                      )}
                     </Button>
                   )}
                 </div>
@@ -771,17 +844,36 @@ export default function StudentClapTestDetailPage() {
         })}
       </div>
 
-      {!submissionId && assignment.components && submittedComponents.length === assignment.components.length && (
-        <div className="mt-8 flex justify-center">
-          <Button size="lg" className="bg-green-600 hover:bg-green-700 text-white font-bold text-lg px-12 py-6 rounded-xl shadow-lg border-b-4 border-green-800 active:border-b-0 active:translate-y-[4px]" onClick={() => handleFinalSubmit(false)}>
-            Final Submit Entire Assessment
+      {/* Exit to Dashboard — shown on the post-submission screen */}
+      {submissionId && (
+        <div className="mt-6 sm:mt-8 flex justify-center">
+          <Button
+            size="lg"
+            onClick={() => router.push('/student/clap-tests')}
+            className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-10 py-4 rounded-xl"
+          >
+            <ArrowLeft className="w-5 h-5 mr-2" />
+            Exit to Dashboard
           </Button>
         </div>
       )}
-      {!submissionId && !isTestLocked && submittedComponents.length < (assignment.components?.length || 5) && assignment.started_at && (
-        <div className="mt-8 flex justify-center">
-          <Button variant="outline" size="lg" className="text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700 font-bold" onClick={() => handleFinalSubmit(false)}>
-            Force Submit Assessment Early
+
+      {!submissionId && assignment.status !== 'completed' && assignment.components && submittedComponents.length === assignment.components.length && (
+        <div className="mt-6 sm:mt-8 flex justify-center px-0">
+          <Button
+            size="lg"
+            disabled={isSubmitting}
+            className="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white font-bold text-base sm:text-lg px-8 sm:px-12 py-5 sm:py-6 rounded-xl shadow-lg border-b-4 border-green-800 active:border-b-0 active:translate-y-[4px] disabled:opacity-70 disabled:cursor-not-allowed"
+            onClick={() => handleFinalSubmit(false)}
+          >
+            {isSubmitting ? (
+              <>
+                <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                Submitting...
+              </>
+            ) : (
+              'Final Submit Entire Assessment'
+            )}
           </Button>
         </div>
       )}

@@ -27,6 +27,10 @@ import {
   ChevronLeft,
   ChevronRight,
   Printer,
+  Eye,
+  X,
+  CheckCircle2,
+  XCircle,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { getApiUrl, apiFetch, getAuthHeaders } from '@/lib/api-config'
@@ -40,8 +44,8 @@ interface IntegrityFlags {
 }
 
 interface ResultRow {
-  student_name: string
   student_id: string
+  assigned_set_label: string
   status: string
   total_score: number | null
   max_possible_score: number
@@ -57,6 +61,9 @@ interface ResultRow {
   completed_at: string | null
   malpractice_count: number
   integrity_flags: IntegrityFlags
+  submission_id: string | null
+  submission_status: string | null
+  assignment_id: string
 }
 
 interface Summary {
@@ -93,6 +100,11 @@ export default function ClapTestResultsPage() {
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
+
+  // Answers Preview modal
+  const [previewRow, setPreviewRow]       = useState<ResultRow | null>(null)
+  const [previewData, setPreviewData]     = useState<any>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
 
   // Filters & sort
   const [searchInput, setSearchInput] = useState('')
@@ -155,6 +167,25 @@ export default function ClapTestResultsPage() {
     }
   }, [testId, page, searchQuery, statusFilter, sortBy, sortOrder, router])
 
+  // Answers Preview
+  const openPreview = useCallback(async (row: ResultRow) => {
+    setPreviewRow(row)
+    setPreviewData(null)
+    setPreviewLoading(true)
+    try {
+      const res = await apiFetch(
+        getApiUrl(`admin/clap-tests/${testId}/assignments/${row.assignment_id}/answers`),
+        { headers: getAuthHeaders() }
+      )
+      if (res.ok) setPreviewData(await res.json())
+      else setPreviewData({ error: 'Failed to load answers' })
+    } catch {
+      setPreviewData({ error: 'Network error' })
+    } finally {
+      setPreviewLoading(false)
+    }
+  }, [testId])
+
   useEffect(() => {
     fetchResults()
   }, [fetchResults])
@@ -213,14 +244,14 @@ export default function ClapTestResultsPage() {
         currentPage++
       }
       const headers = [
-        'Student Name', 'Student ID', 'Status',
+        'Student ID', 'Set', 'Status',
         'Start Time', 'End Time', 'Duration',
         'Listening', 'Speaking', 'Writing', 'Reading', 'Vocabulary & Grammar',
         'Total Marks', 'Grade',
       ]
       const rows = allResults.map(r => [
-        r.student_name,
         r.student_id,
+        r.assigned_set_label || '-',
         formatStatus(r.status),
         r.started_at ? new Date(r.started_at).toLocaleString() : '',
         r.completed_at ? new Date(r.completed_at).toLocaleString() : '',
@@ -266,7 +297,7 @@ export default function ClapTestResultsPage() {
     }
 
     printWindow.document.write(`<!DOCTYPE html>
-<html><head><title>CLAP Report - ${student.student_name}</title>
+<html><head><title>CLAP Report - ${student.student_id}</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: 'Segoe UI', Arial, sans-serif; padding: 40px; color: #1f2937; line-height: 1.6; }
@@ -291,8 +322,8 @@ export default function ClapTestResultsPage() {
     <p>${testInfo?.test_name || 'CLAP Test'} &bull; ID: ${testInfo?.test_id || ''} &bull; Generated: ${new Date().toLocaleDateString()}</p>
   </div>
   <div class="info-grid">
-    <p><strong>Student Name:</strong> ${student.student_name}</p>
     <p><strong>Student ID:</strong> ${student.student_id}</p>
+    <p><strong>Set:</strong> ${student.assigned_set_label || 'N/A'}</p>
     <p><strong>Status:</strong> ${formatStatus(student.status)}</p>
     <p><strong>Duration:</strong> ${formatDuration(student.duration_minutes)}</p>
     <p><strong>Start Time:</strong> ${student.started_at ? new Date(student.started_at).toLocaleString() : 'N/A'}</p>
@@ -477,7 +508,6 @@ export default function ClapTestResultsPage() {
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="border-b bg-gray-50/80">
-                            <th className="py-3 px-4 text-left font-medium text-gray-600 whitespace-nowrap">Student Name</th>
                             <th className="py-3 px-3 text-left font-medium text-gray-600 whitespace-nowrap">
                               <button
                                 className="inline-flex items-center gap-1 hover:text-gray-900"
@@ -487,6 +517,7 @@ export default function ClapTestResultsPage() {
                                 <SortIcon field="student_id" sortBy={sortBy} sortOrder={sortOrder} />
                               </button>
                             </th>
+                            <th className="py-3 px-3 text-center font-medium text-gray-600 whitespace-nowrap">Set</th>
                             <th className="py-3 px-3 text-left font-medium text-gray-600 whitespace-nowrap">Status</th>
                             <th className="py-3 px-3 text-left font-medium text-gray-600 whitespace-nowrap">Start Time</th>
                             <th className="py-3 px-3 text-left font-medium text-gray-600 whitespace-nowrap">End Time</th>
@@ -522,6 +553,7 @@ export default function ClapTestResultsPage() {
                             </th>
                             <th className="py-3 px-3 text-center font-medium text-gray-600 whitespace-nowrap">Grade</th>
                             <th className="py-3 px-3 text-center font-medium text-gray-600 whitespace-nowrap">Integrity</th>
+                            <th className="py-3 px-3 text-center font-medium text-gray-600 whitespace-nowrap">Answers</th>
                             <th className="py-3 px-3 text-center font-medium text-gray-600 whitespace-nowrap">Report</th>
                           </tr>
                         </thead>
@@ -530,8 +562,16 @@ export default function ClapTestResultsPage() {
                             const gradeInfo = getGradeInfo(r.grade)
                             return (
                               <tr key={i} className="border-b last:border-0 hover:bg-gray-50/50 transition-colors">
-                                <td className="py-3 px-4 font-medium text-gray-900 whitespace-nowrap">{r.student_name}</td>
-                                <td className="py-3 px-3 text-gray-600 whitespace-nowrap">{r.student_id}</td>
+                                <td className="py-3 px-3 font-medium text-gray-900 whitespace-nowrap">{r.student_id}</td>
+                                <td className="py-3 px-3 text-center">
+                                  {r.assigned_set_label ? (
+                                    <span className="text-xs font-bold px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded">
+                                      {r.assigned_set_label}
+                                    </span>
+                                  ) : (
+                                    <span className="text-gray-300">-</span>
+                                  )}
+                                </td>
                                 <td className="py-3 px-3">
                                   <StatusBadge status={r.status} />
                                 </td>
@@ -577,7 +617,22 @@ export default function ClapTestResultsPage() {
                                   <IntegrityBadge row={r} />
                                 </td>
                                 <td className="py-3 px-3 text-center">
-                                  {r.status === 'completed' && r.total_score != null ? (
+                                  {r.status === 'completed' ? (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-8 w-8 p-0"
+                                      onClick={() => openPreview(r)}
+                                      title="Preview submitted answers"
+                                    >
+                                      <Eye className="w-4 h-4 text-indigo-500 hover:text-indigo-700" />
+                                    </Button>
+                                  ) : (
+                                    <span className="text-gray-300">-</span>
+                                  )}
+                                </td>
+                                <td className="py-3 px-3 text-center">
+                                  {r.submission_status === 'COMPLETE' ? (
                                     <Button
                                       variant="ghost"
                                       size="sm"
@@ -587,6 +642,10 @@ export default function ClapTestResultsPage() {
                                     >
                                       <Printer className="w-4 h-4 text-gray-500 hover:text-gray-700" />
                                     </Button>
+                                  ) : r.submission_status && r.submission_status !== 'COMPLETE' ? (
+                                    <span className="text-[10px] text-amber-500 font-medium whitespace-nowrap" title={`Pipeline: ${r.submission_status}`}>
+                                      ⏳
+                                    </span>
                                   ) : (
                                     <span className="text-gray-300">-</span>
                                   )}
@@ -633,6 +692,214 @@ export default function ClapTestResultsPage() {
           </>
         )}
       </div>
+
+      {/* ── Answers Preview Modal ─────────────────────────────────────────── */}
+      {previewRow && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 backdrop-blur-sm overflow-y-auto py-6 px-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b sticky top-0 bg-white rounded-t-xl z-10">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">
+                  Answers Preview — {previewRow.student_id}
+                </h2>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {previewRow.assigned_set_label
+                    ? `Set: ${previewRow.assigned_set_label}`
+                    : 'No set assigned'
+                  } &middot; Status: {formatStatus(previewRow.status)}
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 p-0"
+                onClick={() => { setPreviewRow(null); setPreviewData(null) }}
+              >
+                <X className="w-5 h-5" />
+              </Button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="px-6 py-4 space-y-6">
+              {previewLoading && (
+                <div className="flex items-center justify-center py-16">
+                  <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
+                  <span className="ml-3 text-gray-500">Loading answers…</span>
+                </div>
+              )}
+
+              {!previewLoading && previewData?.error && (
+                <div className="flex items-center gap-2 text-red-600 py-8 justify-center">
+                  <AlertCircle className="w-5 h-5" />
+                  <span>{previewData.error}</span>
+                </div>
+              )}
+
+              {!previewLoading && previewData && !previewData.error && (
+                <>
+                  {/* Submission info bar */}
+                  <div className="flex flex-wrap gap-3 text-xs">
+                    {previewData.submission_status && (
+                      <span className={`px-2 py-1 rounded font-medium ${
+                        previewData.submission_status === 'COMPLETE'
+                          ? 'bg-green-100 text-green-700'
+                          : 'bg-amber-100 text-amber-700'
+                      }`}>
+                        Pipeline: {previewData.submission_status}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Per-component sections */}
+                  {(previewData.components || []).map((comp: any, ci: number) => {
+                    const typeLabel: Record<string, string> = {
+                      listening: 'Listening', reading: 'Reading',
+                      vocabulary: 'Vocabulary & Grammar',
+                      writing: 'Writing', speaking: 'Speaking',
+                    }
+                    const typeColor: Record<string, string> = {
+                      listening: 'bg-indigo-600', reading: 'bg-teal-600',
+                      vocabulary: 'bg-pink-600', writing: 'bg-amber-600', speaking: 'bg-purple-600',
+                    }
+                    const isMCQ = ['listening', 'reading', 'vocabulary'].includes(comp.test_type)
+
+                    return (
+                      <div key={ci} className="border rounded-lg overflow-hidden">
+                        {/* Component header */}
+                        <div className={`${typeColor[comp.test_type] || 'bg-gray-600'} px-4 py-2.5 flex items-center justify-between`}>
+                          <span className="text-white font-semibold text-sm">
+                            {typeLabel[comp.test_type] || comp.test_type} — {comp.title}
+                          </span>
+                          <div className="flex items-center gap-3 text-white/90 text-xs">
+                            {comp.llm_score != null && (
+                              <span className="bg-white/20 px-2 py-0.5 rounded">
+                                LLM: {comp.llm_score}/10
+                              </span>
+                            )}
+                            <span>Max: {comp.max_marks}</span>
+                          </div>
+                        </div>
+
+                        {/* LLM feedback (writing/speaking) */}
+                        {comp.llm_feedback && (
+                          <div className="px-4 py-3 bg-amber-50 border-b text-xs text-amber-800">
+                            <p className="font-medium mb-1">LLM Feedback</p>
+                            <pre className="whitespace-pre-wrap font-sans">
+                              {typeof comp.llm_feedback === 'string'
+                                ? comp.llm_feedback
+                                : JSON.stringify(comp.llm_feedback, null, 2)}
+                            </pre>
+                          </div>
+                        )}
+
+                        {/* Items */}
+                        <div className="divide-y">
+                          {(comp.items || []).map((item: any, ii: number) => {
+                            const options: string[] = item.content?.options || []
+                            const correctIdx: number | null = item.correct_option_index
+                            const selectedIdx: number | null = item.selected_option_index
+                            const isCorrect: boolean | null = item.is_correct
+
+                            return (
+                              <div key={ii} className="px-4 py-3">
+                                <div className="flex items-start gap-2 mb-2">
+                                  <span className="text-xs font-bold text-gray-400 w-6 shrink-0 pt-0.5">
+                                    Q{item.order_index + 1}
+                                  </span>
+                                  <p className="text-sm text-gray-800 flex-1">
+                                    {item.content?.question || item.content?.prompt || '—'}
+                                  </p>
+                                  {item.marks_awarded != null && (
+                                    <span className={`text-xs font-bold shrink-0 ${
+                                      isCorrect ? 'text-green-600' : 'text-red-500'
+                                    }`}>
+                                      {item.marks_awarded}/{item.points}
+                                    </span>
+                                  )}
+                                </div>
+
+                                {/* MCQ options */}
+                                {isMCQ && options.length > 0 && (
+                                  <div className="ml-8 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                    {options.map((opt: string, oi: number) => {
+                                      const isCorrectOpt = oi === correctIdx
+                                      const isSelectedOpt = oi === selectedIdx
+                                      const isWrong = isSelectedOpt && !isCorrectOpt
+
+                                      let bg = 'bg-gray-50 border-gray-200 text-gray-700'
+                                      if (isCorrectOpt && isSelectedOpt)
+                                        bg = 'bg-green-50 border-green-400 text-green-800'
+                                      else if (isCorrectOpt)
+                                        bg = 'bg-green-50 border-green-300 text-green-700'
+                                      else if (isWrong)
+                                        bg = 'bg-red-50 border-red-300 text-red-700'
+
+                                      return (
+                                        <div
+                                          key={oi}
+                                          className={`flex items-center gap-2 border rounded px-2.5 py-1.5 text-xs ${bg}`}
+                                        >
+                                          <span className="font-bold w-4 shrink-0">
+                                            {String.fromCharCode(65 + oi)}.
+                                          </span>
+                                          <span className="flex-1">{opt}</span>
+                                          {isCorrectOpt && (
+                                            <CheckCircle2 className="w-3.5 h-3.5 text-green-600 shrink-0" />
+                                          )}
+                                          {isWrong && (
+                                            <XCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                                          )}
+                                        </div>
+                                      )
+                                    })}
+                                  </div>
+                                )}
+
+                                {/* Writing / Speaking text response */}
+                                {!isMCQ && item.response_text && (
+                                  <div className="ml-8 mt-1.5 text-xs bg-gray-50 rounded p-2.5 text-gray-700 border border-gray-200 whitespace-pre-wrap">
+                                    {item.response_text}
+                                  </div>
+                                )}
+
+                                {/* No response */}
+                                {!isMCQ && !item.response_text && (
+                                  <div className="ml-8 mt-1.5 text-xs text-gray-400 italic">
+                                    No response submitted
+                                  </div>
+                                )}
+
+                                {/* Answer source badge */}
+                                {item.answer_source === 'set' && (
+                                  <div className="ml-8 mt-1 text-[10px] text-indigo-500 font-medium">
+                                    ✦ Answer key from assigned set
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-3 border-t flex justify-end">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => { setPreviewRow(null); setPreviewData(null) }}
+              >
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

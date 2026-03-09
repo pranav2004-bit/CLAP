@@ -128,8 +128,9 @@ def update_clap_test(request, test_id):
                 # Remove old assignments
                 StudentClapAssignment.objects.filter(clap_test_id=test_id).delete()
                 
-                # Add new assignments for the new batch
-                students = User.objects.filter(batch_id=batch_id, role='student')
+                # Add new assignments for the new batch — active students only
+                # is_active=True keeps this count in sync with the batch page student count
+                students = User.objects.filter(batch_id=batch_id, role='student', is_active=True)
                 
                 if students.exists():
                     assignments = [

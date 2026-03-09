@@ -273,7 +273,7 @@ def bulk_import_students(request):
                 new_users = []
                 for sid in to_create:
                     new_users.append(User(
-                        email=f'{sid}@clap-student.local',
+                        # email intentionally NULL — student sets it on first login
                         student_id=sid,
                         password_hash=password_hash,
                         role='student',

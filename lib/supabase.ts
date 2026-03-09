@@ -1,32 +1,11 @@
 // Supabase Client Configuration
 import { createClient } from '@supabase/supabase-js'
-import bcrypt from 'bcryptjs'
+import { authStorage } from '@/lib/auth-storage'
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 
-// Force validation - throw error if not configured properly
-if (!supabaseUrl || supabaseUrl.includes('your_actual')) {
-  throw new Error('❌ CRITICAL: Supabase URL not configured properly in .env.local')
-}
-
-if (!supabaseAnonKey || supabaseAnonKey.includes('your_actual')) {
-  throw new Error('❌ CRITICAL: Supabase anon key not configured properly in .env.local')
-}
-
-console.log('✅ Supabase configuration loaded:', {
-  url: supabaseUrl,
-  hasKey: !!supabaseAnonKey
-});
-
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
-
-// Debug: Log the Supabase configuration
-console.log('Supabase Config:', {
-  url: supabaseUrl,
-  hasKey: !!supabaseAnonKey,
-  keyLength: supabaseAnonKey?.length
-});
 
 // Types for our database tables
 export interface User {
@@ -96,10 +75,10 @@ export const signIn = async (identifier: string, password: string, role: 'studen
 
     // Store JWT access token — used by getAuthHeaders() for all subsequent API calls
     if (data.access_token) {
-      localStorage.setItem('access_token', data.access_token)
+      authStorage.set('access_token', data.access_token)
       // Store expiry so proactive refresh can fire before the token dies
       if (data.expires_in) {
-        localStorage.setItem('token_expires_at', String(Date.now() + data.expires_in * 1000))
+        authStorage.set('token_expires_at', String(Date.now() + data.expires_in * 1000))
       }
     }
 

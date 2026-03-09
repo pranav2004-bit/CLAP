@@ -71,6 +71,8 @@ services:
       redis:
         condition: service_healthy
     volumes:
+      - ./django-backend/api:/app/api          # live code sync — no rebuild needed
+      - ./django-backend/clap_backend:/app/clap_backend
       - ./django-backend/media:/app/media
     healthcheck:
       test: [ "CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health/')\" 2>/dev/null || exit 1" ]
@@ -81,8 +83,17 @@ services:
 
   # ── Celery Worker: LLM evaluation ───────────────────────────────
   # Queue: llm_evaluation
-  # Concurrency: 2  (each task loads 10 MB audio + OpenAI API call)
-  # Low concurrency prevents OOM on memory-intensive LLM tasks
+  # Concurrency: 1  — serialises OpenAI calls so keys don't exceed RPM limit.
+  #
+  # Rate-limit strategy (gpt-4o-mini free/tier-1):
+  #   • 3 RPM per key × 4 keys = effective 12 RPM total.
+  #   • Celery task-level rate_limit='3/m' acts as safety net.
+  #   • QuotaTracker (Redis) handles per-key RPM/RPD/TPM/TPD tracking.
+  #   • concurrency=1 ensures serial execution — no inter-worker quota races.
+  #   • Raise concurrency ONLY after upgrading to OpenAI Tier 2+ (≥500 RPM).
+  #
+  # max-tasks-per-child=25: recycles the worker process after 25 tasks.
+  # Prevents slow memory leaks from OpenAI SDK / WeasyPrint in long sessions.
   celery-llm:
     build:
       context: ./django-backend
@@ -100,14 +111,16 @@ services:
       redis:
         condition: service_healthy
     volumes:
+      - ./django-backend/api:/app/api              # live code sync
+      - ./django-backend/clap_backend:/app/clap_backend
       - ./django-backend/media:/app/media
     command: >
       python -m celery -A clap_backend worker
         --loglevel=info
         --queues=llm_evaluation
-        --concurrency=2
+        --concurrency=1
         --hostname=llm@%h
-        --max-tasks-per-child=50
+        --max-tasks-per-child=25
 
   # ── Celery Worker: Report generation ───────────────────────────
   # Queue: report_gen
@@ -129,6 +142,8 @@ services:
       redis:
         condition: service_healthy
     volumes:
+      - ./django-backend/api:/app/api              # live code sync
+      - ./django-backend/clap_backend:/app/clap_backend
       - ./django-backend/media:/app/media
     command: >
       python -m celery -A clap_backend worker
@@ -158,6 +173,8 @@ services:
       redis:
         condition: service_healthy
     volumes:
+      - ./django-backend/api:/app/api              # live code sync
+      - ./django-backend/clap_backend:/app/clap_backend
       - ./django-backend/media:/app/media
     command: >
       python -m celery -A clap_backend worker
@@ -168,7 +185,9 @@ services:
         --max-tasks-per-child=500
 
   # ── Celery Beat: Periodic task scheduler ────────────────────────
-  # Runs DLQ sweeper every 15 minutes (defined in settings.CELERY_BEAT_SCHEDULE)
+  # Schedules:
+  #   • DLQ sweeper every 15 minutes
+  #   • Quota status reporter every 5 minutes
   # Only ONE beat instance should ever run — do not scale this service.
   celery-beat:
     build:
@@ -186,6 +205,9 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+    volumes:
+      - ./django-backend/api:/app/api              # live code sync
+      - ./django-backend/clap_backend:/app/clap_backend
     command: >
       python -m celery -A clap_backend beat
         --loglevel=info

@@ -18,7 +18,7 @@ class User(models.Model):
     ]
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    email = models.EmailField(unique=True, max_length=255)
+    email = models.EmailField(unique=True, max_length=255, null=True, blank=True)
     role = models.CharField(max_length=20, choices=ROLE_CHOICES)
     full_name = models.CharField(max_length=255, null=True, blank=True)
     username = models.CharField(max_length=100, null=True, blank=True)

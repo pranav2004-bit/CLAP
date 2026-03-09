@@ -32,6 +32,7 @@ import {
   History,
   AlertTriangle,
   CheckCircle2,
+  XCircle,
   ChevronRight,
 } from 'lucide-react'
 import { getApiUrl, getAuthHeaders, apiFetch } from '@/lib/api-config'
@@ -193,6 +194,13 @@ export default function AdminTestsPage() {
 
       if (data.clapTests) {
         setClapTests(data.clapTests);
+        // Also refresh selectedClapTest so Live Timer button reflects current server data
+        // (e.g. global_duration_minutes configured in a previous session)
+        setSelectedClapTest((prev: any) => {
+          if (!prev) return prev
+          const updated = data.clapTests.find((t: any) => t.id === prev.id)
+          return updated ? { ...prev, ...updated } : prev
+        })
       }
     } catch (error) {
       console.error('Error fetching CLAP tests:', error);
@@ -1952,14 +1960,20 @@ export default function AdminTestsPage() {
                             onClick={() => handleStartLiveTimer(false)}
                             disabled={
                               startLoading ||
+                              !selectedClapTest?.batch_id ||
+                              selectedClapTest?.status !== 'published' ||
                               !selectedClapTest?.global_duration_minutes ||
-                              selectedClapTest?.status !== 'published'
+                              !distributionStatus?.distribution_complete
                             }
                             title={
-                              selectedClapTest?.status !== 'published'
+                              !selectedClapTest?.batch_id
+                                ? 'Assign a batch to this test first'
+                                : selectedClapTest?.status !== 'published'
                                 ? 'Click "Start Test" in the header first'
                                 : !selectedClapTest?.global_duration_minutes
                                 ? 'Set a duration in the Configure tab first'
+                                : !distributionStatus?.distribution_complete
+                                ? 'Distribute question papers to all students first (Question Papers tab)'
                                 : 'Start the live countdown for all students'
                             }
                             className="bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1992,6 +2006,45 @@ export default function AdminTestsPage() {
                         )}
                       </div>
                     </div>
+
+                    {/* Prerequisites checklist — shown only when timer has not started */}
+                    {isNotStarted && (
+                      <div className="bg-white border border-gray-200 rounded-xl p-5">
+                        <p className="text-sm font-semibold text-gray-700 mb-3">Start Checklist — all 4 must be green</p>
+                        <div className="space-y-2">
+                          {[
+                            {
+                              label: 'Batch assigned to test',
+                              met: !!selectedClapTest?.batch_id,
+                              hint: 'Assign a batch in the test settings panel',
+                            },
+                            {
+                              label: 'Test started (Published)',
+                              met: selectedClapTest?.status === 'published',
+                              hint: 'Click "Start Test" in the header above',
+                            },
+                            {
+                              label: 'Timer duration configured',
+                              met: !!selectedClapTest?.global_duration_minutes,
+                              hint: 'Set a Global Duration in the Configure tab',
+                            },
+                            {
+                              label: 'Question papers distributed to all students',
+                              met: !!distributionStatus?.distribution_complete,
+                              hint: 'Go to the Question Papers tab and distribute',
+                            },
+                          ].map(({ label, met, hint }) => (
+                            <div key={label} className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm ${met ? 'bg-green-50' : 'bg-red-50'}`}>
+                              {met
+                                ? <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />
+                                : <XCircle     className="w-4 h-4 text-red-500 shrink-0" />}
+                              <span className={`font-medium ${met ? 'text-green-800' : 'text-red-700'}`}>{label}</span>
+                              {!met && <span className="ml-auto text-xs text-red-500 hidden sm:inline">{hint}</span>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     {/* Student counters */}
                     {liveTimer && (
@@ -2112,7 +2165,19 @@ export default function AdminTestsPage() {
                       </div>
                     )}
 
-                    {/* Locked warning — shown when test is not yet Published */}
+                    {/* Locked warning — no batch assigned */}
+                    {isNotStarted && !liveTimerLoading && !selectedClapTest?.batch_id && (
+                      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800 flex items-start gap-3">
+                        <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
+                        <p>
+                          <strong>No batch assigned to this test.</strong>{' '}
+                          A batch must be assigned before the live timer can start.
+                          Select a batch in the test settings panel on the left, then return here.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Locked warning — test not yet Published */}
                     {isNotStarted && !liveTimerLoading && selectedClapTest?.status !== 'published' && (
                       <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800 flex items-start gap-3">
                         <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
@@ -2124,14 +2189,41 @@ export default function AdminTestsPage() {
                       </div>
                     )}
 
+                    {/* Locked warning — Published but duration not configured */}
+                    {isNotStarted && !liveTimerLoading && selectedClapTest?.status === 'published' && !selectedClapTest?.global_duration_minutes && (
+                      <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-800 flex items-start gap-3">
+                        <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-red-600" />
+                        <p>
+                          <strong>Timer duration not set — students are waiting.</strong>{' '}
+                          Go to the <strong>Configure</strong> tab and set a <strong>Global Duration</strong> (in minutes), then return here to start the countdown.
+                          Until this is done, students will see &ldquo;Starting Soon&rdquo; and cannot begin the test.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Locked warning — papers not yet distributed to all students */}
+                    {isNotStarted && !liveTimerLoading && selectedClapTest?.status === 'published' && !!selectedClapTest?.global_duration_minutes && !distributionStatus?.distribution_complete && (
+                      <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-800 flex items-start gap-3">
+                        <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-red-600" />
+                        <p>
+                          <strong>Question papers not fully distributed — students are waiting.</strong>{' '}
+                          Go to the <strong>Question Papers</strong> tab and distribute papers to all students in the batch,
+                          then return here to start the countdown.
+                          {distributionStatus && (
+                            <>{' '}Currently <strong>{distributionStatus.distributed ?? 0}/{distributionStatus.total_students ?? '?'}</strong> students have received their papers.</>
+                          )}
+                        </p>
+                      </div>
+                    )}
+
                     {/* Not started help text */}
                     {isNotStarted && !liveTimerLoading && (
                       <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800 space-y-1">
                         <p className="font-semibold">How Live Timer Works</p>
                         <ul className="list-disc pl-4 space-y-1 text-blue-700">
                           <li>Click <strong>Start Live Timer</strong> to set a server-authoritative deadline for all students.</li>
-                          <li>Students poll every 5–30 s and their countdown updates automatically.</li>
-                          <li>Use <strong>Extend Timer</strong> at any time — all active students see the new time within 30 s.</li>
+                          <li>Students refresh automatically — they see the timer go live within <strong>5 seconds</strong>.</li>
+                          <li>Use <strong>Extend Timer</strong> at any time — all active students see the new time within 5 seconds.</li>
                           <li>On expiry, students are auto-submitted with no action required from you.</li>
                           <li>All changes are logged in the audit trail above.</li>
                         </ul>

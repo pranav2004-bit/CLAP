@@ -38,7 +38,7 @@ def get_student_profile(request):
         profile_data = {
             'id': str(user.id),
             'full_name': user.full_name,
-            'email': user.email,
+            'email': user.email or '',   # NULL → empty string so frontend can check `!email`
             'username': user.username,
             'student_id': user.student_id,
             'profile_completed': user.profile_completed,
@@ -80,6 +80,10 @@ def update_student_profile(request):
             if existing_user:
                 return error_response('Username already taken', status=400)
 
+        # Reject placeholder emails (safety guard — should never come from legitimate UI)
+        if email and email.endswith('@clap-student.local'):
+            return error_response('Invalid email address', status=400)
+
         # Prepare update data
         update_data = {}
         if username:
@@ -100,7 +104,7 @@ def update_student_profile(request):
         profile_data = {
             'id': str(profile.id),
             'full_name': profile.full_name,
-            'email': profile.email,
+            'email': profile.email or '',   # NULL → empty string
             'username': profile.username,
             'student_id': profile.student_id,
             'profile_completed': profile.profile_completed,

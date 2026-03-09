@@ -1,71 +1,120 @@
 """
-OpenAI Integration Module — Enterprise Multi-Key Pool.
+OpenAI Integration Module — Enterprise Multi-Key Pool with Quota Tracking.
 
-Architecture:
-  - Up to 5 primary API keys rotated in round-robin across Celery worker threads.
-  - Each key that receives a 429 (rate-limit) response is put into a 60-second
-    cooldown; the next available key is tried immediately (no sleep on 429).
-  - If ALL primary keys are cooling → hot standby key is used automatically.
-  - If standby is also cooling → least-recently-limited primary key is returned
-    so Celery's built-in retry/back-off loop can handle the remaining wait.
-  - Per-key timeouts: chat completions 30 s, Whisper transcriptions 60 s.
-  - Full key values are never logged; only the first-8 / last-4 chars appear.
+Architecture
+────────────
+  Key pool
+  ├── 4 primary API keys, rotated round-robin.
+  ├── 1 hot-standby key, activated when ALL 4 primary keys are quota-limited.
+  └── QuotaTracker selects the BEST key (most remaining quota) before each call.
+
+  Per-call flow
+  ├── 1. Estimate token cost (tiktoken or char-ratio fallback).
+  ├── 2. QuotaTracker.check_and_reserve() — atomic Redis check + increment.
+  │      If all keys exhausted → raise QuotaDailyExhaustedException / Temporarily.
+  ├── 3. Call OpenAI API with the selected key.
+  ├── 4. On success: QuotaTracker.record_actual_usage() — correct token delta.
+  ├── 5. On 429: parse retry-after header, call appropriate mark_key_* method,
+  │      rotate to next key and retry immediately (no sleep on RPM 429).
+  └── 6. On persistent failure: raise — caller (Celery task) handles DLQ.
+
+  Rate limits tracked per key
+  ├── RPM  : 3 req/min   (configurable via OPENAI_RPM_LIMIT)
+  ├── RPD  : 200 req/day (configurable via OPENAI_RPD_LIMIT)
+  ├── TPM  : 60 000 tokens/min (configurable via OPENAI_TPM_LIMIT)
+  └── TPD  : 200 000 tokens/day (configurable via OPENAI_TPD_LIMIT)
+
+  Security
+  ├── API key values are NEVER logged — only a 12-char SHA-256 prefix.
+  ├── Keys are loaded once per process; no key is written to any Redis value.
+  └── All quota Redis keys use hash-derived names, not key prefixes.
+
+  Resilience
+  ├── Quota tracker fails open (Redis unavailable = no blocking).
+  ├── Exponential backoff (1 s, 2 s, 4 s) for transient non-429 errors.
+  ├── MAX_RETRIES across ALL keys combined (prevents infinite retry loops).
+  ├── Whisper transcription is tracked separately (different rate limits).
+  └── Thread-safe: _KeyPool uses threading.Lock(); QuotaTracker uses Redis atoms.
 """
 
 import json
 import logging
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from django.conf import settings
 
+from api.utils.quota_tracker import (
+    QuotaTracker,
+    QuotaDailyExhaustedException,
+    QuotaTemporarilyUnavailableException,
+    get_quota_tracker,
+)
+from api.utils.token_counter import estimate_simple_tokens
+
 logger = logging.getLogger(__name__)
 
-# ── Constants ─────────────────────────────────────────────────────────────────
-COOLDOWN_SECONDS = 60   # rest a key for 60 s after a 429
-MAX_RETRIES = 3
-RETRY_DELAY = 1         # base seconds for exponential back-off on non-429 errors
+# ── Constants ──────────────────────────────────────────────────────────────────
+MAX_RETRIES         = 5        # max attempts across all key rotations
+RETRY_DELAY_BASE    = 1.0      # base backoff for non-429 transient errors (seconds)
+RETRY_DELAY_MAX     = 30.0     # cap on transient-error backoff (seconds)
+
+# Threshold to distinguish RPD exhaustion from RPM in retry-after duration.
+# OpenAI sends retry-after≥3600 when daily quota is exhausted.
+RPD_RETRY_AFTER_THRESHOLD = 3_600
+
+# Default retry-after when the header is absent (assume minute-level rate-limit)
+DEFAULT_RETRY_AFTER_SECONDS = 65
 
 
-# ── Thread-safe key pool ──────────────────────────────────────────────────────
+# ── Thread-safe key pool ───────────────────────────────────────────────────────
 
 class _KeyPool:
     """
-    Thread-safe round-robin API key pool with per-key cooldown tracking.
+    Thread-safe round-robin API key pool with QuotaTracker integration.
 
-    Behaviour
-    ---------
-    - Primary keys are tried in rotating order (round-robin).
-    - A key that returned 429 is put into cooldown for COOLDOWN_SECONDS.
-    - If ALL primary keys are cooling → hot standby key is used.
-    - If standby is also cooling → returns the least-recently-cooled primary
-      key (Celery retry loop handles the back-off).
+    Key selection order:
+      1. QuotaTracker.best_available_key() — quota-aware (preferred path).
+      2. Round-robin fallback when QuotaTracker has no preference (Redis down).
+      3. Hot standby key when ALL primary keys are quota-exhausted.
+      4. Least-recently-limited primary key as last resort (Celery retry handles wait).
     """
 
-    def __init__(self, primary_keys: List[str], standby_key: Optional[str] = None):
+    def __init__(
+        self,
+        primary_keys: List[str],
+        standby_key: Optional[str],
+        tracker: QuotaTracker,
+    ):
         self._keys: List[str] = [k for k in primary_keys if k]
         self._standby: Optional[str] = standby_key or None
+        self._tracker = tracker
         self._lock = threading.Lock()
-        self._index: int = 0
-        self._cooldowns: Dict[str, float] = {}   # key → monotonic expiry time
+        self._rr_index: int = 0
+        # In-process cooldown (backup to quota tracker for non-Redis cases)
+        self._cooldowns: Dict[str, float] = {}
 
-    # ------------------------------------------------------------------
+    @property
+    def all_keys(self) -> List[str]:
+        """All keys including standby (for quota status queries)."""
+        keys = list(self._keys)
+        if self._standby:
+            keys.append(self._standby)
+        return keys
+
     def _is_cooling(self, key: str) -> bool:
         return time.monotonic() < self._cooldowns.get(key, 0.0)
 
-    def mark_rate_limited(self, key: str) -> None:
-        """Call when a RateLimitError (429) is received for `key`."""
+    def _mark_cooldown(self, key: str, seconds: float) -> None:
         with self._lock:
-            self._cooldowns[key] = time.monotonic() + COOLDOWN_SECONDS
-        # Log partial key only — never log the full secret value
-        logger.warning(
-            'openai_key_rate_limited key_prefix=%s key_suffix=%s cooldown_seconds=%d',
-            key[:8], key[-4:], COOLDOWN_SECONDS,
-        )
+            self._cooldowns[key] = time.monotonic() + seconds
 
-    def get_key(self) -> str:
-        """Return next available (non-cooling) key. Thread-safe."""
+    def get_key(self, estimated_tokens: int = 500) -> str:
+        """
+        Return the best available key for a request of `estimated_tokens`.
+        Thread-safe.
+        """
         with self._lock:
             n = len(self._keys)
             if n == 0:
@@ -74,58 +123,94 @@ class _KeyPool:
                     'Set OPENAI_API_KEY in your .env file.'
                 )
 
-            # Try each primary key in round-robin order
+            # ── Path 1: Quota-tracker guided selection ─────────────────────
+            # Filter out in-process cooled keys before asking the tracker
+            available = [k for k in self._keys if not self._is_cooling(k)]
+            if self._standby and not self._is_cooling(self._standby):
+                available_with_standby = available + [self._standby]
+            else:
+                available_with_standby = available
+
+            best = self._tracker.best_available_key(
+                available_with_standby or self._keys,  # fallback if all cooling
+                estimated_tokens,
+            )
+            if best:
+                # Advance round-robin index to maintain fair rotation
+                if best in self._keys:
+                    try:
+                        self._rr_index = (self._keys.index(best) + 1) % n
+                    except ValueError:
+                        pass
+                return best
+
+            # ── Path 2: Round-robin among non-cooling primary keys ─────────
             for _ in range(n):
-                key = self._keys[self._index % n]
-                self._index = (self._index + 1) % n
+                key = self._keys[self._rr_index % n]
+                self._rr_index = (self._rr_index + 1) % n
                 if not self._is_cooling(key):
                     return key
 
-            # All primary keys cooling → try standby
+            # ── Path 3: Hot standby ────────────────────────────────────────
             if self._standby and not self._is_cooling(self._standby):
                 logger.warning(
-                    'openai_all_primary_cooling switching_to_standby=True '
-                    'primary_key_count=%d', n,
+                    'openai_all_primary_cooling using_standby=True primary_count=%d', n
                 )
                 return self._standby
 
-            # Everything cooling → return least-recently-limited primary (best-effort)
+            # ── Path 4: Last resort — return least-recently limited key ────
             logger.error(
-                'openai_all_keys_cooling primary_count=%d has_standby=%s '
-                'returning_best_available=True',
+                'openai_all_keys_quota_limited primary_count=%d has_standby=%s '
+                'returning_best_effort=True',
                 n, self._standby is not None,
             )
-            return min(self._keys, key=lambda k: self._cooldowns.get(k, 0.0))
+            return min(
+                self._keys,
+                key=lambda k: self._cooldowns.get(k, 0.0),
+            )
 
-    # ------------------------------------------------------------------
-    @property
-    def pool_size(self) -> int:
-        return len(self._keys)
+    def mark_rate_limited(self, key: str, retry_after: int = DEFAULT_RETRY_AFTER_SECONDS) -> None:
+        """Called when key receives a 429 RPM/TPM response."""
+        self._mark_cooldown(key, float(retry_after))
+        self._tracker.mark_key_rpm_limited(key, retry_after)
+        from api.utils.quota_tracker import _key_hash
+        logger.warning(
+            'openai_key_rpm_limited key=%s retry_after=%ds',
+            _key_hash(key), retry_after,
+        )
 
-    @property
-    def has_standby(self) -> bool:
-        return bool(self._standby)
+    def mark_daily_exhausted(self, key: str, retry_after: int = 86_400) -> None:
+        """Called when key receives a 429 RPD/TPD response (daily limit)."""
+        self._mark_cooldown(key, float(retry_after))
+        self._tracker.mark_key_daily_exhausted(key, retry_after)
+        from api.utils.quota_tracker import _key_hash
+        logger.error(
+            'openai_key_daily_exhausted key=%s retry_after=%ds',
+            _key_hash(key), retry_after,
+        )
 
     def status(self) -> Dict[str, Any]:
-        """Return pool health summary (no key values exposed)."""
+        """Pool health summary — safe for /api/health/ or admin pages."""
+        from api.utils.quota_tracker import _key_hash
         with self._lock:
             now = time.monotonic()
-            cooling = sum(
-                1 for k in self._keys if now < self._cooldowns.get(k, 0.0)
-            )
+            cooling = sum(1 for k in self._keys if now < self._cooldowns.get(k, 0.0))
             standby_cooling = (
                 self._standby is not None
                 and now < self._cooldowns.get(self._standby, 0.0)
             )
+        quota_statuses = self._tracker.get_all_keys_status(self.all_keys)
         return {
-            'primary_keys': self.pool_size,
-            'has_standby': self.has_standby,
+            'primary_keys': len(self._keys),
+            'has_standby': bool(self._standby),
             'primary_keys_cooling': cooling,
             'standby_cooling': standby_cooling,
+            'quota': quota_statuses,
         }
 
 
-# ── Module-level singleton — initialised once per worker process ──────────────
+# ── Module-level singleton pool (one per worker process) ──────────────────────
+
 _pool: Optional[_KeyPool] = None
 _pool_init_lock = threading.Lock()
 
@@ -138,12 +223,16 @@ def _get_pool() -> _KeyPool:
     with _pool_init_lock:
         if _pool is not None:
             return _pool
+
         primary_keys: List[str] = getattr(settings, 'OPENAI_API_KEYS', [])
         standby_key: str = getattr(settings, 'OPENAI_STANDBY_KEY', '') or ''
-        _pool = _KeyPool(primary_keys, standby_key or None)
+        tracker = get_quota_tracker()
+
+        _pool = _KeyPool(primary_keys, standby_key or None, tracker)
         logger.info(
-            'openai_key_pool_initialised primary_keys=%d has_standby=%s',
-            _pool.pool_size, _pool.has_standby,
+            'openai_key_pool_init primary_keys=%d has_standby=%s model=%s',
+            len(primary_keys), bool(standby_key),
+            getattr(settings, 'OPENAI_MODEL', 'gpt-4o-mini'),
         )
     return _pool
 
@@ -153,56 +242,231 @@ def get_pool_status() -> Dict[str, Any]:
     return _get_pool().status()
 
 
-# ── Retry wrapper ─────────────────────────────────────────────────────────────
+# ── Retry-after header parser ─────────────────────────────────────────────────
 
-def _with_key_aware_retry(func, retries: int = MAX_RETRIES):
+def _parse_retry_after(exc) -> Tuple[int, bool]:
     """
-    Execute `func(key: str)` with automatic key rotation on 429 and
-    exponential back-off on transient errors.
+    Extract retry-after seconds from an OpenAI RateLimitError.
 
-    - RateLimitError (429): marks key as cooling, retries immediately with
-      next key (no sleep — we have other keys available).
-    - Other exceptions: exponential back-off before retry.
-    - After `retries` attempts, re-raises the last exception.
+    Returns:
+        (retry_after_seconds, is_daily_exhaustion)
+        is_daily_exhaustion=True when retry-after > RPD_RETRY_AFTER_THRESHOLD
+        (meaning the daily quota is used up, not just the per-minute one).
     """
-    from openai import RateLimitError
+    retry_after = DEFAULT_RETRY_AFTER_SECONDS
+    try:
+        response = getattr(exc, 'response', None)
+        if response is not None:
+            header_val = getattr(response, 'headers', {}).get('retry-after')
+            if header_val is not None:
+                retry_after = max(1, int(float(header_val)))
+    except Exception:
+        pass
 
-    last_exc: Optional[Exception] = None
+    is_daily = retry_after > RPD_RETRY_AFTER_THRESHOLD
+    return retry_after, is_daily
+
+
+# ── Main retry wrapper ────────────────────────────────────────────────────────
+
+def _with_quota_retry(
+    func,
+    estimated_tokens: int = 500,
+    retries: int = MAX_RETRIES,
+):
+    """
+    Execute func(key, client) with automatic quota-aware key rotation and retry.
+
+    Retry policy
+    ────────────
+    - 429 RPM/TPM  → mark key rate-limited, rotate to next key immediately (no sleep).
+    - 429 RPD/TPD  → mark key daily-exhausted, rotate key, no sleep.
+    - All keys daily-exhausted → raise QuotaDailyExhaustedException.
+    - All keys RPM-limited → raise QuotaTemporarilyUnavailableException.
+    - Transient errors (timeout, connection) → exponential backoff (1s, 2s, 4s…).
+    - After `retries` total attempts → re-raise last exception.
+    """
+    from openai import RateLimitError, APIConnectionError, APITimeoutError, OpenAIError
+
     pool = _get_pool()
+    tracker = get_quota_tracker()
+    last_exc: Optional[Exception] = None
 
     for attempt in range(retries):
-        key = pool.get_key()
+        # ── Quota pre-flight: select best key ─────────────────────────────
+        key = pool.get_key(estimated_tokens)
+
+        allowed, wait_secs = tracker.check_and_reserve(key, estimated_tokens)
+        if not allowed:
+            # Quota blocked for this key — try the next key
+            pool.mark_rate_limited(key, wait_secs)
+            logger.warning(
+                'openai_quota_precheck_blocked attempt=%d/%d wait=%ds rotating=True',
+                attempt + 1, retries, wait_secs,
+            )
+            # If all keys are exhausted, raise a structured exception
+            total_wait = tracker.time_until_any_key_available(pool.all_keys)
+            if total_wait > 0:
+                is_daily = total_wait > RPD_RETRY_AFTER_THRESHOLD
+                if is_daily:
+                    raise QuotaDailyExhaustedException(total_wait)
+                raise QuotaTemporarilyUnavailableException(total_wait)
+            continue  # Another key might be available
+
+        # ── Call the API ───────────────────────────────────────────────────
         try:
-            return func(key)
+            from openai import OpenAI
+            client = OpenAI(api_key=key, timeout=30.0)
+            result, actual_tokens = func(key, client)
+
+            # Correct quota reservation with actual token usage
+            tracker.record_actual_usage(key, actual_tokens, estimated_tokens)
+
+            logger.info(
+                'openai_call_success attempt=%d/%d estimated_tokens=%d actual_tokens=%d',
+                attempt + 1, retries, estimated_tokens, actual_tokens,
+            )
+            return result
+
         except RateLimitError as exc:
             last_exc = exc
-            pool.mark_rate_limited(key)
+            retry_after, is_daily = _parse_retry_after(exc)
+
+            if is_daily:
+                pool.mark_daily_exhausted(key, retry_after)
+            else:
+                pool.mark_rate_limited(key, retry_after)
+
             logger.warning(
-                'openai_rate_limit attempt=%d/%d rotating_to_next_key=True',
-                attempt + 1, retries,
+                'openai_rate_limit attempt=%d/%d is_daily=%s retry_after=%ds rotating=True',
+                attempt + 1, retries, is_daily, retry_after,
             )
-            # No sleep on 429 — rotate to next key immediately
+
+            # Check if we've exhausted all keys
+            total_wait = tracker.time_until_any_key_available(pool.all_keys)
+            if total_wait > RPD_RETRY_AFTER_THRESHOLD:
+                raise QuotaDailyExhaustedException(total_wait) from exc
+            if attempt == retries - 1 and total_wait > 0:
+                raise QuotaTemporarilyUnavailableException(total_wait) from exc
+
+            # No sleep for RPM 429 — rotate to next key immediately
+            continue
+
+        except (APIConnectionError, APITimeoutError) as exc:
+            last_exc = exc
+            if attempt < retries - 1:
+                delay = min(RETRY_DELAY_BASE * (2 ** attempt), RETRY_DELAY_MAX)
+                logger.warning(
+                    'openai_transient_error attempt=%d/%d retrying_in=%.1fs error=%s',
+                    attempt + 1, retries, delay, type(exc).__name__,
+                )
+                time.sleep(delay)
+            else:
+                raise
+
+        except (OpenAIError, ValueError, json.JSONDecodeError) as exc:
+            # Non-retryable API or parse error
+            logger.error(
+                'openai_non_retryable_error attempt=%d/%d error=%s',
+                attempt + 1, retries, exc,
+            )
+            raise
+
         except Exception as exc:
             last_exc = exc
             if attempt < retries - 1:
-                delay = RETRY_DELAY * (2 ** attempt)
+                delay = min(RETRY_DELAY_BASE * (2 ** attempt), RETRY_DELAY_MAX)
                 logger.warning(
-                    'openai_api_error attempt=%d/%d retrying_in=%.1fs error=%s',
+                    'openai_unexpected_error attempt=%d/%d retrying_in=%.1fs error=%s',
                     attempt + 1, retries, delay, exc,
                 )
                 time.sleep(delay)
             else:
                 raise
 
-    # All retries exhausted (only reached if last attempt was RateLimitError)
-    raise last_exc  # type: ignore[misc]
+    # All retries exhausted (only reachable if last attempt was 429-rotate)
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError('openai_all_retries_exhausted')
+
+
+# ── Whisper retry wrapper (separate — different rate limits from chat) ─────────
+
+def _with_whisper_retry(func, retries: int = MAX_RETRIES):
+    """
+    Retry wrapper for Whisper transcription.
+    Whisper has independent rate limits (not counted in OPENAI_RPM_LIMIT).
+    Uses simple per-key cooldown (no quota pre-check for Whisper).
+    """
+    from openai import RateLimitError, APIConnectionError, APITimeoutError
+
+    pool = _get_pool()
+    last_exc: Optional[Exception] = None
+
+    for attempt in range(retries):
+        key = pool.get_key(estimated_tokens=0)  # 0 = skip token quota check for whisper
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=key, timeout=120.0)
+            return func(key, client)
+
+        except RateLimitError as exc:
+            last_exc = exc
+            retry_after, _ = _parse_retry_after(exc)
+            pool.mark_rate_limited(key, retry_after)
+            logger.warning(
+                'whisper_rate_limit attempt=%d/%d retry_after=%ds rotating=True',
+                attempt + 1, retries, retry_after,
+            )
+            continue
+
+        except (APIConnectionError, APITimeoutError) as exc:
+            last_exc = exc
+            if attempt < retries - 1:
+                delay = min(RETRY_DELAY_BASE * (2 ** attempt), RETRY_DELAY_MAX)
+                logger.warning(
+                    'whisper_transient_error attempt=%d/%d retrying_in=%.1fs',
+                    attempt + 1, retries, delay,
+                )
+                time.sleep(delay)
+            else:
+                raise
+
+        except Exception as exc:
+            last_exc = exc
+            if attempt < retries - 1:
+                delay = min(RETRY_DELAY_BASE * (2 ** attempt), RETRY_DELAY_MAX)
+                time.sleep(delay)
+            else:
+                raise
+
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError('whisper_all_retries_exhausted')
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def evaluate_speaking(transcript: str, prompt: str) -> Dict[str, Any]:
-    """Evaluate a speaking submission using the configured OpenAI model."""
+    """
+    Evaluate a speaking transcript using gpt-4o-mini.
+
+    Args:
+        transcript: Student's speech transcription from Whisper.
+        prompt: The speaking task prompt / rubric context.
+
+    Returns:
+        Dict with keys: score (0–10 float), feedback (dict), breakdown (dict).
+
+    Raises:
+        QuotaDailyExhaustedException: All keys have used up today's RPD/TPD.
+        QuotaTemporarilyUnavailableException: All keys hit RPM/TPM (retry soon).
+        ValueError: LLM returned malformed JSON or out-of-range score.
+        openai.OpenAIError: Unrecoverable API error.
+    """
     from .prompts import SPEAKING_EVALUATION_PROMPT, SPEAKING_USER_PROMPT_TEMPLATE
+
+    model = getattr(settings, 'OPENAI_MODEL', 'gpt-4o-mini')
 
     user_prompt = (
         SPEAKING_USER_PROMPT_TEMPLATE
@@ -210,41 +474,69 @@ def evaluate_speaking(transcript: str, prompt: str) -> Dict[str, Any]:
         .replace('{{transcript}}', transcript)
     )
 
-    def make_request(key: str) -> Dict[str, Any]:
-        from openai import OpenAI
-        client = OpenAI(api_key=key)
+    messages = [
+        {'role': 'system', 'content': SPEAKING_EVALUATION_PROMPT},
+        {'role': 'user',   'content': user_prompt},
+    ]
+
+    estimated_tokens = estimate_simple_tokens(SPEAKING_EVALUATION_PROMPT, user_prompt)
+
+    def make_request(key: str, client) -> Tuple[Dict, int]:
         response = client.chat.completions.create(
-            model=getattr(settings, 'OPENAI_MODEL', 'gpt-4-turbo'),
-            messages=[
-                {'role': 'system', 'content': SPEAKING_EVALUATION_PROMPT},
-                {'role': 'user', 'content': user_prompt},
-            ],
+            model=model,
+            messages=messages,
             temperature=0.3,
             response_format={'type': 'json_object'},
-            timeout=30,
+            timeout=45.0,
         )
         content = response.choices[0].message.content
         if not content:
-            raise ValueError('Empty response from OpenAI')
+            raise ValueError('Empty response from OpenAI chat completions')
+
         evaluation = json.loads(content)
         breakdown = evaluation.get('breakdown', {})
         if not isinstance(breakdown, dict):
             raise ValueError(
-                f'Unexpected breakdown type from OpenAI: {type(breakdown)}'
+                f'Unexpected breakdown type: {type(breakdown).__name__}'
             )
+
         total_score = sum(
             float(v.get('score', 0))
             for v in breakdown.values()
             if isinstance(v, dict)
         )
-        return {**evaluation, 'score': total_score, 'maxScore': 10}
+        result = {**evaluation, 'score': total_score, 'maxScore': 10}
 
-    return _with_key_aware_retry(make_request)
+        # Actual token usage for quota correction
+        actual = 0
+        if response.usage:
+            actual = (response.usage.prompt_tokens or 0) + (response.usage.completion_tokens or 0)
+
+        return result, actual
+
+    return _with_quota_retry(make_request, estimated_tokens=estimated_tokens)
 
 
 def evaluate_writing(essay: str, prompt: str) -> Dict[str, Any]:
-    """Evaluate a writing submission using the configured OpenAI model."""
+    """
+    Evaluate a writing submission using gpt-4o-mini.
+
+    Args:
+        essay: Student's essay text.
+        prompt: The writing task prompt / rubric context.
+
+    Returns:
+        Dict with keys: score (0–10 float), feedback (dict), breakdown (dict).
+
+    Raises:
+        QuotaDailyExhaustedException: All keys have used up today's RPD/TPD.
+        QuotaTemporarilyUnavailableException: All keys hit RPM/TPM (retry soon).
+        ValueError: LLM returned malformed JSON or out-of-range score.
+        openai.OpenAIError: Unrecoverable API error.
+    """
     from .prompts import WRITING_EVALUATION_PROMPT, WRITING_USER_PROMPT_TEMPLATE
+
+    model = getattr(settings, 'OPENAI_MODEL', 'gpt-4o-mini')
 
     user_prompt = (
         WRITING_USER_PROMPT_TEMPLATE
@@ -252,48 +544,62 @@ def evaluate_writing(essay: str, prompt: str) -> Dict[str, Any]:
         .replace('{{essay}}', essay)
     )
 
-    def make_request(key: str) -> Dict[str, Any]:
-        from openai import OpenAI
-        client = OpenAI(api_key=key)
+    messages = [
+        {'role': 'system', 'content': WRITING_EVALUATION_PROMPT},
+        {'role': 'user',   'content': user_prompt},
+    ]
+
+    estimated_tokens = estimate_simple_tokens(WRITING_EVALUATION_PROMPT, user_prompt)
+
+    def make_request(key: str, client) -> Tuple[Dict, int]:
         response = client.chat.completions.create(
-            model=getattr(settings, 'OPENAI_MODEL', 'gpt-4-turbo'),
-            messages=[
-                {'role': 'system', 'content': WRITING_EVALUATION_PROMPT},
-                {'role': 'user', 'content': user_prompt},
-            ],
+            model=model,
+            messages=messages,
             temperature=0.3,
             response_format={'type': 'json_object'},
-            timeout=30,
+            timeout=45.0,
         )
         content = response.choices[0].message.content
         if not content:
-            raise ValueError('Empty response from OpenAI')
+            raise ValueError('Empty response from OpenAI chat completions')
+
         evaluation = json.loads(content)
         breakdown = evaluation.get('breakdown', {})
         if not isinstance(breakdown, dict):
             raise ValueError(
-                f'Unexpected breakdown type from OpenAI: {type(breakdown)}'
+                f'Unexpected breakdown type: {type(breakdown).__name__}'
             )
+
         total_score = sum(
             float(v.get('score', 0))
             for v in breakdown.values()
             if isinstance(v, dict)
         )
-        return {**evaluation, 'score': total_score, 'maxScore': 10}
+        result = {**evaluation, 'score': total_score, 'maxScore': 10}
 
-    return _with_key_aware_retry(make_request)
+        actual = 0
+        if response.usage:
+            actual = (response.usage.prompt_tokens or 0) + (response.usage.completion_tokens or 0)
+
+        return result, actual
+
+    return _with_quota_retry(make_request, estimated_tokens=estimated_tokens)
 
 
 def transcribe_audio(audio_file, mime_type: str = 'audio/mp3') -> str:
     """
-    Transcribe audio using Whisper API.
-    audio_file must be a file-like object (Django UploadedFile, open() handle,
-    or a tuple of (filename, bytes, content_type) for S3-backed audio).
+    Transcribe audio using Whisper API (whisper-1 model).
+
+    audio_file must be one of:
+      - A file-like object (open() handle, Django UploadedFile)
+      - A tuple of (filename, bytes, content_type) for S3-backed audio
+
     Returns the transcription text string.
+
+    Raises:
+        openai.OpenAIError: Unrecoverable API error after all retries.
     """
-    def make_request(key: str) -> str:
-        from openai import OpenAI
-        client = OpenAI(api_key=key)
+    def make_request(key: str, client) -> str:
         file_obj = audio_file
         if hasattr(audio_file, 'file'):
             file_obj = audio_file.file
@@ -302,12 +608,13 @@ def transcribe_audio(audio_file, mime_type: str = 'audio/mp3') -> str:
                 file_obj.seek(0)
             except Exception:
                 pass
+
         response = client.audio.transcriptions.create(
             model='whisper-1',
             file=file_obj,
             response_format='text',
-            timeout=60,
+            timeout=120.0,
         )
         return response
 
-    return _with_key_aware_retry(make_request)
+    return _with_whisper_retry(make_request)

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useTransition } from 'react'
+import { authStorage } from '@/lib/auth-storage'
 import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
@@ -206,8 +207,8 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
         <div className="p-4 border-t border-gray-200 bg-white shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-10 shrink-0 mt-auto">
           <button
             onClick={() => {
-              // Clear any stored authentication
-              localStorage.clear();
+              // Clear this tab's auth session
+              authStorage.clear()
               document.cookie.split(";").forEach((c) => {
                 document.cookie = c.replace(/^ +/, "").replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/");
               });

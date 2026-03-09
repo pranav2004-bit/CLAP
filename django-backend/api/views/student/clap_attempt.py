@@ -7,7 +7,7 @@ import json
 import logging
 from api.models import (
     User, ClapTest, ClapTestComponent, StudentClapAssignment,
-    ClapTestItem, StudentClapResponse, ComponentAttempt, MalpracticeEvent
+    ClapTestItem, ClapSetItem, StudentClapResponse, ComponentAttempt, MalpracticeEvent
 )
 from api.utils.jwt_utils import get_user_from_request
 
@@ -24,9 +24,27 @@ def list_assigned_tests(request):
         return JsonResponse({'error': 'Unauthorized'}, status=401)
 
     try:
-        assignments = StudentClapAssignment.objects.filter(
+        assignments = list(StudentClapAssignment.objects.filter(
             student=user
-        ).select_related('clap_test').prefetch_related('clap_test__components').order_by('-assigned_at')
+        ).select_related('clap_test').prefetch_related('clap_test__components').order_by('-assigned_at'))
+
+        # ── Fresh deadline lookup ──────────────────────────────────────────────
+        # Issue a separate direct SELECT on clap_tests for global_deadline.
+        # Using str(UUID) as dict keys avoids any UUID-object vs string mismatch.
+        test_ids = [str(a.clap_test_id) for a in assignments]
+        fresh_deadlines = {
+            str(id_): deadline
+            for id_, deadline in ClapTest.objects.filter(
+                id__in=test_ids
+            ).values_list('id', 'global_deadline')
+        } if test_ids else {}
+
+        # DEBUG: log so we can confirm the new code is running and see DB values
+        logger.info(
+            f"[TIMER_DEBUG v2] student={user.id} "
+            f"test_ids={test_ids} "
+            f"fresh_deadlines={fresh_deadlines}"
+        )
 
         data = []
         for assignment in assignments:
@@ -40,6 +58,16 @@ def list_assigned_tests(request):
                     'timer_enabled': comp.timer_enabled,
                 })
 
+            # Use the freshly-queried deadline (str-keyed to avoid UUID mismatch)
+            global_deadline = fresh_deadlines.get(str(assignment.clap_test_id))
+            now = timezone.now()
+            if global_deadline is None:
+                timer_state = 'upcoming'        # timer not started yet
+            elif now < global_deadline:
+                timer_state = 'live'            # timer running
+            else:
+                timer_state = 'expired'         # timer has passed
+
             data.append({
                 'assignment_id': str(assignment.id),
                 'test_id': str(assignment.clap_test.id),
@@ -49,10 +77,18 @@ def list_assigned_tests(request):
                 'started_at': assignment.started_at.isoformat() if assignment.started_at else None,
                 'completed_at': assignment.completed_at.isoformat() if assignment.completed_at else None,
                 'retest_granted': assignment.retest_granted,
+                'deadline_utc': global_deadline.isoformat() if global_deadline else None,
+                'timer_state': timer_state,
                 'components': components
             })
 
-        return JsonResponse({'assignments': data})
+        response = JsonResponse({'assignments': data})
+        # Timer state must always be fresh — never serve a cached response.
+        # Without this header the browser may return stale data where
+        # deadline_utc is still null even after the admin starts the timer.
+        response['Cache-Control'] = 'no-store, no-cache, must-revalidate'
+        response['Pragma'] = 'no-cache'
+        return response
 
     except Exception as e:
         logger.error(f"Error listing assignments: {str(e)}")
@@ -274,12 +310,53 @@ def submit_response(request, assignment_id):
         )
 
         # Auto-evaluate MCQ items
-        if item.item_type == 'mcq' and 'correct_option' in item.content:
+        if item.item_type == 'mcq':
             try:
-                selected_option = response_data.get('selected_option')
-                correct_option = item.content.get('correct_option')
+                # Support both response_data formats:
+                #   dict  → {"selected_option": 2}  (legacy / explicit)
+                #   int   → 2                        (current frontend sends bare index)
+                if isinstance(response_data, dict):
+                    selected_option = response_data.get('selected_option')
+                elif isinstance(response_data, (int, float)):
+                    selected_option = int(response_data)
+                else:
+                    selected_option = None
 
-                if selected_option is not None and int(selected_option) == int(correct_option):
+                # ── Answer-key lookup ─────────────────────────────────────────
+                # ALWAYS evaluate against the question bank of the student's
+                # assigned set (ClapSetItem), not the base ClapTestItem.
+                # This ensures Set-A students are scored on Set-A answers,
+                # Set-B students on Set-B answers, etc.
+                # Fall back to ClapTestItem.content only if no set is assigned
+                # or no matching ClapSetItem can be found.
+                correct_option = None
+
+                if assignment.assigned_set_id:
+                    set_item = ClapSetItem.objects.filter(
+                        set_component__set_id=assignment.assigned_set_id,
+                        set_component__test_type=item.component.test_type,
+                        order_index=item.order_index,
+                    ).first()
+                    if set_item and 'correct_option' in set_item.content:
+                        correct_option = set_item.content.get('correct_option')
+                        logger.debug(
+                            'MCQ scored against set item: assignment=%s set=%s '
+                            'component=%s order=%s correct=%s',
+                            assignment.id, assignment.assigned_set_id,
+                            item.component.test_type, item.order_index, correct_option,
+                        )
+
+                # Fall back to base item if set lookup returned nothing
+                if correct_option is None:
+                    correct_option = item.content.get('correct_option')
+
+                if correct_option is None:
+                    # No answer key found at all — skip auto-grading
+                    logger.warning(
+                        'No correct_option for item %s (set=%s) — MCQ not auto-graded',
+                        item.id, assignment.assigned_set_id,
+                    )
+                elif selected_option is not None and int(selected_option) == int(correct_option):
                     response.is_correct = True
                     response.marks_awarded = item.points
                 else:
@@ -287,7 +364,7 @@ def submit_response(request, assignment_id):
                     response.marks_awarded = 0
 
                 response.save()
-            except (ValueError, TypeError) as e:
+            except (ValueError, TypeError, AttributeError) as e:
                 logger.warning(f"Error evaluating MCQ response: {e}")
 
         return JsonResponse({'message': 'Response saved', 'response_id': str(response.id)})

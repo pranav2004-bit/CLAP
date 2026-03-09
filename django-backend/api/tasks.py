@@ -10,7 +10,7 @@ from urllib import request as urlrequest
 from urllib.parse import urlparse
 
 from celery import shared_task
-from celery.exceptions import SoftTimeLimitExceeded
+from celery.exceptions import SoftTimeLimitExceeded, Retry
 from openai import RateLimitError as OpenAIRateLimitError
 from django.conf import settings
 from django.db import transaction, connection
@@ -32,6 +32,11 @@ from api.models import (
 )
 from api.utils.openai_client import evaluate_speaking as openai_evaluate_speaking
 from api.utils.openai_client import evaluate_writing as openai_evaluate_writing
+from api.utils.quota_tracker import (
+    QuotaDailyExhaustedException,
+    QuotaTemporarilyUnavailableException,
+    get_quota_tracker,
+)
 from api.utils.observability import log_event
 from api.utils.metrics import llm_validation_failures_total, report_generation_duration, dlq_unresolved_count
 from api.utils.cdn import resolve_delivery_url
@@ -388,11 +393,37 @@ def score_rule_based(self, submission_id):
         connection.close()
 
 
-@shared_task(bind=True, max_retries=3, autoretry_for=(TimeoutError, ConnectionError, OpenAIRateLimitError), retry_backoff=True, retry_backoff_max=300, retry_jitter=True, acks_late=True, reject_on_worker_lost=True, time_limit=180, soft_time_limit=160)
+@shared_task(
+    bind=True,
+    # ── Retry policy ─────────────────────────────────────────────────────────
+    # max_retries=8: covers:
+    #   - transient API errors (up to 3 backoff retries)
+    #   - RPM quota rotations (up to 3 key rotations per minute)
+    #   - 1 long-countdown retry when all keys are RPM-limited
+    # We handle QuotaDailyExhaustedException manually with a long countdown,
+    # so autoretry is only for transient/connection errors (not RateLimitError).
+    max_retries=8,
+    autoretry_for=(TimeoutError, ConnectionError),
+    retry_backoff=True,
+    retry_backoff_max=120,
+    retry_jitter=True,
+    # ── Reliability ──────────────────────────────────────────────────────────
+    acks_late=True,            # Task re-queued if worker dies before completion
+    reject_on_worker_lost=True,
+    # ── Celery-level rate limit (safety net — quota tracker is the primary control)
+    # 3/m = max 3 chat-completion calls per minute per worker.
+    # With 1 LLM worker this directly mirrors the per-key RPM limit.
+    # With multiple keys the quota tracker handles higher throughput.
+    rate_limit='3/m',
+    # ── Time limits ──────────────────────────────────────────────────────────
+    time_limit=200,
+    soft_time_limit=175,
+)
 def evaluate_writing(self, submission_id):
     if _task_already_processed(self.request.id):
         return {'status': 'skipped', 'reason': 'task already processed', 'task_id': self.request.id}
 
+    submission = None
     try:
         submission = AssessmentSubmission.objects.select_related('user', 'assessment').get(id=submission_id)
 
@@ -410,31 +441,77 @@ def evaluate_writing(self, submission_id):
         _persist_llm_score(submission, 'writing', payload)
         _try_mark_llm_complete(submission)
         return {'status': 'ok', 'task': 'evaluate_writing', 'submission_id': submission_id}
+
     except SoftTimeLimitExceeded:
         # C4: handle before the hard kill so DLQ is recorded and DB connection cleaned up
         log_event('error', 'evaluate_writing_soft_time_limit', submission_id=str(submission_id))
         _record_dlq('evaluate_writing', submission_id, {'submission_id': str(submission_id)},
                     RuntimeError('SoftTimeLimitExceeded'), self.request.retries)
         raise
+
+    except QuotaDailyExhaustedException as exc:
+        # All API keys have exhausted their daily quota.
+        # Schedule a retry countdown to when quota likely resets (midnight UTC).
+        # Do NOT go to DLQ — this is expected and will resolve automatically.
+        wait = exc.wait_seconds
+        log_event('warning', 'evaluate_writing_daily_quota_exhausted',
+                  submission_id=str(submission_id), wait_seconds=wait,
+                  retry_attempt=self.request.retries)
+        raise self.retry(countdown=wait, exc=exc)
+
+    except QuotaTemporarilyUnavailableException as exc:
+        # All keys are RPM/TPM limited — retry when minute window resets.
+        wait = max(exc.wait_seconds, 65)  # At least 65s to clear the window
+        log_event('warning', 'evaluate_writing_rpm_quota_wait',
+                  submission_id=str(submission_id), wait_seconds=wait)
+        raise self.retry(countdown=wait, exc=exc)
+
+    except Retry:
+        raise
+
     except ValueError as exc:
         # H4: LLM response parse errors are not transient — DLQ immediately, no retry
         _record_dlq('evaluate_writing', submission_id, {'submission_id': str(submission_id)}, exc, self.request.retries)
-        _transition_submission_status(submission, AssessmentSubmission.STATUS_LLM_FAILED)
+        if submission:
+            _transition_submission_status(submission, AssessmentSubmission.STATUS_LLM_FAILED)
+
     except Exception as exc:
         if self.request.retries >= self.max_retries:
             _record_dlq('evaluate_writing', submission_id, {'submission_id': str(submission_id)}, exc, self.request.retries)
             # C3: surface permanent failure — student sees error, not endless spinner
-            _transition_submission_status(submission, AssessmentSubmission.STATUS_LLM_FAILED)
+            if submission:
+                _transition_submission_status(submission, AssessmentSubmission.STATUS_LLM_FAILED)
         raise
     finally:
         connection.close()
 
 
-@shared_task(bind=True, max_retries=3, autoretry_for=(TimeoutError, ConnectionError, OpenAIRateLimitError), retry_backoff=True, retry_backoff_max=300, retry_jitter=True, acks_late=True, reject_on_worker_lost=True, time_limit=180, soft_time_limit=160)
+@shared_task(
+    bind=True,
+    # ── Retry policy (same reasoning as evaluate_writing) ─────────────────
+    max_retries=8,
+    autoretry_for=(TimeoutError, ConnectionError),
+    retry_backoff=True,
+    retry_backoff_max=120,
+    retry_jitter=True,
+    # ── Reliability ──────────────────────────────────────────────────────────
+    acks_late=True,
+    reject_on_worker_lost=True,
+    # ── Celery rate limit ─────────────────────────────────────────────────────
+    # 3/m = at most 3 chat completions per minute per worker (safety net).
+    # Note: Whisper transcription uses a separate API endpoint and is NOT
+    # counted against the GPT RPM limit, so it is not rate-limited here.
+    rate_limit='3/m',
+    # ── Time limits ──────────────────────────────────────────────────────────
+    # Higher than writing because Whisper transcription adds ~30-120s.
+    time_limit=360,
+    soft_time_limit=330,
+)
 def evaluate_speaking(self, submission_id):
     if _task_already_processed(self.request.id):
         return {'status': 'skipped', 'reason': 'task already processed', 'task_id': self.request.id}
 
+    submission = None
     try:
         submission = AssessmentSubmission.objects.select_related('user', 'assessment').get(id=submission_id)
 
@@ -495,25 +572,48 @@ def evaluate_speaking(self, submission_id):
 
         payload = _evaluate_speaking_payload(transcript=transcript, prompt='Evaluate speaking transcript using rubric and return JSON')
         _persist_llm_score(submission, 'speaking', payload)
-
         _try_mark_llm_complete(submission)
 
         return {'status': 'ok', 'task': 'evaluate_speaking', 'submission_id': submission_id}
+
     except SoftTimeLimitExceeded:
         # C4: handle before the hard kill so DLQ is recorded and DB connection cleaned up
         log_event('error', 'evaluate_speaking_soft_time_limit', submission_id=str(submission_id))
         _record_dlq('evaluate_speaking', submission_id, {'submission_id': str(submission_id)},
                     RuntimeError('SoftTimeLimitExceeded'), self.request.retries)
         raise
+
+    except QuotaDailyExhaustedException as exc:
+        # All API keys have exhausted their daily quota.
+        # Schedule a long-countdown retry; do NOT go to DLQ.
+        wait = exc.wait_seconds
+        log_event('warning', 'evaluate_speaking_daily_quota_exhausted',
+                  submission_id=str(submission_id), wait_seconds=wait,
+                  retry_attempt=self.request.retries)
+        raise self.retry(countdown=wait, exc=exc)
+
+    except QuotaTemporarilyUnavailableException as exc:
+        # All keys are RPM/TPM limited — retry after window resets.
+        wait = max(exc.wait_seconds, 65)
+        log_event('warning', 'evaluate_speaking_rpm_quota_wait',
+                  submission_id=str(submission_id), wait_seconds=wait)
+        raise self.retry(countdown=wait, exc=exc)
+
+    except Retry:
+        raise
+
     except ValueError as exc:
         # H4: LLM response parse errors are not transient — DLQ immediately, no retry
         _record_dlq('evaluate_speaking', submission_id, {'submission_id': str(submission_id)}, exc, self.request.retries)
-        _transition_submission_status(submission, AssessmentSubmission.STATUS_LLM_FAILED)
+        if submission:
+            _transition_submission_status(submission, AssessmentSubmission.STATUS_LLM_FAILED)
+
     except Exception as exc:
         if self.request.retries >= self.max_retries:
             _record_dlq('evaluate_speaking', submission_id, {'submission_id': str(submission_id)}, exc, self.request.retries)
             # C3: surface permanent failure — student sees error, not endless spinner
-            _transition_submission_status(submission, AssessmentSubmission.STATUS_LLM_FAILED)
+            if submission:
+                _transition_submission_status(submission, AssessmentSubmission.STATUS_LLM_FAILED)
         raise
     finally:
         connection.close()
@@ -870,3 +970,252 @@ def check_text_similarity(self, assignment_id: str):
         f"check_text_similarity done for {assignment_id}: "
         f"{flagged_count} new flag(s) across {others.count()} peer(s)"
     )
+
+
+# ── Quota status reporter — beat task every 5 minutes ────────────────────────
+
+@shared_task(
+    bind=True,
+    max_retries=0,
+    acks_late=False,
+    time_limit=30,
+    soft_time_limit=25,
+    queue='rule_scoring',   # lightweight read-only task; no LLM queue contention
+)
+def log_quota_status(self):
+    """
+    Periodic beat task (every 5 min) that reads per-key quota counters from
+    Redis and emits structured log lines.
+
+    Purpose
+    ───────
+    • Zero-cost observability: operators see quota headroom before students notice.
+    • Alerts when any key is >80 % of daily limit.
+    • Exposes per-key RPD/TPD consumption for capacity planning.
+    • Does NOT make any OpenAI API calls — purely Redis reads.
+
+    Output (structured JSON logs in production):
+        {"event": "quota_status", "key_id": "abc123", "rpd_used": 45,
+         "rpd_limit": 180, "rpd_pct": 25.0, "tpd_used": 85000, ...}
+    """
+    if _task_already_processed(self.request.id):
+        return {'status': 'skipped', 'reason': 'task already processed'}
+
+    try:
+        tracker = get_quota_tracker()
+        pool_keys = getattr(settings, 'OPENAI_API_KEYS', [])
+        standby = getattr(settings, 'OPENAI_STANDBY_KEY', '') or ''
+        all_keys = [k for k in pool_keys if k]
+        if standby:
+            all_keys.append(standby)
+
+        if not all_keys:
+            log_event('warning', 'quota_status_no_keys_configured')
+            return {'status': 'skipped', 'reason': 'no API keys configured'}
+
+        statuses = tracker.get_all_keys_status(all_keys)
+        any_warning = False
+
+        for s in statuses:
+            rpd_used  = s['rpd']['used']
+            rpd_limit = s['rpd']['limit']
+            tpd_used  = s['tpd']['used']
+            tpd_limit = s['tpd']['limit']
+            rpm_used  = s['rpm']['used']
+            rpm_limit = s['rpm']['limit']
+
+            rpd_pct = round((rpd_used / rpd_limit * 100) if rpd_limit else 0, 1)
+            tpd_pct = round((tpd_used / tpd_limit * 100) if tpd_limit else 0, 1)
+
+            level = 'info'
+            if rpd_pct >= 90 or tpd_pct >= 90:
+                level = 'error'
+                any_warning = True
+            elif rpd_pct >= 75 or tpd_pct >= 75:
+                level = 'warning'
+                any_warning = True
+
+            log_event(
+                level,
+                'quota_status',
+                key_id=s['key_id'],
+                rpm_used=rpm_used,
+                rpm_limit=rpm_limit,
+                rpd_used=rpd_used,
+                rpd_limit=rpd_limit,
+                rpd_pct=rpd_pct,
+                tpd_used=tpd_used,
+                tpd_limit=tpd_limit,
+                tpd_pct=tpd_pct,
+            )
+
+        # DLQ health while we're at it
+        unresolved = DeadLetterQueue.objects.filter(resolved=False).count()
+        dlq_unresolved_count.set(unresolved)
+
+        return {
+            'status': 'ok',
+            'keys_checked': len(statuses),
+            'any_warning': any_warning,
+            'dlq_unresolved': unresolved,
+        }
+    except Exception as exc:
+        log_event('error', 'log_quota_status_failed', error=str(exc)[:300])
+        return {'status': 'error', 'error': str(exc)[:300]}
+    finally:
+        connection.close()
+
+
+# ── Audio conversion — WebM/MP4 → MP3 64kbps mono ───────────────────────────
+
+@shared_task(
+    bind=True,
+    name='api.tasks.convert_audio_to_mp3',
+    queue='report_gen',           # celery-reports worker handles media processing
+    max_retries=3,
+    default_retry_delay=30,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=120,
+    retry_jitter=True,
+    acks_late=True,
+    reject_on_worker_lost=True,
+    soft_time_limit=120,
+    time_limit=150,
+)
+def convert_audio_to_mp3(self, audio_response_id: str):
+    """
+    Convert a student audio response from WebM/MP4 to MP3 (64 kbps mono).
+
+    Flow:
+      1. Download the original file from S3 to a temp file.
+      2. Convert via pydub (ffmpeg backend) — 64kbps mono, 48kHz.
+      3. Upload the MP3 back to S3 at the same path with .mp3 extension.
+      4. Update StudentAudioResponse.file_path / mime_type / file_size.
+      5. Delete the original WebM/MP4 from S3.
+
+    Idempotent: if the file_path already ends with .mp3 the task exits early.
+    Safe to re-queue: temp files are always cleaned up in the finally block.
+    """
+    import tempfile
+
+    try:
+        audio_resp = StudentAudioResponse.objects.get(id=audio_response_id)
+    except StudentAudioResponse.DoesNotExist:
+        logger.warning('convert_audio_to_mp3: AudioResponse %s not found — skipping', audio_response_id)
+        return {'status': 'skipped', 'reason': 'not_found'}
+
+    file_path = audio_resp.file_path or ''
+
+    # Already MP3 — nothing to do
+    if file_path.endswith('.mp3') or audio_resp.mime_type == 'audio/mpeg':
+        logger.info('convert_audio_to_mp3: %s already MP3 — skipping', audio_response_id)
+        return {'status': 'skipped', 'reason': 'already_mp3'}
+
+    # Only handle S3-backed files
+    if not file_path.startswith('s3://'):
+        logger.warning('convert_audio_to_mp3: %s is not S3-backed (%s) — skipping', audio_response_id, file_path)
+        return {'status': 'skipped', 'reason': 'not_s3'}
+
+    # Parse  s3://bucket/key/path/file.webm
+    without_scheme = file_path[5:]
+    bucket, _, key = without_scheme.partition('/')
+    if not bucket or not key:
+        logger.error('convert_audio_to_mp3: Cannot parse S3 path: %s', file_path)
+        return {'status': 'error', 'reason': 'bad_s3_path'}
+
+    if _boto3 is None:
+        logger.error('convert_audio_to_mp3: boto3 not available')
+        return {'status': 'error', 'reason': 'boto3_missing'}
+
+    try:
+        from pydub import AudioSegment
+    except ImportError:
+        logger.error('convert_audio_to_mp3: pydub not installed — cannot convert')
+        return {'status': 'error', 'reason': 'pydub_missing'}
+
+    s3 = _boto3.client(
+        's3',
+        region_name=getattr(settings, 'S3_REGION_NAME', None) or None,
+        aws_access_key_id=getattr(settings, 'S3_ACCESS_KEY_ID', None) or None,
+        aws_secret_access_key=getattr(settings, 'S3_SECRET_ACCESS_KEY', None) or None,
+        endpoint_url=getattr(settings, 'S3_ENDPOINT_URL', None) or None,
+    )
+
+    original_ext = key.rsplit('.', 1)[-1].lower() if '.' in key else 'webm'
+    mp3_key = key.rsplit('.', 1)[0] + '.mp3'
+
+    tmp_in_path = None
+    tmp_out_path = None
+
+    try:
+        # Create temp files
+        with tempfile.NamedTemporaryFile(suffix=f'.{original_ext}', delete=False) as tmp_in:
+            tmp_in_path = tmp_in.name
+        with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as tmp_out:
+            tmp_out_path = tmp_out.name
+
+        # 1. Download original from S3
+        s3.download_file(bucket, key, tmp_in_path)
+        original_size = os.path.getsize(tmp_in_path)
+
+        # 2. Convert to MP3 — 64kbps mono, 48kHz (optimal for speech)
+        audio = AudioSegment.from_file(tmp_in_path, format=original_ext)
+        audio = audio.set_channels(1).set_frame_rate(48000)
+        audio.export(tmp_out_path, format='mp3', bitrate='64k')
+        mp3_size = os.path.getsize(tmp_out_path)
+
+        # 3. Upload MP3 to S3
+        s3.upload_file(
+            tmp_out_path,
+            bucket,
+            mp3_key,
+            ExtraArgs={
+                'ContentType': 'audio/mpeg',
+                'ServerSideEncryption': 'AES256',
+            },
+        )
+
+        # 4. Update DB record
+        StudentAudioResponse.objects.filter(id=audio_response_id).update(
+            file_path=f's3://{bucket}/{mp3_key}',
+            mime_type='audio/mpeg',
+            file_size=mp3_size,
+        )
+
+        # 5. Delete original WebM/MP4 from S3
+        s3.delete_object(Bucket=bucket, Key=key)
+
+        saving_pct = round((1 - mp3_size / original_size) * 100, 1) if original_size else 0
+        log_event(
+            'info', 'audio_converted_to_mp3',
+            audio_response_id=audio_response_id,
+            original_key=key,
+            mp3_key=mp3_key,
+            original_size_kb=round(original_size / 1024, 1),
+            mp3_size_kb=round(mp3_size / 1024, 1),
+            saving_pct=saving_pct,
+        )
+        return {
+            'status': 'ok',
+            'audio_response_id': audio_response_id,
+            'original_key': key,
+            'mp3_key': mp3_key,
+            'mp3_size_kb': round(mp3_size / 1024, 1),
+            'saving_pct': saving_pct,
+        }
+
+    except SoftTimeLimitExceeded:
+        log_event('error', 'convert_audio_soft_time_limit', audio_response_id=audio_response_id)
+        raise
+    except Exception as exc:
+        logger.exception('convert_audio_to_mp3 failed for %s: %s', audio_response_id, exc)
+        raise
+    finally:
+        for p in [tmp_in_path, tmp_out_path]:
+            if p:
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
+        connection.close()

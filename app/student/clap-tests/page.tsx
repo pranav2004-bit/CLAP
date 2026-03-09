@@ -1,66 +1,215 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { FileText, Clock, CheckCircle, WifiOff } from 'lucide-react'
+import { FileText, CheckCircle, WifiOff, ArrowLeft, Loader2, Timer, TimerOff, RadioTower, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { getApiUrl, getAuthHeaders, apiFetch } from '@/lib/api-config'
 import { useNetworkStatus } from '@/hooks/useNetworkStatus'
 
+// ── Timer state helpers ───────────────────────────────────────────────────────
+// Primary source of truth: deadline_utc (re-derived each render so the card
+// updates as time passes even without a new poll).
+// Fallback: timer_state from backend — used when deadline_utc is null but the
+// backend already knows the timer is live (race window between start and poll).
+type TimerState = 'upcoming' | 'live' | 'expired' | 'completed'
+
+function getTimerState(assignment: any): TimerState {
+    if (assignment.status === 'completed') return 'completed'
+    const deadline = assignment.deadline_utc
+    if (deadline) {
+        return new Date(deadline) > new Date() ? 'live' : 'expired'
+    }
+    // No deadline yet — trust the backend's pre-computed timer_state
+    const backendState = assignment.timer_state as TimerState | undefined
+    if (backendState === 'live' || backendState === 'expired') return backendState
+    return 'upcoming'
+}
+
+const TIMER_CONFIG: Record<TimerState, {
+    badge: string
+    badgeClass: string
+    borderClass: string
+    bgClass: string
+    icon: React.ElementType
+    buttonLabel: string
+    buttonClass: string
+    clickable: boolean
+    blockedMessage: string
+}> = {
+    upcoming: {
+        badge: 'Starting Soon',
+        badgeClass: 'bg-blue-50 text-blue-700 border-blue-200',
+        borderClass: 'border-l-blue-400',
+        bgClass: '',
+        icon: Timer,
+        buttonLabel: 'Starting Soon…',
+        buttonClass: 'bg-blue-100 text-blue-500 cursor-not-allowed',
+        clickable: false,
+        blockedMessage: 'The test hasn\'t started yet. Please wait for your instructor to begin.',
+    },
+    live: {
+        badge: 'Test is Live',
+        badgeClass: 'bg-green-50 text-green-700 border-green-200',
+        borderClass: 'border-l-green-500',
+        bgClass: '',
+        icon: RadioTower,
+        buttonLabel: '',        // dynamic: 'Continue Test' or 'Start Assessment'
+        buttonClass: 'bg-indigo-600 hover:bg-indigo-700 text-white',
+        clickable: true,
+        blockedMessage: '',
+    },
+    expired: {
+        badge: 'Timer Expired',
+        badgeClass: 'bg-red-50 text-red-700 border-red-200',
+        borderClass: 'border-l-red-400',
+        bgClass: 'opacity-70',
+        icon: TimerOff,
+        buttonLabel: 'Timer Expired',
+        buttonClass: 'bg-red-100 text-red-500 cursor-not-allowed',
+        clickable: false,
+        blockedMessage: 'The timer for this test has expired. Contact your instructor.',
+    },
+    completed: {
+        badge: 'Completed',
+        badgeClass: 'bg-gray-100 text-gray-600 border-gray-200',
+        borderClass: 'border-l-gray-400',
+        bgClass: '',
+        icon: CheckCircle,
+        buttonLabel: 'View',
+        buttonClass: 'bg-gray-100 text-gray-600 hover:bg-gray-200',
+        clickable: true,
+        blockedMessage: '',
+    },
+}
+
 export default function StudentClapTestsPage() {
     const router = useRouter()
-    const isOnline = useNetworkStatus()  // H2: offline detection
+    const isOnline = useNetworkStatus()
     const [assignments, setAssignments] = useState<any[]>([])
     const [isLoading, setIsLoading] = useState(true)
+    const [isRefreshing, setIsRefreshing] = useState(false)
+    const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null)
+    const [loadingId, setLoadingId] = useState<string | null>(null)
 
-    // H1: AbortController — prevents setState on unmounted component
-    useEffect(() => {
-        const controller = new AbortController()
-
-        const fetchAssignments = async () => {
-            try {
-                const response = await apiFetch(getApiUrl('student/clap-assignments'), {
-                    headers: getAuthHeaders(),
-                    signal: controller.signal,
-                })
-                if (controller.signal.aborted) return
-                const data = await response.json()
-
-                if (response.ok) {
-                    setAssignments(data.assignments)
-                } else {
-                    toast.error('Failed to load tests')
-                }
-            } catch (error) {
-                if ((error as Error).name === 'AbortError') return  // H1: expected on unmount
-                console.error(error)
-                toast.error('Network error')
-            } finally {
-                if (!controller.signal.aborted) setIsLoading(false)
+    const fetchAssignments = useCallback(async (signal?: AbortSignal) => {
+        try {
+            const response = await apiFetch(getApiUrl('student/clap-assignments'), {
+                headers: getAuthHeaders(),
+                signal,
+                cache: 'no-store',   // always fetch fresh — never serve stale timer state
+            })
+            if (signal?.aborted) return
+            const data = await response.json()
+            if (response.ok) {
+                setAssignments(data.assignments)
+            } else {
+                toast.error('Failed to load tests')
+            }
+        } catch (error) {
+            if ((error as Error).name === 'AbortError') return
+            console.error(error)
+            toast.error('Network error')
+        } finally {
+            if (!signal?.aborted) {
+                setIsLoading(false)
+                setIsRefreshing(false)
+                setLastRefreshed(new Date())
             }
         }
-
-        fetchAssignments()
-        return () => controller.abort()  // H1: cleanup on unmount
     }, [])
 
+    // Initial load
+    useEffect(() => {
+        const controller = new AbortController()
+        fetchAssignments(controller.signal)
+        return () => controller.abort()
+    }, [fetchAssignments])
+
+    // Poll every 5 s unconditionally — catches timer start/expire in near real-time.
+    // Fixed interval with no dependency on assignments to avoid resetting on every fetch.
+    useEffect(() => {
+        const id = setInterval(() => fetchAssignments(), 5_000)
+        return () => clearInterval(id)
+    }, [fetchAssignments])
+
+    // Refresh immediately when student switches back to this tab
+    useEffect(() => {
+        const onVisible = () => { if (document.visibilityState === 'visible') fetchAssignments() }
+        document.addEventListener('visibilitychange', onVisible)
+        return () => document.removeEventListener('visibilitychange', onVisible)
+    }, [fetchAssignments])
+
+    const handleManualRefresh = () => {
+        setIsRefreshing(true)
+        fetchAssignments()
+    }
+
+    const handleCardClick = (assignment: any) => {
+        const state = getTimerState(assignment)
+        const config = TIMER_CONFIG[state]
+        if (!config.clickable) {
+            toast.info(config.blockedMessage, { duration: 4000 })
+            return
+        }
+        if (loadingId) return
+        setLoadingId(assignment.assignment_id)
+        router.push(`/student/clap-tests/${assignment.assignment_id}`)
+    }
+
     return (
-        <div className="px-4 py-6 sm:px-6 max-w-5xl mx-auto">
-            {/* H2: Offline banner */}
-            {!isOnline && (
-                <div className="mb-4 bg-red-50 border border-red-200 rounded-lg px-4 py-3 flex items-center gap-3 text-red-700 text-sm font-medium">
-                    <WifiOff className="w-4 h-4 flex-shrink-0" />
-                    No internet connection — tests may not load correctly. Please reconnect.
+        <div className="min-h-dvh bg-background">
+        {/* Offline banner */}
+        {!isOnline && (
+            <div className="bg-red-600 text-white text-sm font-medium text-center py-2 px-4 flex items-center justify-center gap-2">
+                <WifiOff className="w-4 h-4 flex-shrink-0" />
+                No internet connection — tests may not load correctly. Please reconnect.
+            </div>
+        )}
+
+        {/* Sticky header */}
+        <header className="sticky top-0 z-40 bg-white border-b border-border shadow-sm">
+            <div className="px-4 sm:px-6 h-14 flex items-center gap-3">
+                <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => router.push('/student/dashboard')}
+                    className="flex items-center gap-1.5 -ml-2 shrink-0"
+                >
+                    <ArrowLeft className="w-4 h-4" />
+                    <span className="hidden sm:inline">Back to Dashboard</span>
+                    <span className="sm:hidden">Back</span>
+                </Button>
+                <div className="h-5 w-px bg-border shrink-0" />
+                <h1 className="text-sm sm:text-base font-semibold truncate flex-1">My CLAP Assessments</h1>
+                {/* Manual refresh + last-fetched indicator */}
+                <div className="flex items-center gap-2 shrink-0">
+                    {lastRefreshed && (
+                        <span className="hidden sm:inline text-xs text-gray-400">
+                            Updated {lastRefreshed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                        </span>
+                    )}
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleManualRefresh}
+                        disabled={isRefreshing}
+                        className="text-gray-500 hover:text-gray-700 p-1.5"
+                        title="Refresh test status"
+                    >
+                        <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                    </Button>
                 </div>
-            )}
+            </div>
+        </header>
 
-            <h1 className="text-2xl font-bold mb-2">My CLAP Assessments</h1>
-            <p className="text-gray-500 mb-8">Complete your assigned Continuous Learning Assessment Program tests.</p>
+        <div className="px-4 py-5 sm:px-6 sm:py-6 max-w-5xl mx-auto">
+            <p className="text-sm sm:text-base text-gray-500 mb-5 sm:mb-8">Complete your assigned Continuous Learning Assessment Program tests.</p>
 
-            {/* M1: Skeleton screens while loading */}
+            {/* Skeleton loading */}
             {isLoading ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {[1, 2, 3].map(i => (
@@ -89,51 +238,113 @@ export default function StudentClapTestsPage() {
                 </div>
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {assignments.map((assignment) => (
-                        <Card
-                            key={assignment.assignment_id}
-                            className="hover:shadow-md transition-all cursor-pointer border-l-4 border-l-indigo-500"
-                            onClick={() => router.push(`/student/clap-tests/${assignment.assignment_id}`)}
-                        >
-                            <CardHeader className="pb-3">
-                                <div className="flex justify-between items-start">
-                                    <div>
-                                        <CardTitle className="text-xl mb-1">{assignment.test_name}</CardTitle>
-                                        <p className="text-sm text-gray-500">
-                                            Assigned: {new Date(assignment.assigned_at).toLocaleDateString()}
+                    {assignments.map((assignment) => {
+                        const state   = getTimerState(assignment)
+                        const config  = TIMER_CONFIG[state]
+                        const StateIcon = config.icon
+                        const isNavigating = loadingId === assignment.assignment_id
+
+                        const buttonLabel = state === 'live'
+                            ? (assignment.status === 'started' ? 'Continue Test' : 'Start Assessment')
+                            : config.buttonLabel
+
+                        return (
+                            <Card
+                                key={assignment.assignment_id}
+                                className={`transition-all border-l-4 ${config.borderClass} ${config.bgClass} ${
+                                    config.clickable
+                                        ? 'cursor-pointer hover:shadow-md'
+                                        : 'cursor-default'
+                                }`}
+                                onClick={() => handleCardClick(assignment)}
+                            >
+                                <CardHeader className="pb-3">
+                                    <div className="flex justify-between items-start gap-3">
+                                        <div className="min-w-0">
+                                            <CardTitle className="text-base sm:text-xl mb-1 leading-snug">{assignment.test_name}</CardTitle>
+                                            <p className="text-sm text-gray-500">
+                                                Assigned: {new Date(assignment.assigned_at).toLocaleDateString()}
+                                            </p>
+                                        </div>
+
+                                        {/* Timer state badge */}
+                                        <Badge
+                                            variant="outline"
+                                            className={`flex items-center gap-1.5 shrink-0 font-semibold text-xs px-3 py-1 ${config.badgeClass}`}
+                                        >
+                                            {state === 'live' && (
+                                                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse flex-shrink-0" />
+                                            )}
+                                            {state !== 'live' && <StateIcon className="w-3 h-3 flex-shrink-0" />}
+                                            {config.badge}
+                                        </Badge>
+                                    </div>
+                                </CardHeader>
+
+                                <CardContent className="pt-0">
+                                    {/* ── Meta row: real values, dot-separated, no icon clutter ── */}
+                                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-gray-500 mb-3">
+                                        <span>
+                                            {assignment.components?.length ?? 0} module{(assignment.components?.length ?? 0) !== 1 ? 's' : ''}
+                                        </span>
+                                        <span className="text-gray-300">·</span>
+                                        <span>
+                                            {(() => {
+                                                const mins = assignment.components?.reduce(
+                                                    (s: number, c: any) => s + (c.duration || 0), 0
+                                                ) || 0
+                                                return mins ? `${mins} min` : '—'
+                                            })()}
+                                        </span>
+                                        {state === 'live' && assignment.deadline_utc && (
+                                            <>
+                                                <span className="text-gray-300">·</span>
+                                                <span className="text-green-700 font-semibold">
+                                                    Ends {new Date(assignment.deadline_utc).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                </span>
+                                            </>
+                                        )}
+                                    </div>
+
+                                    {/* ── Status notice for blocked states ── */}
+                                    {state === 'upcoming' && (
+                                        <p className="text-xs text-blue-600 bg-blue-50 rounded-md px-3 py-2 mb-3">
+                                            Waiting for instructor to start the timer.
                                         </p>
-                                    </div>
-                                    <Badge variant={assignment.status === 'completed' ? 'secondary' : 'default'} className={
-                                        assignment.status === 'completed' ? 'bg-green-100 text-green-700 hover:bg-green-200' : ''
-                                    }>
-                                        {assignment.status || 'Pending'}
-                                    </Badge>
-                                </div>
-                            </CardHeader>
-                            <CardContent>
-                                <div className="flex items-center gap-4 text-sm text-gray-600 mb-4">
-                                    <div className="flex items-center gap-1">
-                                        <FileText className="w-4 h-4" />
-                                        <span>5 Modules</span>
-                                    </div>
-                                    <div className="flex items-center gap-1">
-                                        <Clock className="w-4 h-4" />
-                                        <span>~50 mins</span>
-                                    </div>
-                                </div>
+                                    )}
+                                    {state === 'expired' && (
+                                        <p className="text-xs text-red-600 bg-red-50 rounded-md px-3 py-2 mb-3">
+                                            Time window closed. Contact your instructor.
+                                        </p>
+                                    )}
 
-                                <div className="w-full bg-gray-100 rounded-full h-2 mb-4">
-                                    <div className="h-2 rounded-full bg-indigo-600 w-0" />
-                                </div>
-
-                                <Button className="w-full">
-                                    {assignment.status === 'started' ? 'Continue Test' : 'Start Assessment'}
-                                </Button>
-                            </CardContent>
-                        </Card>
-                    ))}
+                                    <Button
+                                        className={`w-full font-semibold ${config.buttonClass}`}
+                                        disabled={!config.clickable || isNavigating}
+                                        onClick={e => {
+                                            e.stopPropagation()
+                                            handleCardClick(assignment)
+                                        }}
+                                    >
+                                        {isNavigating ? (
+                                            <>
+                                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                                Loading…
+                                            </>
+                                        ) : (
+                                            <>
+                                                {state === 'live' && <StateIcon className="w-4 h-4 mr-2" />}
+                                                {buttonLabel}
+                                            </>
+                                        )}
+                                    </Button>
+                                </CardContent>
+                            </Card>
+                        )
+                    })}
                 </div>
             )}
+        </div>
         </div>
     )
 }

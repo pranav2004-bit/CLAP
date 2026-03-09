@@ -7,6 +7,21 @@ const config: Config = {
     './components/**/*.{ts,tsx}',
     './app/**/*.{ts,tsx}',
     './src/**/*.{ts,tsx}',
+    './hooks/**/*.{ts,tsx}',
+    './lib/**/*.{ts,tsx}',
+  ],
+  safelist: [
+    // Timer state badge/border classes (applied dynamically from TIMER_CONFIG lookup)
+    'bg-blue-50', 'text-blue-700', 'border-blue-200', 'border-l-blue-400',
+    'bg-green-50', 'text-green-700', 'border-green-200', 'border-l-green-500',
+    'bg-red-50', 'text-red-700', 'border-red-200', 'border-l-red-400',
+    'bg-gray-100', 'text-gray-600', 'border-gray-200', 'border-l-gray-400',
+    'bg-blue-100', 'text-blue-500', 'cursor-not-allowed',
+    'bg-red-100', 'text-red-500',
+    // Fullscreen modal / anti-cheat UI
+    'border-red-200', 'border-amber-200',
+    // Opacity states
+    'opacity-70',
   ],
   prefix: "",
   theme: {

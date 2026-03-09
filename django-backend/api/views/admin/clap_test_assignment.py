@@ -65,9 +65,10 @@ def assign_clap_test(request, test_id):
                 updated_at=timezone.now()
             )
 
-            # Recreate student assignments from the already-configured batch
+            # Recreate student assignments from the already-configured batch — active only
+            # is_active=True keeps this count in sync with the batch page student count
             StudentClapAssignment.objects.filter(clap_test_id=test_id).delete()
-            students = User.objects.filter(batch_id=test.batch_id, role='student')
+            students = User.objects.filter(batch_id=test.batch_id, role='student', is_active=True)
             if students.exists():
                 assignments = [
                     StudentClapAssignment(

@@ -9,9 +9,19 @@ interface AntiCheatOptions {
 
 export function useAntiCheat({ onTabSwitch, onFullscreenExit, enabled = true }: AntiCheatOptions) {
   const switchCount = useRef(0)
-  const isFullscreen = useRef(false)
 
-  // Tab visibility detection
+  // ── Initialise from the REAL browser state ─────────────────────────────────
+  // Critical: when [type]/page mounts after the overview page already entered
+  // fullscreen, this ref must be `true` immediately — not `false`. If it starts
+  // as false, the guard `if (isFullscreen.current && !inFS)` never fires and the
+  // popup is never shown when the student presses Escape.
+  const isFullscreen = useRef(
+    typeof document !== 'undefined'
+      ? !!(document.fullscreenElement || (document as any).webkitFullscreenElement)
+      : false
+  )
+
+  // ── Tab visibility detection ────────────────────────────────────────────────
   useEffect(() => {
     if (!enabled) return
     const handler = () => {
@@ -24,19 +34,26 @@ export function useAntiCheat({ onTabSwitch, onFullscreenExit, enabled = true }: 
     return () => document.removeEventListener('visibilitychange', handler)
   }, [enabled, onTabSwitch])
 
-  // Fullscreen change detection
+  // ── Fullscreen change detection ─────────────────────────────────────────────
+  // NOTE: NOT gated by `enabled`. The listener must be active from the very
+  // first render so that exits during the loading phase (before enabled flips
+  // true) are still caught. Gating it caused the popup to silently miss exits
+  // that happened while items were still being fetched.
   useEffect(() => {
-    if (!enabled) return
     const handler = () => {
-      const inFS = !!document.fullscreenElement
+      const inFS = !!(document.fullscreenElement || (document as any).webkitFullscreenElement)
       if (isFullscreen.current && !inFS) onFullscreenExit()
       isFullscreen.current = inFS
     }
     document.addEventListener('fullscreenchange', handler)
-    return () => document.removeEventListener('fullscreenchange', handler)
-  }, [enabled, onFullscreenExit])
+    document.addEventListener('webkitfullscreenchange', handler)   // Safari
+    return () => {
+      document.removeEventListener('fullscreenchange', handler)
+      document.removeEventListener('webkitfullscreenchange', handler)
+    }
+  }, [onFullscreenExit])
 
-  // Right-click, F12/DevTools keys, beforeunload
+  // ── Right-click, F12/DevTools keys, beforeunload ────────────────────────────
   useEffect(() => {
     if (!enabled) return
     const noCtx = (e: MouseEvent) => e.preventDefault()
@@ -61,16 +78,30 @@ export function useAntiCheat({ onTabSwitch, onFullscreenExit, enabled = true }: 
 
   const requestFullscreen = useCallback(async () => {
     try {
+      // If already in fullscreen (e.g. overview page requested it and we just
+      // navigated here), skip the API call and sync the ref immediately so
+      // the exit detection works straight away.
+      if (document.fullscreenElement || (document as any).webkitFullscreenElement) {
+        isFullscreen.current = true
+        return
+      }
       await document.documentElement.requestFullscreen({ navigationUI: 'hide' })
       isFullscreen.current = true
     } catch {
-      // iOS Safari does not support requestFullscreen — caller applies CSS simulation
+      // iOS Safari does not support requestFullscreen — caller applies CSS simulation.
+      // Sync from actual browser state in case the element is still fullscreen
+      // despite the exception (some browsers throw on already-fullscreen calls).
+      isFullscreen.current = !!(document.fullscreenElement || (document as any).webkitFullscreenElement)
     }
   }, [])
 
   const exitFullscreen = useCallback(async () => {
     try {
-      await document.exitFullscreen()
+      if ((document as any).webkitExitFullscreen) {
+        (document as any).webkitExitFullscreen()   // Safari
+      } else {
+        await document.exitFullscreen()
+      }
     } catch {
       // Ignore if not in fullscreen
     }

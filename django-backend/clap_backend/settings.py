@@ -307,25 +307,28 @@ if importlib.util.find_spec('rest_framework_simplejwt'):
         'SIGNING_KEY': SECRET_KEY,
     }
 
-# ── OpenAI Multi-Key Pool (enterprise — up to 5 primary + 1 hot standby) ─────
-# Primary key (required — backward compatible with single-key setups)
+# ── OpenAI Multi-Key Pool (4 primary keys + 1 hot standby) ──────────────────
+# Primary key (required)
 OPENAI_API_KEY   = _resolve_secret('OPENAI_API_KEY',   default='')
-# Additional primary keys (optional — add more to increase throughput)
+# Additional primary keys — 4 keys × 3 RPM = 12 RPM total effective throughput
 OPENAI_API_KEY_2 = _resolve_secret('OPENAI_API_KEY_2', default='')
 OPENAI_API_KEY_3 = _resolve_secret('OPENAI_API_KEY_3', default='')
 OPENAI_API_KEY_4 = _resolve_secret('OPENAI_API_KEY_4', default='')
-OPENAI_API_KEY_5 = _resolve_secret('OPENAI_API_KEY_5', default='')
-# Hot standby key — reserved exclusively for when ALL primary keys hit rate limits
+# Hot standby key — reserved exclusively for when ALL 4 primary keys hit rate limits
 OPENAI_STANDBY_KEY = _resolve_secret('OPENAI_STANDBY_KEY', default='')
 
 # Build the pool list consumed by api/utils/openai_client.py._KeyPool
+# 4 keys × limits per key (with 90% safety margin):
+#   RPM effective : 4 × 2  = 8  req/min
+#   RPD effective : 4 × 180 = 720 req/day
+#   TPM effective : 4 × 54 000  = 216 000 tokens/min
+#   TPD effective : 4 × 180 000 = 720 000 tokens/day
 OPENAI_API_KEYS = [
     k for k in [
         OPENAI_API_KEY,
         OPENAI_API_KEY_2,
         OPENAI_API_KEY_3,
         OPENAI_API_KEY_4,
-        OPENAI_API_KEY_5,
     ] if k
 ]
 
@@ -544,14 +547,51 @@ EMAIL_WEBHOOK_SECRET = config('EMAIL_WEBHOOK_SECRET', default='')
 
 # LLM Provider Configuration (OpenAI / Gemini)
 LLM_PROVIDER = config('LLM_PROVIDER', default='openai')
-OPENAI_MODEL = config('OPENAI_MODEL', default='gpt-4-turbo')
+
+# ── OpenAI model selection ────────────────────────────────────────────────────
+# Default: gpt-4o-mini — lowest cost, highest RPM headroom on free/tier-1 keys.
+# Override with OPENAI_MODEL=gpt-4o or OPENAI_MODEL=gpt-4-turbo for higher quality.
+OPENAI_MODEL = config('OPENAI_MODEL', default='gpt-4o-mini')
+
 GEMINI_API_KEY = _resolve_secret('GEMINI_API_KEY', default='')
 GEMINI_MODEL = config('GEMINI_MODEL', default='gemini-1.5-pro')
 
+# ── OpenAI rate limit configuration ──────────────────────────────────────────
+# These values match the per-key limits shown on your OpenAI usage dashboard.
+# With multiple API keys the effective limit multiplies (e.g. 5 keys × 3 RPM = 15 RPM).
+# Set these to match YOUR account's actual limits for accurate quota tracking.
+#
+# gpt-4o-mini free/tier-1 limits (the defaults below):
+#   RPM  = 3    (3 requests per minute per key)
+#   RPD  = 200  (200 requests per day per key)
+#   TPM  = 60 000 tokens per minute per key
+#   TPD  = 200 000 tokens per day per key
+#
+# Upgrade path (OpenAI tier-2+):
+#   Set OPENAI_RPM_LIMIT=500 OPENAI_RPD_LIMIT=10000
+#   OPENAI_TPM_LIMIT=2000000 OPENAI_TPD_LIMIT=unlimited (set very high)
+OPENAI_RPM_LIMIT  = config('OPENAI_RPM_LIMIT',  default=3,       cast=int)
+OPENAI_RPD_LIMIT  = config('OPENAI_RPD_LIMIT',  default=200,     cast=int)
+OPENAI_TPM_LIMIT  = config('OPENAI_TPM_LIMIT',  default=60_000,  cast=int)
+OPENAI_TPD_LIMIT  = config('OPENAI_TPD_LIMIT',  default=200_000, cast=int)
+
+# Safety margin: only use this fraction of stated limits (prevents riding the edge).
+# 0.90 = use max 90 % of each limit, keeping a 10 % buffer.
+# Lower this (e.g. 0.80) if you observe sporadic 429s despite headroom.
+OPENAI_QUOTA_SAFETY_MARGIN = config('OPENAI_QUOTA_SAFETY_MARGIN', default=0.90, cast=float)
+
 CELERY_BEAT_SCHEDULE = {
+    # DLQ sweeper: retries failed tasks every 15 minutes
     'clap-dlq-sweeper-every-15-min': {
         'task': 'api.tasks.dlq_sweeper',
         'schedule': 900.0,
+    },
+    # Quota status reporter: logs per-key quota usage every 5 minutes.
+    # Zero-cost task — just reads Redis counters and emits structured log lines.
+    # Lets operators spot quota exhaustion before students are impacted.
+    'clap-quota-status-every-5-min': {
+        'task': 'api.tasks.log_quota_status',
+        'schedule': 300.0,
     },
 }
 

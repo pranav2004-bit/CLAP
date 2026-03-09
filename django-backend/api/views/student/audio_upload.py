@@ -20,6 +20,14 @@ from api.utils.jwt_utils import get_user_from_request
 
 import logging
 
+# Deferred import to avoid circular-import at module load time
+def _get_convert_task():
+    try:
+        from api.tasks import convert_audio_to_mp3
+        return convert_audio_to_mp3
+    except ImportError:
+        return None
+
 logger = logging.getLogger(__name__)
 
 if find_spec('boto3') is not None:
@@ -251,6 +259,19 @@ def submit_audio_response(request, assignment_id):
             duration_seconds=duration,
             recorded_at=timezone.now(),
         )
+
+        # Dispatch async conversion: WebM/MP4 → MP3 64kbps mono.
+        # Only for S3-backed files that are not already MP3.
+        # Runs in the celery-reports worker (report_gen queue).
+        if file_path.startswith('s3://') and not file_path.endswith('.mp3'):
+            convert_task = _get_convert_task()
+            if convert_task is not None:
+                convert_task.apply_async(
+                    args=[str(audio_response.id)],
+                    queue='report_gen',
+                )
+            else:
+                logger.warning('convert_audio_to_mp3 task not available; audio stored as-is for %s', audio_response.id)
 
         return JsonResponse(
             {

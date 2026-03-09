@@ -16,9 +16,11 @@ import {
   AlertCircle,
   CheckCircle,
   ArrowLeft,
-  WifiOff
+  WifiOff,
+  Trophy,
 } from 'lucide-react'
 import { getApiUrl, getAuthHeaders, apiFetch } from '@/lib/api-config'
+import { authStorage } from '@/lib/auth-storage'
 import { useNetworkStatus } from '@/hooks/useNetworkStatus'
 
 interface StudentProfile {
@@ -68,7 +70,7 @@ export default function StudentProfilePage() {
     const fetchProfile = async () => {
       try {
         setLoading(true)
-        const userId = localStorage.getItem('user_id')
+        const userId = authStorage.get('user_id')
 
         if (!userId) {
           router.push('/login')
@@ -127,7 +129,7 @@ export default function StudentProfilePage() {
 
     try {
       setSaving(true)
-      const userId = localStorage.getItem('user_id')
+      const userId = authStorage.get('user_id')
 
       const response = await apiFetch(getApiUrl('student/profile'), {
         method: 'PUT',
@@ -283,14 +285,25 @@ export default function StudentProfilePage() {
       )}
       <div className="container mx-auto px-4 max-w-4xl">
         {profile.profile_completed && (
-          <Button
-            variant="ghost"
-            className="mb-6 pl-0 hover:bg-transparent hover:text-indigo-600 transition-colors"
-            onClick={() => router.push('/student/dashboard')}
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Dashboard
-          </Button>
+          <div className="flex items-center gap-3 mb-6">
+            <Button
+              variant="ghost"
+              className="pl-0 hover:bg-transparent hover:text-indigo-600 transition-colors"
+              onClick={() => router.push('/student/dashboard')}
+            >
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Back to Dashboard
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex items-center gap-1.5 h-8 text-green-700 border-green-200 hover:bg-green-50"
+              onClick={() => router.push('/student/results')}
+            >
+              <Trophy className="w-3.5 h-3.5" />
+              My Results
+            </Button>
+          </div>
         )}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8">
           <div>
@@ -314,6 +327,19 @@ export default function StudentProfilePage() {
             )}
           </Badge>
         </div>
+
+        {/* ── Email-missing banner — shown when admin created account with no email ── */}
+        {!profile.email && (
+          <div className="mb-6 flex items-start gap-3 bg-amber-50 border border-amber-300 rounded-xl px-4 py-3">
+            <Mail className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-amber-900">Email address required</p>
+              <p className="text-xs text-amber-700 mt-0.5">
+                Please add your email address below — your exam report card will be sent to this address after you complete all 5 tests.
+              </p>
+            </div>
+          </div>
+        )}
 
         {error && (
           <Alert variant="destructive" className="mb-6">

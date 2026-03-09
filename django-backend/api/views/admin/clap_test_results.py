@@ -3,6 +3,17 @@ Admin CLAP Test Results View
 GET /api/admin/clap-tests/<uuid>/results
 Returns paginated student results for a specific CLAP test
 with per-component marks, grade, duration, search, and sort.
+
+Scoring sources (priority order):
+  1. SubmissionScore  — authoritative; set by the pipeline after evaluation
+                        (rule-based for L/R/V, LLM for W/S)
+  2. StudentClapResponse.marks_awarded — live fallback when the pipeline
+                        hasn't run yet (MCQ answers scored at submission time)
+
+This dual-source approach ensures:
+  - Writing / Speaking marks are never shown as 0 (they come from SubmissionScore)
+  - Total and Grade are always populated once evaluation is complete
+  - MCQ marks are visible immediately after submission, before pipeline runs
 """
 
 from django.http import JsonResponse
@@ -15,15 +26,26 @@ import logging
 from api.models import (
     ClapTest, ClapTestComponent, StudentClapAssignment,
     StudentClapResponse, MalpracticeEvent,
+    AssessmentSubmission, SubmissionScore,
 )
 from api.utils.jwt_utils import get_user_from_request
 
 logger = logging.getLogger(__name__)
 
+# SubmissionScore stores rule-based domain as 'vocab'; ClapTestComponent uses 'vocabulary'
+_SCORE_DOMAIN_TO_TEST_TYPE = {
+    'listening': 'listening',
+    'reading':   'reading',
+    'vocab':     'vocabulary',
+    'writing':   'writing',
+    'speaking':  'speaking',
+}
+_TEST_TYPE_TO_SCORE_DOMAIN = {v: k for k, v in _SCORE_DOMAIN_TO_TEST_TYPE.items()}
+
 
 def calculate_grade(total_score, max_possible):
     """
-    Grade calculation for CLAP tests (total out of 50).
+    Grade calculation for CLAP tests (total out of max_possible).
     O: >= 90%, A+: >= 80%, A: >= 70%, B+: >= 60%, B: < 60%
     """
     if total_score is None or max_possible is None or max_possible == 0:
@@ -56,27 +78,45 @@ def clap_test_results_handler(request, test_id):
       - sort_by (optional: 'total_score' or 'student_id')
       - sort_order (optional: 'asc' or 'desc', default 'desc')
     """
-    # Auth check
     user = get_user_from_request(request)
     if not user or user.role != 'admin':
         return JsonResponse({'error': 'Unauthorized'}, status=401)
 
     try:
-        # Verify test exists
         try:
             clap_test = ClapTest.objects.get(id=test_id)
         except ClapTest.DoesNotExist:
             return JsonResponse({'error': 'CLAP test not found'}, status=404)
 
-        # Single query: fetch components and derive both max_possible and per-type max
+        # ── Component metadata ────────────────────────────────────────────────
         components = list(ClapTestComponent.objects.filter(clap_test_id=test_id))
         component_max = {comp.test_type: comp.max_marks for comp in components}
         max_possible = sum(comp.max_marks for comp in components)
 
-        # Base queryset for assignments
+        # ── Bulk-fetch SubmissionScore for every student in this test ─────────
+        # Keyed by user_id (str) → { domain: float_score, 'submission_id': ...,
+        #                             'submission_status': ... }
+        # Multiple submissions per user are possible (retests); take latest.
+        submission_score_map: dict[str, dict] = {}
+        for sub in (
+            AssessmentSubmission.objects
+            .filter(assessment_id=test_id)
+            .prefetch_related('scores')
+            .order_by('created_at')   # ascending → latest wins
+        ):
+            uid = str(sub.user_id)
+            entry = submission_score_map.setdefault(uid, {
+                'submission_id': str(sub.id),
+                'submission_status': sub.status,
+            })
+            entry['submission_id'] = str(sub.id)
+            entry['submission_status'] = sub.status
+            for sc in sub.scores.all():
+                entry[sc.domain] = float(sc.score)
+
+        # ── Base queryset for assignments ─────────────────────────────────────
         base_qs = StudentClapAssignment.objects.filter(clap_test_id=test_id)
 
-        # Summary: single query using conditional aggregation
         summary_agg = base_qs.aggregate(
             total_assigned=Count('id'),
             completed_count=Count(Case(When(status='completed', then=1), output_field=IntegerField())),
@@ -87,30 +127,22 @@ def clap_test_results_handler(request, test_id):
                 output_field=IntegerField(),
             )),
         )
-        total_assigned = summary_agg['total_assigned']
-        completed_count = summary_agg['completed_count']
-        started_count = summary_agg['started_count']
-        not_started_count = summary_agg['not_started_count']
-        avg_score = round(float(summary_agg['avg_score']), 1) if summary_agg['avg_score'] is not None else None
 
-        # Prefetch responses with item -> component for per-component grouping
+        # ── Prefetches ────────────────────────────────────────────────────────
         response_prefetch = Prefetch(
             'responses',
             queryset=StudentClapResponse.objects.select_related('item__component'),
         )
-
-        # Prefetch malpractice events — avoids N+1 on the Integrity column
         malpractice_prefetch = Prefetch(
             'malpractice_events',
             queryset=MalpracticeEvent.objects.only('event_type'),
         )
 
-        # Build filtered queryset
         assignments_qs = base_qs.select_related('student').prefetch_related(
             response_prefetch, malpractice_prefetch
         )
 
-        # Search by student_id or full_name
+        # ── Filters ───────────────────────────────────────────────────────────
         search = request.GET.get('search', '').strip()
         if search:
             assignments_qs = assignments_qs.filter(
@@ -118,12 +150,10 @@ def clap_test_results_handler(request, test_id):
                 Q(student__full_name__icontains=search)
             )
 
-        # Status filter
         status_filter = request.GET.get('status')
         if status_filter:
             assignments_qs = assignments_qs.filter(status=status_filter)
 
-        # Sorting
         sort_by = request.GET.get('sort_by', '')
         sort_order = request.GET.get('sort_order', 'desc')
         order_prefix = '' if sort_order == 'asc' else '-'
@@ -135,7 +165,7 @@ def clap_test_results_handler(request, test_id):
         else:
             assignments_qs = assignments_qs.order_by('-completed_at', '-started_at', '-assigned_at')
 
-        # Pagination
+        # ── Pagination ────────────────────────────────────────────────────────
         page = max(int(request.GET.get('page', 1)), 1)
         page_size = min(max(int(request.GET.get('page_size', 20)), 1), 100)
         paginator = Paginator(assignments_qs, page_size)
@@ -144,32 +174,42 @@ def clap_test_results_handler(request, test_id):
         results = []
         for assignment in page_obj:
             student = assignment.student
+            uid = str(assignment.student_id)
+            sub_data = submission_score_map.get(uid, {})
 
-            # Group marks by component test_type
+            # ── Component marks ───────────────────────────────────────────────
+            # Priority 1: SubmissionScore (pipeline-authoritative for all 5 domains)
             component_marks = {
-                'listening': None,
-                'speaking': None,
-                'reading': None,
-                'writing': None,
-                'vocabulary': None,
+                'listening':  sub_data.get('listening'),
+                'speaking':   sub_data.get('speaking'),
+                'reading':    sub_data.get('reading'),
+                'writing':    sub_data.get('writing'),
+                'vocabulary': sub_data.get('vocab'),   # SubmissionScore domain key is 'vocab'
             }
-            for resp in assignment.responses.all():
-                test_type = resp.item.component.test_type
-                if test_type in component_marks:
-                    current = component_marks[test_type] or 0
-                    awarded = float(resp.marks_awarded) if resp.marks_awarded is not None else 0
-                    component_marks[test_type] = current + awarded
 
-            # Calculate duration in minutes
+            # Priority 2 (fallback): live MCQ marks from StudentClapResponse
+            # Used when pipeline hasn't run yet (submission still PENDING/PROCESSING).
+            # Only fills in test_types that still have None from SubmissionScore.
+            if not any(v is not None for v in component_marks.values()):
+                for resp in assignment.responses.all():
+                    test_type = resp.item.component.test_type
+                    if test_type in component_marks and component_marks[test_type] is None:
+                        current = component_marks[test_type] or 0
+                        awarded = float(resp.marks_awarded) if resp.marks_awarded is not None else 0
+                        component_marks[test_type] = current + awarded
+
+            # ── Total & Grade ─────────────────────────────────────────────────
+            scored_values = [v for v in component_marks.values() if v is not None]
+            computed_total = round(sum(scored_values), 2) if scored_values else None
+            grade = calculate_grade(computed_total, max_possible)
+
+            # ── Duration ─────────────────────────────────────────────────────
             duration_minutes = None
             if assignment.started_at and assignment.completed_at:
                 delta = assignment.completed_at - assignment.started_at
                 duration_minutes = round(delta.total_seconds() / 60, 1)
 
-            # Calculate grade
-            grade = calculate_grade(assignment.total_score, max_possible)
-
-            # Integrity flags from prefetched malpractice events (no extra query)
+            # ── Integrity ─────────────────────────────────────────────────────
             events = list(assignment.malpractice_events.all())
             integrity_flags = {
                 'tab_switches':     sum(1 for e in events if e.event_type == 'tab_switch'),
@@ -179,44 +219,51 @@ def clap_test_results_handler(request, test_id):
             }
 
             results.append({
-                'student_name': student.full_name or student.email or '',
-                'student_id': student.student_id or '',
-                'status': assignment.status,
-                'total_score': assignment.total_score,
-                'max_possible_score': max_possible,
-                'listening_marks': component_marks['listening'],
-                'speaking_marks': component_marks['speaking'],
-                'reading_marks': component_marks['reading'],
-                'writing_marks': component_marks['writing'],
-                'vocabulary_marks': component_marks['vocabulary'],
-                'component_max': component_max,
-                'grade': grade,
-                'duration_minutes': duration_minutes,
-                'started_at': assignment.started_at.isoformat() if assignment.started_at else None,
-                'completed_at': assignment.completed_at.isoformat() if assignment.completed_at else None,
-                'malpractice_count': len(events),
-                'integrity_flags': integrity_flags,
+                'student_id':            student.student_id or '',
+                'status':                assignment.status,
+                'assigned_set_label':    assignment.assigned_set_label or '',
+                'total_score':           computed_total,
+                'max_possible_score':    max_possible,
+                'listening_marks':       component_marks['listening'],
+                'speaking_marks':        component_marks['speaking'],
+                'reading_marks':         component_marks['reading'],
+                'writing_marks':         component_marks['writing'],
+                'vocabulary_marks':      component_marks['vocabulary'],
+                'component_max':         component_max,
+                'grade':                 grade,
+                'duration_minutes':      duration_minutes,
+                'started_at':            assignment.started_at.isoformat() if assignment.started_at else None,
+                'completed_at':          assignment.completed_at.isoformat() if assignment.completed_at else None,
+                'malpractice_count':     len(events),
+                'integrity_flags':       integrity_flags,
+                # Pipeline submission info (used for Report column)
+                'submission_id':         sub_data.get('submission_id'),
+                'submission_status':     sub_data.get('submission_status'),
+                # assignment id — needed for the Answers Preview endpoint
+                'assignment_id':         str(assignment.id),
             })
 
+        avg_score_val = summary_agg['avg_score']
+
         return JsonResponse({
-            'test_id': str(clap_test.test_id) if clap_test.test_id else str(clap_test.id),
-            'test_name': clap_test.name,
+            'test_id':            str(clap_test.test_id) if clap_test.test_id else str(clap_test.id),
+            'test_name':          clap_test.name,
             'max_possible_score': max_possible,
-            'component_max': component_max,
+            'component_max':      component_max,
             'summary': {
-                'total_assigned': total_assigned,
-                'completed': completed_count,
-                'started': started_count,
-                'not_started': not_started_count,
-                'average_score': avg_score,
+                'total_assigned': summary_agg['total_assigned'],
+                'completed':      summary_agg['completed_count'],
+                'started':        summary_agg['started_count'],
+                'not_started':    summary_agg['not_started_count'],
+                'average_score':  round(float(avg_score_val), 1) if avg_score_val is not None else None,
             },
             'results': results,
             'pagination': {
-                'page': page,
-                'page_size': page_size,
+                'page':        page,
+                'page_size':   page_size,
                 'total_count': paginator.count,
                 'total_pages': paginator.num_pages,
-            }
+            },
         })
 
     except ValueError:

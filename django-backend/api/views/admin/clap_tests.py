@@ -66,6 +66,8 @@ def list_clap_tests(request):
                 'status': test.status,
                 'is_assigned': bool(test.batch_id),
                 'created_at': test.created_at.isoformat() if test.created_at else None,
+                'global_duration_minutes': test.global_duration_minutes,
+                'global_deadline': test.global_deadline.isoformat() if test.global_deadline else None,
                 'tests': []
             }
 
@@ -150,8 +152,9 @@ def create_clap_test(request):
             
             ClapTestComponent.objects.bulk_create(components_to_create)
             
-            # Automatically assign to all students in the batch
-            students = User.objects.filter(batch_id=batch_id, role='student')
+            # Automatically assign to all ACTIVE students in the batch
+            # is_active=True keeps this count in sync with the batch page student count
+            students = User.objects.filter(batch_id=batch_id, role='student', is_active=True)
             
             if students.exists():
                 assignments = []

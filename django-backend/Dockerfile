@@ -42,7 +42,8 @@ FROM python:3.11-slim AS runtime
 WORKDIR /app
 
 # Runtime-only system dependencies (no build tools = smaller attack surface)
-# libpq5  — PostgreSQL client shared library needed by psycopg2 at runtime
+# libpq5     — PostgreSQL client shared library needed by psycopg2 at runtime
+# ffmpeg     — audio conversion: WebM/MP4 → MP3 64kbps mono (pydub backend)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     libpango-1.0-0 \
@@ -51,6 +52,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgdk-pixbuf-2.0-0 \
     libffi-dev \
     shared-mime-info \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy compiled packages from builder stage

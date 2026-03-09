@@ -681,7 +681,7 @@ function MCQEditor({ item, onUpdate }: { item: any; onUpdate: any }) {
       {options[correct] && (
         <p className="text-xs text-green-700 font-semibold flex items-center gap-1.5">
           <Check className="w-3.5 h-3.5" />
-          Correct answer: Option {String.fromCharCode(65 + correct)} — "{options[correct]}"
+          Correct answer: Option {String.fromCharCode(65 + correct)} &mdash; &ldquo;{options[correct]}&rdquo;
         </p>
       )}
     </div>
