@@ -178,27 +178,39 @@ def clap_test_results_handler(request, test_id):
             sub_data = submission_score_map.get(uid, {})
 
             # ── Component marks ───────────────────────────────────────────────
-            # Priority 1: SubmissionScore (pipeline-authoritative for all 5 domains).
-            # Set by score_rule_based (L/R/V) and LLM tasks (W/S).
+            # L/R/V (MCQ domains): computed directly by summing ALL StudentClapResponse
+            #   marks_awarded for MCQ items in each component.
+            #   - marks_awarded is written per-response by submit_response (real-time)
+            #     and corrected by _reevaluate_mcq_responses (Celery + startup rescore).
+            #   - This is IDENTICAL to the source used by the answers preview, so the
+            #     results table and preview are always 100% consistent.
+            #   - Does NOT depend on SubmissionScore or AssessmentSubmission existing —
+            #     works for every completed assignment regardless of pipeline state.
+            #
+            # W/S (LLM domains): sourced exclusively from SubmissionScore because these
+            #   are produced by the LLM evaluation pipeline and cannot be recomputed here.
+            _MCQ_TYPES = frozenset(('listening', 'reading', 'vocabulary'))
             component_marks = {
-                'listening':  sub_data.get('listening'),
+                'listening':  None,
                 'speaking':   sub_data.get('speaking'),
-                'reading':    sub_data.get('reading'),
+                'reading':    None,
                 'writing':    sub_data.get('writing'),
-                'vocabulary': sub_data.get('vocab'),   # SubmissionScore domain key is 'vocab'
+                'vocabulary': None,
             }
 
-            # Priority 2 (per-component fallback): live MCQ marks from StudentClapResponse.
-            # Applied independently per component when its SubmissionScore is still None
-            # (e.g. pipeline is PENDING for that specific domain, or submission not yet created).
-            # This makes scores immediately visible after submission without waiting for the
-            # full pipeline, while never overwriting an authoritative SubmissionScore.
             for resp in assignment.responses.all():
+                if resp.item.item_type != 'mcq':
+                    continue
                 test_type = resp.item.component.test_type
-                if test_type in component_marks and component_marks[test_type] is None:
-                    current = component_marks[test_type] or 0
-                    awarded = float(resp.marks_awarded) if resp.marks_awarded is not None else 0
-                    component_marks[test_type] = round(current + awarded, 2)
+                if test_type not in _MCQ_TYPES:
+                    continue
+                # First MCQ response seen for this component: initialise accumulator to 0
+                if component_marks[test_type] is None:
+                    component_marks[test_type] = 0.0
+                if resp.marks_awarded is not None:
+                    component_marks[test_type] = round(
+                        component_marks[test_type] + float(resp.marks_awarded), 2
+                    )
 
             # ── Total & Grade ─────────────────────────────────────────────────
             scored_values = [v for v in component_marks.values() if v is not None]

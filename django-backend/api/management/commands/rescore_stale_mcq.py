@@ -1,19 +1,25 @@
 """
 management/commands/rescore_stale_mcq.py
 
-Startup command — re-evaluates every completed assignment's L/R/V MCQ scores
-from scratch against the authoritative predefined answer keys.
+Startup command — re-evaluates every completed assignment's L/R/V MCQ
+marks_awarded and is_correct from scratch against the authoritative predefined
+answer keys.
 
-Hooked into the Dockerfile CMD so it runs automatically on every container
-startup.  Fully idempotent: running it ten times produces identical results.
+Runs automatically on every container startup (hooked into Dockerfile CMD).
+Fully idempotent: running it ten times produces identical results.
 
 Design principles:
-  - Groups submissions by assessment so ClapTestComponent queries are reused
-  - Builds each set's answer key exactly once per run (O(sets) DB queries)
-  - Each assignment processed in its own atomic transaction — one failure
-    never blocks the rest
-  - Only overwrites L/R/V SubmissionScore rows; Writing/Speaking untouched
-  - All output goes to stdout/stderr so Docker captures it in container logs
+  - Iterates from StudentClapAssignment (status='completed'), NOT from
+    AssessmentSubmission.  This covers EVERY completed assignment, including
+    those whose AssessmentSubmission is stuck in PENDING, or has no
+    AssessmentSubmission record at all (pipeline submission failed).
+  - Calls _reevaluate_mcq_responses for every assignment to ensure
+    StudentClapResponse.is_correct and marks_awarded are correct.
+    These are the values the results table and answers preview read directly.
+  - Where a scoreable AssessmentSubmission exists, also updates SubmissionScore
+    (used for reports, sorting, and W/S display).
+  - Each assignment processed in its own atomic transaction.
+  - All output goes to stdout/stderr → captured in Docker container logs.
 
 Usage:
     python manage.py rescore_stale_mcq                    # rescore everything
@@ -27,7 +33,6 @@ from decimal import Decimal
 
 from django.core.management.base import BaseCommand
 from django.db import transaction
-from django.utils import timezone
 
 from api.models import (
     AssessmentSubmission,
@@ -40,8 +45,8 @@ from api.tasks import (
     _upsert_rule_score,
 )
 
-# Statuses that mean score_rule_based has already run at least once
-_SCOREABLE_STATUSES = [
+# Statuses that mean score_rule_based has already run — SubmissionScore exists.
+_SCOREABLE_STATUSES = frozenset([
     AssessmentSubmission.STATUS_RULES_COMPLETE,
     AssessmentSubmission.STATUS_LLM_PROCESSING,
     AssessmentSubmission.STATUS_LLM_COMPLETE,
@@ -50,7 +55,7 @@ _SCOREABLE_STATUSES = [
     AssessmentSubmission.STATUS_REPORT_READY,
     AssessmentSubmission.STATUS_EMAIL_SENDING,
     AssessmentSubmission.STATUS_COMPLETE,
-]
+])
 
 _MCQ_DOMAINS = {
     'listening': 'listening',
@@ -77,14 +82,14 @@ class Command(BaseCommand):
             '--dry-run',
             action='store_true',
             default=False,
-            help='Compute corrected scores and log them without writing to DB.',
+            help='Evaluate and log corrected scores without writing to DB.',
         )
         parser.add_argument(
             '--batch-size',
             type=int,
             default=100,
             metavar='N',
-            help='Submissions processed per batch (default: 100).',
+            help='Assignments processed per batch (default: 100).',
         )
 
     # ------------------------------------------------------------------
@@ -99,20 +104,21 @@ class Command(BaseCommand):
             f'{"  (DRY RUN — no writes)" if dry_run else ""}...'
         )
 
-        # ── 1. Find every submission that has been through MCQ scoring ────
+        # ── 1. All COMPLETED assignments — regardless of pipeline state ────────
+        # Iterating from StudentClapAssignment (not AssessmentSubmission) ensures
+        # we cover every student whose submission pipeline may have stalled/failed.
         qs = (
-            AssessmentSubmission.objects
-            .filter(status__in=_SCOREABLE_STATUSES)
-            .select_related('user', 'assessment')
-            .order_by('assessment_id', 'id')   # group by test for component cache
+            StudentClapAssignment.objects
+            .filter(status='completed')
+            .select_related('clap_test', 'assigned_set', 'student')
         )
         if test_id:
-            qs = qs.filter(assessment_id=test_id)
+            qs = qs.filter(clap_test_id=test_id)
 
-        submission_ids = list(qs.values_list('id', flat=True))
-        total = len(submission_ids)
+        assignment_ids = list(qs.values_list('id', flat=True))
+        total = len(assignment_ids)
+        self.stdout.write(f'[rescore_stale_mcq] {total} completed assignment(s) to rescore.')
 
-        self.stdout.write(f'[rescore_stale_mcq] {total} submission(s) to rescore.')
         if total == 0:
             self.stdout.write('[rescore_stale_mcq] Nothing to do. Exiting.')
             return
@@ -120,22 +126,22 @@ class Command(BaseCommand):
         rescored = skipped = errors = 0
 
         # Cache: assessment_id → {domain → [component_ids]}
-        # Avoids re-querying ClapTestComponent for every student on the same test.
-        component_cache: dict[str, dict[str, list]] = {}
+        # Built once per test to avoid re-querying ClapTestComponent for each student.
+        component_cache: dict = {}
 
-        # ── 2. Process in batches ─────────────────────────────────────────
+        # ── 2. Process in batches ─────────────────────────────────────────────
         for batch_start in range(0, total, batch_size):
-            batch_ids = submission_ids[batch_start : batch_start + batch_size]
-            submissions = (
-                AssessmentSubmission.objects
+            batch_ids = assignment_ids[batch_start : batch_start + batch_size]
+            assignments = (
+                StudentClapAssignment.objects
                 .filter(id__in=batch_ids)
-                .select_related('user', 'assessment')
+                .select_related('clap_test', 'assigned_set', 'student')
             )
 
-            for submission in submissions:
+            for assignment in assignments:
                 try:
-                    result = self._rescore_submission(
-                        submission, component_cache, dry_run
+                    result = self._rescore_assignment(
+                        assignment, component_cache, dry_run
                     )
                     if result == 'skipped':
                         skipped += 1
@@ -144,8 +150,8 @@ class Command(BaseCommand):
                 except Exception as exc:
                     errors += 1
                     self.stderr.write(
-                        f'[rescore_stale_mcq] ERROR  submission={submission.id} '
-                        f'user={submission.user_id}: {exc}'
+                        f'[rescore_stale_mcq] ERROR  assignment={assignment.id} '
+                        f'student={assignment.student_id}: {exc}'
                     )
 
         elapsed = time.monotonic() - started
@@ -157,51 +163,38 @@ class Command(BaseCommand):
         )
         if errors:
             self.stderr.write(
-                f'[rescore_stale_mcq] {errors} error(s) encountered — '
-                f'check logs above.'
+                f'[rescore_stale_mcq] {errors} error(s) — check logs above.'
             )
 
     # ------------------------------------------------------------------
-    def _rescore_submission(
+    def _rescore_assignment(
         self,
-        submission: AssessmentSubmission,
+        assignment: StudentClapAssignment,
         component_cache: dict,
         dry_run: bool,
     ) -> str:
         """
-        Re-score one submission's L/R/V domains.
+        Re-score one assignment's L/R/V MCQ domains atomically.
+
+        Steps:
+          1. Build the set-specific answer key (one bulk query).
+          2. Re-evaluate every MCQ StudentClapResponse: write corrected
+             is_correct + marks_awarded.  This is what the results table and
+             answers preview read — it must always be correct.
+          3. If a scoreable AssessmentSubmission exists, also update
+             SubmissionScore (used for reports and sorting).
 
         Returns 'rescored' or 'skipped'.
-        Each write is wrapped in its own atomic block so failures are isolated.
         """
-        assignment = (
-            StudentClapAssignment.objects
-            .select_related('assigned_set')
-            .filter(
-                student=submission.user,
-                clap_test=submission.assessment,
-            )
-            .first()
-        )
-        if not assignment:
-            self.stderr.write(
-                f'[rescore_stale_mcq] SKIP  submission={submission.id} '
-                f'— no StudentClapAssignment found.'
-            )
-            return 'skipped'
-
-        # Build answer key once per assignment (O(set_items) query)
-        set_answer_key = _build_set_answer_key(assignment)
-
-        # Populate component cache for this assessment if not already cached
-        assessment_id = str(submission.assessment_id)
+        # Populate component cache for this assessment if needed
+        assessment_id = str(assignment.clap_test_id)
         if assessment_id not in component_cache:
             component_cache[assessment_id] = {}
             for domain, component_type in _MCQ_DOMAINS.items():
                 component_cache[assessment_id][domain] = list(
                     ClapTestComponent.objects
                     .filter(
-                        clap_test=submission.assessment,
+                        clap_test_id=assignment.clap_test_id,
                         test_type=component_type,
                     )
                     .values_list('id', flat=True)
@@ -209,29 +202,48 @@ class Command(BaseCommand):
 
         domain_component_ids = component_cache[assessment_id]
 
+        # Build the answer key once per assignment (O(set_items) query)
+        set_answer_key = _build_set_answer_key(assignment)
+
+        # Find the latest AssessmentSubmission for SubmissionScore update (optional)
+        submission = (
+            AssessmentSubmission.objects
+            .filter(
+                user=assignment.student,
+                assessment=assignment.clap_test,
+                status__in=_SCOREABLE_STATUSES,
+            )
+            .order_by('-created_at')
+            .first()
+        )
+
         if dry_run:
             for domain, component_ids in domain_component_ids.items():
                 marks = (
-                    _reevaluate_mcq_responses(
-                        assignment, component_ids, set_answer_key
-                    )
+                    _reevaluate_mcq_responses(assignment, component_ids, set_answer_key)
                     if component_ids else Decimal('0.00')
                 )
                 self.stdout.write(
-                    f'  [DRY]  submission={submission.id}  domain={domain}'
+                    f'  [DRY]  assignment={assignment.id}  domain={domain}'
                     f'  corrected_score={marks}'
                     f'  set={assignment.assigned_set_id or "base"}'
+                    f'  submission={"found" if submission else "none"}'
                 )
             return 'rescored'
 
         with transaction.atomic():
             for domain, component_ids in domain_component_ids.items():
+                # Always re-evaluate MCQ responses — this writes correct
+                # is_correct + marks_awarded to StudentClapResponse rows.
+                # The results table and answers preview read these values directly.
                 marks = (
-                    _reevaluate_mcq_responses(
-                        assignment, component_ids, set_answer_key
-                    )
+                    _reevaluate_mcq_responses(assignment, component_ids, set_answer_key)
                     if component_ids else Decimal('0.00')
                 )
-                _upsert_rule_score(submission, domain, marks)
+
+                # Also update SubmissionScore when a scoreable submission exists.
+                # SubmissionScore is used for reports and W/S display.
+                if submission:
+                    _upsert_rule_score(submission, domain, marks)
 
         return 'rescored'
