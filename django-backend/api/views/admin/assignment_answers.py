@@ -128,8 +128,13 @@ def assignment_answers(request, test_id, assignment_id):
                 'correct_option_index': correct_option_idx,
                 'answer_source':        answer_source,   # 'set' or 'base'
                 'selected_option_index': selected_option_idx,
-                'is_correct':           resp.is_correct if resp else None,
-                'marks_awarded':        float(resp.marks_awarded) if resp and resp.marks_awarded is not None else None,
+                # For MCQ items: unanswered = 0 marks (shows "0/N" in preview).
+                # For W/S items: None = pending LLM evaluation (shows nothing).
+                'is_correct':           resp.is_correct if resp else (False if item.item_type == 'mcq' else None),
+                'marks_awarded':        (
+                    float(resp.marks_awarded) if resp and resp.marks_awarded is not None
+                    else (0.0 if item.item_type == 'mcq' else None)
+                ),
                 # Subjective / speaking
                 'response_text':        resp.response_data if resp and isinstance(resp.response_data, str) else None,
             }
