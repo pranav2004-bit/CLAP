@@ -75,13 +75,19 @@ def assignment_answers(request, test_id, assignment_id):
     response_map = {str(r.item_id): r for r in responses_qs}
 
     # ── Build set-item answer map if student has an assigned set ──────────────
-    # Maps (test_type, order_index) → ClapSetItem for quick lookup
+    # Primary key: (test_type, order_index) → ClapSetItem
+    # This is the same lookup key used by score_rule_based and submit_response,
+    # ensuring the admin preview always shows the same answer key that was used
+    # for scoring — no divergence between what the admin sees and what was scored.
     set_item_map: dict[tuple, 'ClapSetItem'] = {}
     if assignment.assigned_set_id:
         for si in ClapSetItem.objects.filter(
             set_component__set_id=assignment.assigned_set_id
         ).select_related('set_component'):
-            set_item_map[(si.set_component.test_type, si.order_index)] = si
+            key = (si.set_component.test_type, si.order_index)
+            # Last write wins on collision (shouldn't happen with clean data,
+            # but avoids KeyError in edge-cases with duplicate order_index rows).
+            set_item_map[key] = si
 
     # ── Per-component answers ─────────────────────────────────────────────────
     components_data = []

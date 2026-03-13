@@ -32,6 +32,7 @@ from api.views.admin import (
     clap_test_sets,      # Sets feature
     set_distribution,    # Sets distribution
     timer_management,    # Live timer management
+    rescore_mcq,         # MCQ rescore (admin correction tool)
 )
 from api.views.student import profile, clap_attempt, audio_upload, audio_playback
 from api.views.student import timer_status as student_timer_status
@@ -75,6 +76,7 @@ urlpatterns = [
     path('admin/clap-tests/<uuid:test_id>/unassign', clap_test_assignment.unassign_clap_test, name='admin_clap_test_unassign'),
     path('admin/clap-tests/<uuid:test_id>/results', clap_test_results.clap_test_results_handler, name='admin_clap_test_results'),
     path('admin/clap-tests/<uuid:test_id>/assignments/<uuid:assignment_id>/answers', assignment_answers.assignment_answers, name='admin_assignment_answers'),
+    path('admin/clap-tests/<uuid:test_id>/rescore-mcq', rescore_mcq.rescore_mcq, name='admin_rescore_mcq'),
     path('admin/clap-tests/<uuid:test_id>/retest-candidates', retest_management.list_retest_candidates, name='admin_retest_candidates'),
     path('admin/assignments/<uuid:assignment_id>/grant-retest', retest_management.grant_retest, name='admin_grant_retest'),
 

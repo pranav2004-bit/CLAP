@@ -23,6 +23,7 @@ from api.models import (
     AssessmentSubmission,
     AuditLog,
     ClapTestComponent,
+    ClapSetItem,
     MalpracticeEvent,
     StudentAudioResponse,
     StudentClapAssignment,
@@ -347,8 +348,139 @@ def _persist_llm_score(submission: AssessmentSubmission, domain: str, payload: d
     )
 
 
+def _build_set_answer_key(assignment: StudentClapAssignment) -> dict:
+    """
+    Build a lookup map: (test_type, order_index) → correct_option_int
+    from ClapSetItem rows for the student's assigned set.
+
+    Returns an empty dict when the student has no assigned set.
+    This map is built ONCE per task execution and passed into
+    _reevaluate_mcq_responses, eliminating per-response DB queries.
+    """
+    if not assignment.assigned_set_id:
+        return {}
+
+    answer_key: dict = {}
+    for si in ClapSetItem.objects.filter(
+        set_component__set_id=assignment.assigned_set_id,
+        item_type='mcq',
+    ).select_related('set_component').values(
+        'set_component__test_type', 'order_index', 'content',
+    ):
+        co = (si['content'] or {}).get('correct_option')
+        if co is not None:
+            try:
+                answer_key[(si['set_component__test_type'], si['order_index'])] = int(co)
+            except (TypeError, ValueError):
+                pass
+    return answer_key
+
+
+def _reevaluate_mcq_responses(
+    assignment: StudentClapAssignment,
+    component_ids,
+    set_answer_key: dict,
+) -> Decimal:
+    """
+    Re-evaluate every MCQ StudentClapResponse for the given component_ids
+    against the authoritative answer key (set-specific or base item).
+
+    Writes corrected is_correct + marks_awarded back to every response row
+    inside the caller's transaction.atomic() block, then returns the
+    sum of awarded marks as a Decimal.
+
+    This is the ONLY authoritative MCQ scoring path — it replaces the old
+    approach of trusting marks_awarded set at submission time, which could
+    be stale, incorrect, or missing (e.g. if the real-time lookup failed).
+    """
+    responses = (
+        StudentClapResponse.objects
+        .filter(assignment=assignment, item__component_id__in=component_ids, item__item_type='mcq')
+        .select_related('item__component')
+    )
+
+    total_marks = Decimal('0.00')
+
+    for resp in responses:
+        item = resp.item
+        test_type = item.component.test_type
+
+        # ── 1. Parse student's selected option ───────────────────────────────
+        selected_option = None
+        rd = resp.response_data
+        if isinstance(rd, dict):
+            raw = rd.get('selected_option')
+        elif isinstance(rd, (int, float)):
+            raw = int(rd)
+        else:
+            raw = None
+
+        if raw is not None:
+            try:
+                selected_option = int(raw)
+            except (TypeError, ValueError):
+                selected_option = None
+
+        # ── 2. Correct option: set-specific key takes priority ───────────────
+        correct_option = set_answer_key.get((test_type, item.order_index))
+        if correct_option is None:
+            # Fall back to base ClapTestItem answer key
+            base_co = (item.content or {}).get('correct_option')
+            if base_co is not None:
+                try:
+                    correct_option = int(base_co)
+                except (TypeError, ValueError):
+                    pass
+
+        # ── 3. Evaluate ───────────────────────────────────────────────────────
+        if correct_option is None:
+            # No answer key available — preserve existing marks but log warning
+            log_event(
+                'warning', 'mcq_no_answer_key',
+                item_id=str(item.id), assignment_id=str(assignment.id),
+                test_type=test_type, order_index=item.order_index,
+            )
+            if resp.marks_awarded is not None:
+                total_marks += Decimal(str(resp.marks_awarded))
+            continue
+
+        if selected_option is not None and selected_option == correct_option:
+            is_correct = True
+            awarded = Decimal(str(item.points))
+        else:
+            is_correct = False
+            awarded = Decimal('0.00')
+
+        total_marks += awarded
+
+        # ── 4. Persist corrected values (only if changed — avoids dirty writes) ──
+        needs_update = (resp.is_correct != is_correct) or (resp.marks_awarded != awarded)
+        if needs_update:
+            StudentClapResponse.objects.filter(id=resp.id).update(
+                is_correct=is_correct,
+                marks_awarded=awarded,
+            )
+
+    return total_marks.quantize(Decimal('0.01'))
+
+
 @shared_task(bind=True, max_retries=3, autoretry_for=(Exception,), retry_backoff=False, default_retry_delay=5, acks_late=True, reject_on_worker_lost=True, time_limit=120, soft_time_limit=100)
 def score_rule_based(self, submission_id):
+    """
+    Authoritative MCQ scoring task for Listening, Reading, Vocabulary & Grammar.
+
+    ALWAYS re-evaluates each MCQ response from scratch against the predefined
+    answer key for the student's assigned question-paper set (or the base item
+    answer key if no set is assigned).  It never trusts the marks_awarded value
+    that was written at real-time submission, because that value may be:
+      - stale (student changed answers after the auto-grade ran)
+      - missing (set-item lookup failed at submission time)
+      - wrong  (race condition between answer-key updates and submission)
+
+    Evaluation order (highest priority first):
+      1. ClapSetItem.content['correct_option']  — student's assigned set
+      2. ClapTestItem.content['correct_option'] — base test fallback
+    """
     if _task_already_processed(self.request.id):
         return {'status': 'skipped', 'reason': 'task already processed', 'task_id': self.request.id}
 
@@ -356,29 +488,44 @@ def score_rule_based(self, submission_id):
         submission = AssessmentSubmission.objects.select_related('user', 'assessment').get(id=submission_id)
         log_event('info', 'task_started', task='score_rule_based', submission_id=str(submission_id), correlation_id=_correlation_id(self, submission_id))
 
-        existing_rule_domains = set(
-            SubmissionScore.objects.filter(
-                submission=submission,
-                domain__in=['listening', 'reading', 'vocab'],
-            ).values_list('domain', flat=True)
-        )
-
-        assignment = StudentClapAssignment.objects.filter(student=submission.user, clap_test=submission.assessment).first()
+        assignment = StudentClapAssignment.objects.select_related('assigned_set').filter(
+            student=submission.user, clap_test=submission.assessment
+        ).first()
         if not assignment:
             raise ValueError(f'No assignment found for submission {submission_id}')
 
+        # Build the set-specific answer key ONCE — O(set_items) DB query,
+        # avoids N per-response queries inside _reevaluate_mcq_responses.
+        set_answer_key = _build_set_answer_key(assignment)
+
         component_map = {'listening': 'listening', 'reading': 'reading', 'vocab': 'vocabulary'}
 
+        # Force re-evaluation on every run (idempotency is safe because
+        # _reevaluate_mcq_responses only writes when values change).
+        # Do NOT skip existing domains — this is the authoritative scoring step.
         with transaction.atomic():
             for domain, component_type in component_map.items():
-                if domain in existing_rule_domains:
-                    continue
-                component_ids = ClapTestComponent.objects.filter(clap_test=submission.assessment, test_type=component_type).values_list('id', flat=True)
+                component_ids = list(
+                    ClapTestComponent.objects.filter(
+                        clap_test=submission.assessment, test_type=component_type
+                    ).values_list('id', flat=True)
+                )
                 if not component_ids:
                     _upsert_rule_score(submission, domain, Decimal('0.00'))
+                    log_event('info', 'mcq_no_component', domain=domain,
+                              submission_id=str(submission_id))
                     continue
-                marks = StudentClapResponse.objects.filter(assignment=assignment, item__component_id__in=component_ids).aggregate(total=Sum('marks_awarded'))['total']
-                _upsert_rule_score(submission, domain, Decimal(marks or 0).quantize(Decimal('0.01')))
+
+                # Re-evaluate every MCQ response and get authoritative total
+                marks = _reevaluate_mcq_responses(assignment, component_ids, set_answer_key)
+                _upsert_rule_score(submission, domain, marks)
+
+                log_event(
+                    'info', 'mcq_scored',
+                    domain=domain, marks=str(marks),
+                    set_id=str(assignment.assigned_set_id) if assignment.assigned_set_id else None,
+                    submission_id=str(submission_id),
+                )
 
         moved = _transition_submission_status(submission, AssessmentSubmission.STATUS_RULES_COMPLETE, expected_status=AssessmentSubmission.STATUS_PENDING)
         if moved:
