@@ -178,7 +178,8 @@ def clap_test_results_handler(request, test_id):
             sub_data = submission_score_map.get(uid, {})
 
             # ── Component marks ───────────────────────────────────────────────
-            # Priority 1: SubmissionScore (pipeline-authoritative for all 5 domains)
+            # Priority 1: SubmissionScore (pipeline-authoritative for all 5 domains).
+            # Set by score_rule_based (L/R/V) and LLM tasks (W/S).
             component_marks = {
                 'listening':  sub_data.get('listening'),
                 'speaking':   sub_data.get('speaking'),
@@ -187,16 +188,17 @@ def clap_test_results_handler(request, test_id):
                 'vocabulary': sub_data.get('vocab'),   # SubmissionScore domain key is 'vocab'
             }
 
-            # Priority 2 (fallback): live MCQ marks from StudentClapResponse
-            # Used when pipeline hasn't run yet (submission still PENDING/PROCESSING).
-            # Only fills in test_types that still have None from SubmissionScore.
-            if not any(v is not None for v in component_marks.values()):
-                for resp in assignment.responses.all():
-                    test_type = resp.item.component.test_type
-                    if test_type in component_marks and component_marks[test_type] is None:
-                        current = component_marks[test_type] or 0
-                        awarded = float(resp.marks_awarded) if resp.marks_awarded is not None else 0
-                        component_marks[test_type] = current + awarded
+            # Priority 2 (per-component fallback): live MCQ marks from StudentClapResponse.
+            # Applied independently per component when its SubmissionScore is still None
+            # (e.g. pipeline is PENDING for that specific domain, or submission not yet created).
+            # This makes scores immediately visible after submission without waiting for the
+            # full pipeline, while never overwriting an authoritative SubmissionScore.
+            for resp in assignment.responses.all():
+                test_type = resp.item.component.test_type
+                if test_type in component_marks and component_marks[test_type] is None:
+                    current = component_marks[test_type] or 0
+                    awarded = float(resp.marks_awarded) if resp.marks_awarded is not None else 0
+                    component_marks[test_type] = round(current + awarded, 2)
 
             # ── Total & Grade ─────────────────────────────────────────────────
             scored_values = [v for v in component_marks.values() if v is not None]
