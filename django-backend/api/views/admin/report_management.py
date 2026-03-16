@@ -107,18 +107,21 @@ def _presigned_report_url(report_url):
 def _report_rows_for_qs(qs):
     rows = []
     for submission in qs.select_related('user', 'assessment'):
+        full_name = (getattr(submission.user, 'full_name', None) or '').strip()
         rows.append(
             {
                 'submission_id': str(submission.id),
                 'student_id': str(submission.user_id),
+                'student_name': full_name or submission.user.email,
                 'student_email': submission.user.email,
                 'assessment_id': str(submission.assessment_id),
                 'assessment_name': getattr(submission.assessment, 'name', None),
                 'status': submission.status,
                 'report_url': submission.report_url,
                 'report_download_url': _presigned_report_url(submission.report_url or ''),
+                # generated_at mirrors updated_at — the report is written during the last status update
+                'generated_at': submission.updated_at.isoformat() if submission.updated_at else None,
                 'created_at': submission.created_at.isoformat() if submission.created_at else None,
-                'updated_at': submission.updated_at.isoformat() if submission.updated_at else None,
             }
         )
     return rows
@@ -333,8 +336,9 @@ def report_list(request):
     if err:
         return err
 
-    status = request.GET.get('status')
     qs = AssessmentSubmission.objects.filter(report_url__isnull=False).order_by('-updated_at')
+
+    status = request.GET.get('status')
     if status:
         qs = qs.filter(status=status)
 
@@ -346,4 +350,37 @@ def report_list(request):
     if assessment_id:
         qs = qs.filter(assessment_id=assessment_id)
 
-    return JsonResponse({'reports': _report_rows_for_qs(qs[:200])})
+    # Server-side search: matches student email, full name, or username
+    from django.db.models import Q as _Q
+    search = (request.GET.get('search') or '').strip()
+    if search:
+        qs = qs.filter(
+            _Q(user__email__icontains=search)
+            | _Q(user__full_name__icontains=search)
+            | _Q(user__username__icontains=search)
+        )
+
+    # Pagination — hard-capped at 30 records per page
+    try:
+        page      = max(1, int(request.GET.get('page', 1)))
+        page_size = min(30, max(1, int(request.GET.get('page_size', 30))))
+    except (ValueError, TypeError):
+        page, page_size = 1, 30
+
+    total_count = qs.count()
+    total_pages = max(1, (total_count + page_size - 1) // page_size)
+    # Clamp page to valid range after we know total_pages
+    page = min(page, total_pages)
+    offset = (page - 1) * page_size
+
+    rows = _report_rows_for_qs(qs[offset: offset + page_size])
+
+    return JsonResponse({
+        'reports': rows,
+        'pagination': {
+            'page': page,
+            'page_size': page_size,
+            'total_count': total_count,
+            'total_pages': total_pages,
+        },
+    })

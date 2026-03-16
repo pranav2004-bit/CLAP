@@ -33,6 +33,7 @@ from api.views.admin import (
     set_distribution,    # Sets distribution
     timer_management,    # Live timer management
     rescore_mcq,         # MCQ rescore (admin correction tool)
+    dashboard_stats,     # Real-time dashboard KPI cards + analytics charts
 )
 from api.views.student import profile, clap_attempt, audio_upload, audio_playback
 from api.views.student import timer_status as student_timer_status
@@ -146,6 +147,10 @@ urlpatterns = [
     path('admin/notifications/alerts', notifications.in_app_alerts, name='admin_notifications_alerts'),
     path('admin/notifications/daily-summary', notifications.send_daily_summary, name='admin_notifications_daily_summary'),
 
+    # Admin Dashboard Stats (real-time KPI + analytics)
+    path('admin/stats/dashboard', dashboard_stats.dashboard_stats, name='admin_stats_dashboard'),
+    path('admin/stats/analytics', dashboard_stats.analytics_stats, name='admin_stats_analytics'),
+
     # Score Management
     path('admin/scores/submissions/<uuid:submission_id>', score_management.scores_by_submission, name='admin_scores_submission'),
     path('admin/scores/submissions/<uuid:submission_id>/override', score_management.override_score, name='admin_scores_override'),
@@ -176,6 +181,9 @@ urlpatterns = [
     path('student/clap-assignments/<uuid:assignment_id>/components/<uuid:component_id>/finish', clap_attempt.finish_component, name='student_finish_component'),
     # Integrity event logging — fire-and-forget from frontend (tab switch, fullscreen exit, paste)
     path('student/clap-assignments/<uuid:assignment_id>/malpractice-event', clap_attempt.log_malpractice_event, name='student_malpractice_event'),
+    # Unified auto-submit: timer expiry, page-unload beacon, malpractice force-submit
+    # Idempotent — safe to call multiple times; server Beat task also calls _finalize_and_dispatch directly
+    path('student/clap-assignments/<uuid:assignment_id>/auto-submit', clap_attempt.auto_submit_assignment, name='student_auto_submit'),
 
     # Audio Recording
     path('student/clap-assignments/<uuid:assignment_id>/audio-upload-url', audio_upload.get_audio_upload_url, name='student_audio_upload_url'),
