@@ -291,6 +291,12 @@ def _preprocess_audio_for_whisper(raw_bytes: bytes, ext: str) -> tuple:
         log_event('warning', 'audio_preprocess_too_small', size=len(raw_bytes))
         return raw_bytes, original_mime
 
+    _MAX_PREPROCESS_BYTES = 52_428_800  # 50 MB hard cap — skip preprocessing above this
+    if len(raw_bytes) > _MAX_PREPROCESS_BYTES:
+        log_event('warning', 'audio_preprocess_oversized',
+                  size=len(raw_bytes), limit=_MAX_PREPROCESS_BYTES)
+        return raw_bytes, original_mime
+
     inp_path = None
     out_path = None
     try:
@@ -304,6 +310,7 @@ def _preprocess_audio_for_whisper(raw_bytes: bytes, ext: str) -> tuple:
         cmd = [
             'ffmpeg', '-y',
             '-i', inp_path,
+            '-vn',                                     # discard any video stream (WebM/MP4 recordings)
             '-af', (
                 'afftdn=nf=-25,'                       # FFT noise reduction
                 'highpass=f=80,'                       # remove sub-bass rumble
