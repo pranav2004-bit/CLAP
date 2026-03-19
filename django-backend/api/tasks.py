@@ -5,12 +5,12 @@ from typing import Optional
 import json
 import re
 import os
+import smtplib
 from importlib.util import find_spec
 from urllib.parse import urlparse
 
 from celery import shared_task
 from celery.exceptions import SoftTimeLimitExceeded, Retry
-from openai import RateLimitError as OpenAIRateLimitError
 from django.conf import settings
 from django.db import transaction, connection
 from django.db.models import F, Sum
@@ -205,17 +205,75 @@ def _upsert_rule_score(submission: AssessmentSubmission, domain: str, score_valu
     )
 
 
-def _extract_json(raw_text: str):
-    try:
-        return json.loads(raw_text)
-    except Exception:
-        pass
+# ── LLM domain constants ──────────────────────────────────────────────────────
+# Domains evaluated by the LLM pipeline (not MCQ rule engine).
+# All entries must be present in SubmissionScore before generate_report runs.
+_REQUIRED_LLM_DOMAINS = frozenset({'writing', 'speaking'})
+_ALL_SCORED_DOMAINS   = frozenset({'listening', 'reading', 'vocab', 'writing', 'speaking'})
 
-    cleaned = raw_text.strip()
-    if cleaned.startswith('```'):
-        cleaned = re.sub(r'^```(?:json)?\n?', '', cleaned)
-        cleaned = re.sub(r'\n?```$', '', cleaned)
-    return json.loads(cleaned)
+# ── Score / grade constants ───────────────────────────────────────────────────
+# Each domain is scored 0–10.  With 5 domains the maximum total is 50.
+# _SCORE_MAX_TOTAL is a Decimal so arithmetic with SubmissionScore.score
+# (also Decimal) is exact — no floating-point rounding surprises.
+_SCORE_MAX_PER_DOMAIN = Decimal('10')
+_SCORE_MAX_TOTAL      = _SCORE_MAX_PER_DOMAIN * len(_ALL_SCORED_DOMAINS)  # == Decimal('50')
+
+
+def _compute_grade(total: Decimal, max_total: Decimal) -> str:
+    """
+    Compute letter grade from total score using percentage thresholds.
+
+    Thresholds (identical to clap_test_results.calculate_grade so admin view
+    and the PDF report always agree):
+      O  : >= 90 %
+      A+ : >= 80 %
+      A  : >= 70 %
+      B+ : >= 60 %
+      B  :  < 60 %
+
+    Returns 'N/A' when max_total is zero (prevents ZeroDivisionError).
+    """
+    if not max_total:
+        return 'N/A'
+    pct = (total / max_total) * 100
+    if pct >= 90:
+        return 'O'
+    if pct >= 80:
+        return 'A+'
+    if pct >= 70:
+        return 'A'
+    if pct >= 60:
+        return 'B+'
+    return 'B'
+
+
+def _record_llm_domain_failure(submission: AssessmentSubmission, domain: str) -> None:
+    """
+    Atomically record that an LLM domain permanently failed (all retries exhausted).
+
+    Uses SELECT FOR UPDATE to prevent concurrent evaluate_writing / evaluate_speaking
+    DLQ paths from corrupting the llm_failed_domains list.
+
+    Fails open — if this update fails (e.g. DB unreachable), the primary failure
+    indicators (DLQ entry + STATUS_LLM_FAILED) are still set by the caller.
+    This helper is non-critical observability / routing data.
+    """
+    try:
+        with transaction.atomic():
+            sub = AssessmentSubmission.objects.select_for_update(
+                of=('self',)
+            ).get(id=submission.id)
+            failed: list = list(sub.llm_failed_domains or [])
+            if domain not in failed:
+                failed.append(domain)
+                AssessmentSubmission.objects.filter(id=sub.id).update(
+                    llm_failed_domains=failed
+                )
+    except Exception as exc:
+        log_event(
+            'warning', 'record_llm_domain_failure_error',
+            submission_id=str(submission.id), domain=domain, error=str(exc),
+        )
 
 
 def _semantic_guard(score: float, feedback: dict):
@@ -275,13 +333,69 @@ def _evaluate_speaking_payload(transcript: str, prompt: str):
     }
 
 
-def _try_mark_llm_complete(submission: AssessmentSubmission):
-    if SubmissionScore.objects.filter(submission=submission, domain='writing').exists() and SubmissionScore.objects.filter(submission=submission, domain='speaking').exists():
-        _transition_submission_status(
-            submission,
-            AssessmentSubmission.STATUS_LLM_COMPLETE,
-            expected_status=AssessmentSubmission.STATUS_LLM_PROCESSING,
+def _try_mark_llm_complete(submission: AssessmentSubmission) -> None:
+    """
+    Attempt to advance submission status from LLM_PROCESSING → LLM_COMPLETE when
+    ALL required LLM domains (writing + speaking) are now scored.
+
+    Called after each successful _persist_llm_score() call. Uses SELECT FOR UPDATE
+    so concurrent calls from evaluate_writing and evaluate_speaking (completing at
+    the same time) are serialised — only one writer advances the status, the other
+    is a no-op.
+
+    After a successful transition, dispatches generate_report immediately as a
+    safety-net fallback. When tasks run via the normal Celery chord pipeline
+    (submissions.py _dispatch_pipeline), generate_report is already the chord
+    callback and runs automatically. When tasks are dispatched individually
+    (recovery / manual retry), there is no chord callback — this dispatch
+    ensures the pipeline always continues regardless.
+
+    generate_report is idempotent and re-entrance safe (status + report_url guards),
+    so double-dispatch from both the chord and this fallback is harmless.
+    """
+    advanced = False
+    try:
+        with transaction.atomic():
+            locked = AssessmentSubmission.objects.select_for_update(
+                of=('self',)
+            ).get(id=submission.id)
+
+            # Only advance from LLM_PROCESSING; any other state means the pipeline
+            # has already moved forward (LLM_COMPLETE) or backward (LLM_FAILED).
+            if locked.status != AssessmentSubmission.STATUS_LLM_PROCESSING:
+                return
+
+            scored = set(
+                SubmissionScore.objects.filter(
+                    submission=locked,
+                    domain__in=_REQUIRED_LLM_DOMAINS,
+                ).values_list('domain', flat=True)
+            )
+
+            if scored >= _REQUIRED_LLM_DOMAINS:
+                advanced = _transition_submission_status(
+                    locked,
+                    AssessmentSubmission.STATUS_LLM_COMPLETE,
+                    expected_status=AssessmentSubmission.STATUS_LLM_PROCESSING,
+                )
+    except Exception as exc:
+        log_event(
+            'warning', 'try_mark_llm_complete_error',
+            submission_id=str(submission.id), error=str(exc),
         )
+        return
+
+    # Dispatch generate_report outside the transaction so the DB write is
+    # visible to the Celery worker before the task is picked up.
+    if advanced:
+        try:
+            generate_report.apply_async(args=[str(submission.id)], countdown=1)
+        except Exception as dispatch_exc:
+            # Non-fatal: chord callback or DLQ sweeper will cover this.
+            log_event(
+                'warning', 'try_mark_llm_complete_report_dispatch_failed',
+                submission_id=str(submission.id), error=str(dispatch_exc),
+            )
 
 
 def _persist_llm_score(submission: AssessmentSubmission, domain: str, payload: dict):
@@ -552,6 +666,29 @@ def evaluate_writing(self, submission_id):
         if response and response.response_data is not None:
             essay = response.response_data if isinstance(response.response_data, str) else json.dumps(response.response_data)
 
+        # ── No-submission guard ───────────────────────────────────────────────
+        # If the student was auto-submitted (timer expiry / crash / no attempt) and
+        # left the writing component empty, award 0 and skip the LLM call entirely.
+        # This prevents burning LLM quota on empty inputs and keeps the pipeline
+        # moving cleanly to generate_report regardless of how the test ended.
+        if not essay.strip():
+            _persist_llm_score(submission, 'writing', {
+                'score': 0.0,
+                'feedback': {
+                    'overall': 'No writing submission received — zero score awarded.',
+                    'breakdown': {},
+                },
+            })
+            _try_mark_llm_complete(submission)
+            log_event('info', 'writing_skipped_no_submission', submission_id=str(submission_id))
+            return {
+                'status': 'ok',
+                'task': 'evaluate_writing',
+                'submission_id': submission_id,
+                'skipped': True,
+                'reason': 'no_submission',
+            }
+
         payload = _evaluate_writing_payload(essay=essay, prompt='Evaluate writing response using rubric and return JSON')
         _persist_llm_score(submission, 'writing', payload)
         _try_mark_llm_complete(submission)
@@ -585,16 +722,22 @@ def evaluate_writing(self, submission_id):
         raise
 
     except ValueError as exc:
-        # H4: LLM response parse errors are not transient — DLQ immediately, no retry
+        # H4: LLM response parse errors (invalid JSON, out-of-range score, semantic
+        # contradiction) are non-transient — DLQ immediately, no retry.
         _record_dlq('evaluate_writing', submission_id, {'submission_id': str(submission_id)}, exc, self.request.retries)
         if submission:
+            _record_llm_domain_failure(submission, 'writing')   # ← NEW: track which domain failed
             _transition_submission_status(submission, AssessmentSubmission.STATUS_LLM_FAILED)
+        # Do NOT re-raise: the task "completes" (returns None) so Celery marks it
+        # as SUCCESS and the chord callback (generate_report) runs cleanly.
+        # generate_report will see STATUS_LLM_FAILED and skip without retrying.
 
     except Exception as exc:
         if self.request.retries >= self.max_retries:
             _record_dlq('evaluate_writing', submission_id, {'submission_id': str(submission_id)}, exc, self.request.retries)
             # C3: surface permanent failure — student sees error, not endless spinner
             if submission:
+                _record_llm_domain_failure(submission, 'writing')  # ← NEW
                 _transition_submission_status(submission, AssessmentSubmission.STATUS_LLM_FAILED)
         raise
     finally:
@@ -635,6 +778,27 @@ def evaluate_speaking(self, submission_id):
 
         assignment = StudentClapAssignment.objects.filter(student=submission.user, clap_test=submission.assessment).first()
         audio = StudentAudioResponse.objects.filter(assignment=assignment, item__component__test_type='speaking').order_by('-uploaded_at').first()
+
+        # ── No-submission guard ───────────────────────────────────────────────
+        # If the student was auto-submitted and never recorded audio, award 0
+        # and skip the Whisper transcription + LLM call entirely.
+        if not audio:
+            _persist_llm_score(submission, 'speaking', {
+                'score': 0.0,
+                'feedback': {
+                    'overall': 'No audio submission received — zero score awarded.',
+                    'breakdown': {},
+                },
+            })
+            _try_mark_llm_complete(submission)
+            log_event('info', 'speaking_skipped_no_submission', submission_id=str(submission_id))
+            return {
+                'status': 'ok',
+                'task': 'evaluate_speaking',
+                'submission_id': submission_id,
+                'skipped': True,
+                'reason': 'no_submission',
+            }
 
         # ── Transcription: run Whisper if transcript not yet stored ─────────
         transcript = (audio.transcription or '').strip() if audio else ''
@@ -683,7 +847,31 @@ def evaluate_speaking(self, submission_id):
                     log_event('info', 'whisper_transcribed', submission_id=str(submission_id), chars=len(transcript))
             except Exception as whisper_exc:
                 log_event('warning', 'whisper_transcription_failed', submission_id=str(submission_id), error=str(whisper_exc))
-                # Proceed with empty transcript — LLM will return low score with note
+                # transcript remains '' — no-transcript guard below will award 0
+
+        # ── No-transcript guard ───────────────────────────────────────────────
+        # Audio exists but Whisper could not produce a transcript (quota exhausted,
+        # API down, corrupt file).  Calling the LLM with an empty transcript would
+        # waste quota, trigger RPM retries for minutes, and ultimately fail anyway.
+        # Award 0 here — same treatment as no audio submission — so the pipeline
+        # continues and generate_report is not blocked by a Whisper outage.
+        if not transcript.strip():
+            _persist_llm_score(submission, 'speaking', {
+                'score': 0.0,
+                'feedback': {
+                    'overall': 'Audio transcription unavailable — zero score awarded.',
+                    'breakdown': {},
+                },
+            })
+            _try_mark_llm_complete(submission)
+            log_event('info', 'speaking_skipped_no_transcript', submission_id=str(submission_id))
+            return {
+                'status': 'ok',
+                'task': 'evaluate_speaking',
+                'submission_id': submission_id,
+                'skipped': True,
+                'reason': 'no_transcript',
+            }
 
         payload = _evaluate_speaking_payload(transcript=transcript, prompt='Evaluate speaking transcript using rubric and return JSON')
         _persist_llm_score(submission, 'speaking', payload)
@@ -718,16 +906,20 @@ def evaluate_speaking(self, submission_id):
         raise
 
     except ValueError as exc:
-        # H4: LLM response parse errors are not transient — DLQ immediately, no retry
+        # H4: LLM response parse errors (invalid JSON, out-of-range score, semantic
+        # contradiction) are non-transient — DLQ immediately, no retry.
         _record_dlq('evaluate_speaking', submission_id, {'submission_id': str(submission_id)}, exc, self.request.retries)
         if submission:
+            _record_llm_domain_failure(submission, 'speaking')  # ← NEW: track which domain failed
             _transition_submission_status(submission, AssessmentSubmission.STATUS_LLM_FAILED)
+        # Do NOT re-raise — see comment in evaluate_writing.
 
     except Exception as exc:
         if self.request.retries >= self.max_retries:
             _record_dlq('evaluate_speaking', submission_id, {'submission_id': str(submission_id)}, exc, self.request.retries)
             # C3: surface permanent failure — student sees error, not endless spinner
             if submission:
+                _record_llm_domain_failure(submission, 'speaking')  # ← NEW
                 _transition_submission_status(submission, AssessmentSubmission.STATUS_LLM_FAILED)
         raise
     finally:
@@ -750,19 +942,119 @@ def generate_report(self, submission_id):
             if submission.report_url:
                 return {'status': 'skipped', 'task': 'generate_report', 'submission_id': submission_id, 'reason': 'report already exists'}
 
-            _transition_submission_status(
+            # ── Guard 1: LLM permanently failed ──────────────────────────────────
+            # When one or both LLM domains failed, check whether all 5 domain scores
+            # are nonetheless present (e.g. speaking awarded 0 due to Whisper outage).
+            # If all scores exist we can still produce a valid report — advance the
+            # status to LLM_COMPLETE and fall through to generation.
+            # Only skip if scores are genuinely missing (pipeline cannot recover).
+            if submission.status == AssessmentSubmission.STATUS_LLM_FAILED:
+                present_domains = set(
+                    SubmissionScore.objects.filter(
+                        submission=submission,
+                        domain__in=_ALL_SCORED_DOMAINS,
+                    ).values_list('domain', flat=True)
+                )
+                if present_domains >= _ALL_SCORED_DOMAINS:
+                    # All scores are present — override status so the transition
+                    # guard below succeeds and we proceed to report generation.
+                    _transition_submission_status(
+                        submission,
+                        AssessmentSubmission.STATUS_LLM_COMPLETE,
+                        expected_status=AssessmentSubmission.STATUS_LLM_FAILED,
+                    )
+                    submission.status = AssessmentSubmission.STATUS_LLM_COMPLETE
+                    log_event(
+                        'info', 'generate_report_recovering_from_llm_failed',
+                        submission_id=str(submission_id),
+                        failed_domains=submission.llm_failed_domains,
+                    )
+                else:
+                    missing = _ALL_SCORED_DOMAINS - present_domains
+                    log_event(
+                        'info', 'generate_report_skipped_llm_failed',
+                        submission_id=str(submission_id),
+                        failed_domains=submission.llm_failed_domains,
+                        missing_domains=sorted(missing),
+                    )
+                    return {
+                        'status': 'skipped',
+                        'task': 'generate_report',
+                        'reason': 'llm_failed',
+                        'failed_domains': submission.llm_failed_domains,
+                        'submission_id': submission_id,
+                    }
+
+            # ── Guard 2: Not yet LLM_COMPLETE — tasks still in flight or retrying ──
+            # The chord callback can fire while evaluate_writing / evaluate_speaking
+            # are still being retried (Celery chord fires when group tasks COMPLETE OR
+            # FAIL, not necessarily when they succeed on retry).  When the status is
+            # still LLM_PROCESSING, the LLM tasks are still alive — do NOT retry or
+            # go to DLQ; the chord will re-trigger correctly once tasks settle.
+            if submission.status != AssessmentSubmission.STATUS_LLM_COMPLETE:
+                log_event(
+                    'info', 'generate_report_not_ready',
+                    submission_id=str(submission_id),
+                    current_status=submission.status,
+                )
+                return {
+                    'status': 'skipped',
+                    'task': 'generate_report',
+                    'reason': f'not_ready: status={submission.status}',
+                    'submission_id': submission_id,
+                }
+
+            moved = _transition_submission_status(
                 submission,
                 AssessmentSubmission.STATUS_REPORT_GENERATING,
                 expected_status=AssessmentSubmission.STATUS_LLM_COMPLETE,
             )
+            # Another worker already claimed the transition (concurrent chord dispatch).
+            if not moved:
+                log_event(
+                    'info', 'generate_report_transition_noop',
+                    submission_id=str(submission_id),
+                )
+                return {
+                    'status': 'skipped',
+                    'task': 'generate_report',
+                    'reason': 'transition_noop',
+                    'submission_id': submission_id,
+                }
 
         scores = list(SubmissionScore.objects.filter(submission=submission).order_by('domain'))
-        if len(scores) < 5:
-            raise ValueError(f'Report generation requires 5 domain scores; found {len(scores)} for {submission_id}')
+        if len(scores) < _ALL_SCORED_DOMAINS.__len__():
+            # Status is LLM_COMPLETE yet < 5 scores — this is a data-consistency bug
+            # (should never happen in a healthy system).  Raise so it retries / DLQs
+            # for operator investigation rather than silently generating a partial report.
+            present  = {s.domain for s in scores}
+            missing  = _ALL_SCORED_DOMAINS - present
+            log_event(
+                'error', 'generate_report_missing_scores',
+                submission_id=str(submission_id),
+                found=len(scores), expected=len(_ALL_SCORED_DOMAINS),
+                missing_domains=sorted(missing),
+            )
+            raise ValueError(
+                f'Report requires {len(_ALL_SCORED_DOMAINS)} domain scores; '
+                f'found {len(scores)} (missing: {sorted(missing)}) for {submission_id}. '
+                f'Status was LLM_COMPLETE — data-consistency error, investigate DLQ.'
+            )
+
+        # Compute total score and grade.
+        # SubmissionScore.score is a DecimalField — sum is exact.
+        # max_total uses the number of scores actually present (always 5 here
+        # because the gate above already verified len(scores) == 5).
+        total_score = sum(s.score for s in scores)
+        max_total   = _SCORE_MAX_PER_DOMAIN * len(scores)   # Decimal('50')
+        grade       = _compute_grade(total_score, max_total)
 
         html = render_to_string('reports/submission_report.html', {
-            'submission': submission,
-            'scores': scores,
+            'submission':  submission,
+            'scores':      scores,
+            'total_score': total_score,   # Decimal — template formats as number
+            'max_total':   max_total,     # Decimal('50')
+            'grade':       grade,         # str: 'O', 'A+', 'A', 'B+', 'B'
             'generated_at': timezone.now().isoformat(),
         })
 
@@ -837,6 +1129,16 @@ def generate_report(self, submission_id):
         duration = (timezone.now() - start_ts).total_seconds()
         report_generation_duration.observe(duration)
         log_event('info', 'report_generated', submission_id=str(submission_id), duration_seconds=duration, report_url=report_url)
+
+        # Safety-net dispatch: ensures send_email_report always runs whether
+        # generate_report was called as a Celery chain step or dispatched individually.
+        # send_email_report is idempotent (email_sent_at guard prevents double-send).
+        try:
+            send_email_report.apply_async(args=[str(submission_id)], countdown=2)
+        except Exception as dispatch_exc:
+            log_event('warning', 'generate_report_email_dispatch_failed',
+                      submission_id=str(submission_id), error=str(dispatch_exc))
+
         return {'status': 'ok', 'task': 'generate_report', 'submission_id': submission_id, 'report_url': report_url}
     except SoftTimeLimitExceeded:
         # C4: handle soft time limit explicitly so DLQ is recorded and DB connection
@@ -862,7 +1164,68 @@ def send_email_report(self, submission_id):
         submission = AssessmentSubmission.objects.select_related('user', 'assessment').get(id=submission_id)
 
         if submission.email_sent_at:
+            # Email was already sent — ensure status is COMPLETE regardless.
+            if submission.status != AssessmentSubmission.STATUS_COMPLETE:
+                _transition_submission_status(submission, AssessmentSubmission.STATUS_COMPLETE)
             return {'status': 'skipped', 'task': 'send_email_report', 'submission_id': submission_id, 'reason': 'email already sent'}
+
+        # ── Guard 1: LLM permanently failed — no report was generated, skip email ──
+        # This fires when generate_report returned 'skipped' (LLM_FAILED) but the
+        # Celery chain still calls send_email_report as the next step.
+        if submission.status == AssessmentSubmission.STATUS_LLM_FAILED:
+            log_event(
+                'info', 'send_email_skipped_llm_failed',
+                submission_id=str(submission_id),
+                failed_domains=submission.llm_failed_domains,
+            )
+            return {
+                'status': 'skipped',
+                'task': 'send_email_report',
+                'reason': 'llm_failed',
+                'failed_domains': submission.llm_failed_domains,
+                'submission_id': submission_id,
+            }
+
+        # ── Guard 2: No report URL — generate_report did not complete successfully ──
+        # Do not send a results email without an actual report to attach / link.
+        if not submission.report_url:
+            log_event(
+                'info', 'send_email_skipped_no_report',
+                submission_id=str(submission_id),
+                current_status=submission.status,
+            )
+            return {
+                'status': 'skipped',
+                'task': 'send_email_report',
+                'reason': 'no_report_url',
+                'submission_id': submission_id,
+            }
+
+        # ── Guard 3: No user email address — report is ready but cannot be mailed ──
+        # user.email is nullable (migration 0013_make_user_email_nullable).
+        # Without this guard EmailMultiAlternatives.send() raises an exception,
+        # triggering 3 retries and a DLQ entry for a permanently unresolvable
+        # condition.  We skip the email, advance the submission to COMPLETE
+        # (the report IS ready in S3 — nothing else is outstanding), and emit a
+        # warning so ops can follow up with the student via another channel.
+        if not submission.user.email:
+            log_event(
+                'warning', 'send_email_skipped_no_email',
+                submission_id=str(submission_id),
+                user_id=str(submission.user.id),
+            )
+            # Bypass EMAIL_SENDING and advance directly REPORT_READY → COMPLETE.
+            _transition_submission_status(
+                submission,
+                AssessmentSubmission.STATUS_COMPLETE,
+                expected_status=AssessmentSubmission.STATUS_REPORT_READY,
+            )
+            return {
+                'status': 'skipped',
+                'task': 'send_email_report',
+                'reason': 'no_user_email',
+                'submission_id': submission_id,
+            }
 
         _transition_submission_status(
             submission,
@@ -871,26 +1234,63 @@ def send_email_report(self, submission_id):
         )
 
         scores = list(SubmissionScore.objects.filter(submission=submission).order_by('domain'))
-        student_name = submission.user.full_name or submission.user.email
+        student_name = getattr(submission.user, 'full_name', None) or submission.user.email
         report_url = _presigned_report_download_url(submission.report_url or '')
+
+        # Compute total score and grade to include in the email body.
+        total_score = sum(s.score for s in scores) if scores else Decimal('0')
+        max_total   = _SCORE_MAX_PER_DOMAIN * len(scores) if scores else _SCORE_MAX_TOTAL
+        grade       = _compute_grade(total_score, max_total)
 
         html_body = render_to_string(
             'emails/submission_ready.html',
             {
                 'student_name': student_name,
-                'scores': scores,
-                'report_url': report_url,
+                'scores':       scores,
+                'total_score':  total_score,
+                'max_total':    max_total,
+                'grade':        grade,
+                'report_url':   report_url,
             },
         )
 
-        message = EmailMultiAlternatives(
-            subject='Your CLAP Assessment Results Are Ready',
-            body=f'Your CLAP report is ready. Download: {report_url}',
-            from_email=getattr(settings, 'FROM_EMAIL', None),
-            to=[submission.user.email],
-        )
-        message.attach_alternative(html_body, 'text/html')
-        message.send()
+        try:
+            message = EmailMultiAlternatives(
+                subject='Your CLAP Assessment Results Are Ready',
+                body=f'Your CLAP report is ready. Download: {report_url}',
+                from_email=getattr(settings, 'FROM_EMAIL', None),
+                to=[submission.user.email],
+            )
+            message.attach_alternative(html_body, 'text/html')
+            message.send()
+        except smtplib.SMTPException as smtp_exc:
+            # ── Guard 4: Permanent SMTP rejection (unverified address, blacklist, etc.) ──
+            # SMTP 5xx codes are permanent — retrying will not help. Advance to COMPLETE
+            # so the submission is not stuck in EMAIL_SENDING forever. The report is still
+            # accessible in S3. Ops can resend manually if needed.
+            smtp_code = getattr(smtp_exc, 'smtp_code', None) or (smtp_exc.args[0] if smtp_exc.args else 0)
+            is_permanent = isinstance(smtp_code, int) and smtp_code >= 500
+            if is_permanent:
+                log_event(
+                    'warning', 'send_email_permanent_rejection',
+                    submission_id=str(submission_id),
+                    user_email=submission.user.email,
+                    smtp_code=smtp_code,
+                    error=str(smtp_exc)[:200],
+                )
+                _transition_submission_status(
+                    submission,
+                    AssessmentSubmission.STATUS_COMPLETE,
+                    expected_status=AssessmentSubmission.STATUS_EMAIL_SENDING,
+                )
+                return {
+                    'status': 'skipped',
+                    'task': 'send_email_report',
+                    'reason': 'permanent_smtp_rejection',
+                    'smtp_code': smtp_code,
+                    'submission_id': submission_id,
+                }
+            raise  # Transient error — allow normal retry
 
         AssessmentSubmission.objects.filter(id=submission.id).update(
             email_sent_at=timezone.now(),
@@ -903,6 +1303,7 @@ def send_email_report(self, submission_id):
             expected_status=AssessmentSubmission.STATUS_EMAIL_SENDING,
         )
 
+        log_event('info', 'email_sent', submission_id=str(submission_id), user_email=submission.user.email)
         return {'status': 'ok', 'task': 'send_email_report', 'submission_id': submission_id}
     except SoftTimeLimitExceeded:
         # C7: explicit handler prevents submission staying stuck in EMAIL_SENDING forever
@@ -1117,52 +1518,54 @@ def log_quota_status(self):
         return {'status': 'skipped', 'reason': 'task already processed'}
 
     try:
-        tracker = get_quota_tracker()
-        pool_keys = getattr(settings, 'OPENAI_API_KEYS', [])
-        standby = getattr(settings, 'OPENAI_STANDBY_KEY', '') or ''
-        all_keys = [k for k in pool_keys if k]
-        if standby:
-            all_keys.append(standby)
-
-        if not all_keys:
-            log_event('warning', 'quota_status_no_keys_configured')
-            return {'status': 'skipped', 'reason': 'no API keys configured'}
-
-        statuses = tracker.get_all_keys_status(all_keys)
         any_warning = False
+        keys_checked = 0
 
-        for s in statuses:
-            rpd_used  = s['rpd']['used']
-            rpd_limit = s['rpd']['limit']
-            tpd_used  = s['tpd']['used']
-            tpd_limit = s['tpd']['limit']
-            rpm_used  = s['rpm']['used']
-            rpm_limit = s['rpm']['limit']
+        # ── OpenAI quota reporting ─────────────────────────────────────────
+        tracker = get_quota_tracker()
+        openai_pool_keys = getattr(settings, 'OPENAI_API_KEYS', [])
+        openai_standby   = getattr(settings, 'OPENAI_STANDBY_KEY', '') or ''
+        openai_all_keys  = [k for k in openai_pool_keys if k]
+        if openai_standby:
+            openai_all_keys.append(openai_standby)
 
-            rpd_pct = round((rpd_used / rpd_limit * 100) if rpd_limit else 0, 1)
-            tpd_pct = round((tpd_used / tpd_limit * 100) if tpd_limit else 0, 1)
+        if not openai_all_keys:
+            log_event('warning', 'quota_status_no_openai_keys_configured')
+        else:
+            for s in tracker.get_all_keys_status(openai_all_keys):
+                rpd_used  = s['rpd']['used']
+                rpd_limit = s['rpd']['limit']
+                tpd_used  = s['tpd']['used']
+                tpd_limit = s['tpd']['limit']
+                rpm_used  = s['rpm']['used']
+                rpm_limit = s['rpm']['limit']
 
-            level = 'info'
-            if rpd_pct >= 90 or tpd_pct >= 90:
-                level = 'error'
-                any_warning = True
-            elif rpd_pct >= 75 or tpd_pct >= 75:
-                level = 'warning'
-                any_warning = True
+                rpd_pct = round((rpd_used / rpd_limit * 100) if rpd_limit else 0, 1)
+                tpd_pct = round((tpd_used / tpd_limit * 100) if tpd_limit else 0, 1)
 
-            log_event(
-                level,
-                'quota_status',
-                key_id=s['key_id'],
-                rpm_used=rpm_used,
-                rpm_limit=rpm_limit,
-                rpd_used=rpd_used,
-                rpd_limit=rpd_limit,
-                rpd_pct=rpd_pct,
-                tpd_used=tpd_used,
-                tpd_limit=tpd_limit,
-                tpd_pct=tpd_pct,
-            )
+                level = 'info'
+                if rpd_pct >= 90 or tpd_pct >= 90:
+                    level = 'error'
+                    any_warning = True
+                elif rpd_pct >= 75 or tpd_pct >= 75:
+                    level = 'warning'
+                    any_warning = True
+
+                log_event(
+                    level,
+                    'quota_status',
+                    llm_provider='openai',
+                    key_id=s['key_id'],
+                    rpm_used=rpm_used,
+                    rpm_limit=rpm_limit,
+                    rpd_used=rpd_used,
+                    rpd_limit=rpd_limit,
+                    rpd_pct=rpd_pct,
+                    tpd_used=tpd_used,
+                    tpd_limit=tpd_limit,
+                    tpd_pct=tpd_pct,
+                )
+                keys_checked += 1
 
         # DLQ health while we're at it
         unresolved = DeadLetterQueue.objects.filter(resolved=False).count()
@@ -1170,7 +1573,7 @@ def log_quota_status(self):
 
         return {
             'status': 'ok',
-            'keys_checked': len(statuses),
+            'keys_checked': keys_checked,
             'any_warning': any_warning,
             'dlq_unresolved': unresolved,
         }
@@ -1179,6 +1582,108 @@ def log_quota_status(self):
         return {'status': 'error', 'error': str(exc)[:300]}
     finally:
         connection.close()
+
+
+# ── Auto-submit expired assignments — Beat task every 60 seconds ──────────────
+
+@shared_task(
+    bind=True,
+    max_retries=0,       # Beat tasks should not retry — next run picks up leftovers
+    acks_late=True,
+    reject_on_worker_lost=True,
+    soft_time_limit=55,  # Must complete before next 60-second Beat interval
+    time_limit=60,
+    queue='rule_scoring',
+)
+def auto_submit_expired_assignments(self):
+    """
+    Celery Beat task: server-side safety net for students who could not
+    auto-submit client-side (browser crash, network loss, dead device).
+
+    Runs every 60 seconds.  Finds 'started' assignments where:
+      • global_deadline is set
+      • global_deadline expired more than 2 minutes ago (grace window)
+
+    The 2-minute grace window gives the client priority — the client has
+    more granular partial-answer data from the current session state.
+    Server enforcement is the backstop for crashes and network failures.
+
+    Processes up to 100 assignments per run (fits safely in the 60s budget).
+    Per-assignment errors are isolated — one failure never aborts the batch.
+    Fully idempotent — calling _finalize_and_dispatch on an already-completed
+    assignment is a no-op that returns the existing submission.
+    """
+    if _task_already_processed(self.request.id):
+        return {'status': 'skipped', 'reason': 'task already processed'}
+
+    try:
+        # Import here (not at module top) to avoid the circular import:
+        # tasks.py → clap_attempt.py → (lazy) tasks.py
+        from api.views.student.clap_attempt import _finalize_and_dispatch
+    except ImportError as exc:
+        log_event('error', 'auto_submit_beat_import_error', error=str(exc)[:300])
+        return {'status': 'error', 'reason': 'import_failed'}
+
+    # 2-minute grace window: assignments expired 2+ minutes ago are actionable.
+    # Assignments expired < 2 minutes ago are still in the client grace period.
+    grace_window = timezone.now() - timezone.timedelta(minutes=2)
+
+    try:
+        candidates = list(
+            StudentClapAssignment.objects.filter(
+                status='started',
+                clap_test__global_deadline__isnull=False,
+                clap_test__global_deadline__lt=grace_window,
+            ).select_related('clap_test', 'student').order_by('clap_test__global_deadline')[:100]
+        )
+    except Exception as query_exc:
+        log_event('error', 'auto_submit_beat_query_error', error=str(query_exc)[:300])
+        return {'status': 'error', 'reason': 'query_failed'}
+
+    if not candidates:
+        return {'status': 'ok', 'processed': 0, 'auto_submitted': 0}
+
+    auto_submitted_count = 0
+    already_done_count   = 0
+    error_count          = 0
+
+    for assignment in candidates:
+        try:
+            _submission, created = _finalize_and_dispatch(assignment, 'server_deadline')
+            if created:
+                auto_submitted_count += 1
+                log_event(
+                    'info', 'auto_submit_server_enforced',
+                    assignment_id=str(assignment.id),
+                    student_id=str(assignment.student_id),
+                    deadline=assignment.clap_test.global_deadline.isoformat(),
+                )
+            else:
+                already_done_count += 1
+        except Exception as exc:
+            error_count += 1
+            log_event(
+                'error', 'auto_submit_beat_assignment_error',
+                assignment_id=str(assignment.id),
+                error=str(exc)[:300],
+            )
+            # Per-assignment isolation: continue to next candidate on error
+
+    log_event(
+        'info', 'auto_submit_beat_complete',
+        total=len(candidates),
+        auto_submitted=auto_submitted_count,
+        already_done=already_done_count,
+        errors=error_count,
+    )
+
+    return {
+        'status': 'ok',
+        'total': len(candidates),
+        'auto_submitted': auto_submitted_count,
+        'already_done': already_done_count,
+        'errors': error_count,
+    }
 
 
 # ── Audio conversion — WebM/MP4 → MP3 64kbps mono ───────────────────────────

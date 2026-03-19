@@ -103,7 +103,6 @@ DATABASES = {
         'OPTIONS': {
             'sslmode': config('DB_SSLMODE', default='require'),
             'connect_timeout': config('DB_CONNECT_TIMEOUT', default=10, cast=int),
-            'options': '-c statement_timeout=' + str(config('DB_STATEMENT_TIMEOUT_MS', default=30000, cast=int)),
         },
     }
 }
@@ -314,21 +313,23 @@ OPENAI_API_KEY   = _resolve_secret('OPENAI_API_KEY',   default='')
 OPENAI_API_KEY_2 = _resolve_secret('OPENAI_API_KEY_2', default='')
 OPENAI_API_KEY_3 = _resolve_secret('OPENAI_API_KEY_3', default='')
 OPENAI_API_KEY_4 = _resolve_secret('OPENAI_API_KEY_4', default='')
-# Hot standby key — reserved exclusively for when ALL 4 primary keys hit rate limits
+OPENAI_API_KEY_5 = _resolve_secret('OPENAI_API_KEY_5', default='')
+# Hot standby key — reserved exclusively for when ALL 5 primary keys hit rate limits
 OPENAI_STANDBY_KEY = _resolve_secret('OPENAI_STANDBY_KEY', default='')
 
 # Build the pool list consumed by api/utils/openai_client.py._KeyPool
-# 4 keys × limits per key (with 90% safety margin):
-#   RPM effective : 4 × 2  = 8  req/min
-#   RPD effective : 4 × 180 = 720 req/day
-#   TPM effective : 4 × 54 000  = 216 000 tokens/min
-#   TPD effective : 4 × 180 000 = 720 000 tokens/day
+# 5 keys × limits per key (with 90% safety margin):
+#   RPM effective : 5 × 2  = 10  req/min
+#   RPD effective : 5 × 180 = 900 req/day
+#   TPM effective : 5 × 54 000  = 270 000 tokens/min
+#   TPD effective : 5 × 180 000 = 900 000 tokens/day
 OPENAI_API_KEYS = [
     k for k in [
         OPENAI_API_KEY,
         OPENAI_API_KEY_2,
         OPENAI_API_KEY_3,
         OPENAI_API_KEY_4,
+        OPENAI_API_KEY_5,
     ] if k
 ]
 
@@ -533,6 +534,12 @@ AWS_SES_SECRET_ACCESS_KEY = _resolve_secret('AWS_SES_SECRET_ACCESS_KEY', default
 if EMAIL_PROVIDER == 'ses':
     EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
     EMAIL_HOST = f'email-smtp.{AWS_SES_REGION}.amazonaws.com' if AWS_SES_REGION else EMAIL_HOST
+    # SES SMTP uses IAM-generated SMTP credentials (different from AWS access keys).
+    # Map the SES-specific credentials to the standard Django SMTP settings.
+    if AWS_SES_ACCESS_KEY_ID:
+        EMAIL_HOST_USER = AWS_SES_ACCESS_KEY_ID
+    if AWS_SES_SECRET_ACCESS_KEY:
+        EMAIL_HOST_PASSWORD = AWS_SES_SECRET_ACCESS_KEY
 elif EMAIL_PROVIDER == 'sendgrid':
     EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 else:
@@ -587,6 +594,14 @@ CELERY_BEAT_SCHEDULE = {
     'clap-quota-status-every-5-min': {
         'task': 'api.tasks.log_quota_status',
         'schedule': 300.0,
+    },
+    # Server-side auto-submit safety net: every 60 seconds.
+    # Finalises assignments whose global_deadline expired > 2 minutes ago.
+    # 2-min grace window gives the client priority (client has more partial data).
+    # Beat task handles crashes, network loss, and dead browsers as the backstop.
+    'clap-auto-submit-expired-every-60s': {
+        'task': 'api.tasks.auto_submit_expired_assignments',
+        'schedule': 60.0,
     },
 }
 
