@@ -126,10 +126,9 @@ REDIS_URL=redis://localhost:6379/2
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/1
 
-# LLM
-LLM_PROVIDER=openai
+# LLM (OpenAI — writing/speaking evaluation + Whisper transcription)
 OPENAI_API_KEY=sk-proj-...YOUR_ACTUAL_KEY...
-OPENAI_MODEL=gpt-4-turbo
+OPENAI_MODEL=gpt-4o
 
 # Storage (local disk for dev)
 STORAGE_PROVIDER=

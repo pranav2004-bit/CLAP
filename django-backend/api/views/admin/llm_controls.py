@@ -1,21 +1,16 @@
 import json
 
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Avg, Count, Q
 from importlib.util import find_spec
 
-from django.db import transaction
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from api.models import AssessmentSubmission, AuditLog, DeadLetterQueue, SubmissionScore
-from api.utils.jwt_utils import get_user_from_request
-
-from importlib.util import find_spec
-
-from api.models import AssessmentSubmission, AuditLog, SubmissionScore
 from api.utils.jwt_utils import get_user_from_request
 
 if find_spec('celery') is not None:
@@ -212,6 +207,8 @@ def llm_analytics(request):
 
     return JsonResponse(
         {
+            'provider': 'openai',
+            'model': settings.OPENAI_MODEL,
             'domains': [
                 {
                     'domain': row['domain'],

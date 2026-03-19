@@ -55,7 +55,6 @@ jobs:
         DEBUG: 'True'
         STORAGE_PROVIDER: ''
         EMAIL_PROVIDER: 'console'
-        LLM_PROVIDER: 'openai'
       run: python manage.py check --deploy 2>&1 | grep -v "^System check" || true
       # --deploy flag surfaces production-readiness warnings (HTTPS, HSTS, etc.)
       # We suppress the "System check identified N issue(s)" summary line; the
@@ -67,7 +66,6 @@ jobs:
         DEBUG: 'True'
         STORAGE_PROVIDER: ''
         EMAIL_PROVIDER: 'console'
-        LLM_PROVIDER: 'openai'
       run: |
         python -m py_compile clap_backend/settings.py
         python -m py_compile api/management/commands/validate_schema.py
@@ -137,7 +135,6 @@ jobs:
           -e DEBUG=True \
           -e STORAGE_PROVIDER= \
           -e EMAIL_PROVIDER=console \
-          -e LLM_PROVIDER=openai \
           --entrypoint python \
           clap-backend:latest \
           manage.py check

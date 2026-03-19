@@ -545,16 +545,11 @@ SUBMISSION_RATE_LIMIT_GLOBAL_PER_INSTITUTION_PER_HOUR = config('SUBMISSION_RATE_
 # Email webhook HMAC secret (SendGrid event verification)
 EMAIL_WEBHOOK_SECRET = config('EMAIL_WEBHOOK_SECRET', default='')
 
-# LLM Provider Configuration (OpenAI / Gemini)
-LLM_PROVIDER = config('LLM_PROVIDER', default='openai')
-
 # ── OpenAI model selection ────────────────────────────────────────────────────
-# Default: gpt-4o-mini — lowest cost, highest RPM headroom on free/tier-1 keys.
-# Override with OPENAI_MODEL=gpt-4o or OPENAI_MODEL=gpt-4-turbo for higher quality.
-OPENAI_MODEL = config('OPENAI_MODEL', default='gpt-4o-mini')
-
-GEMINI_API_KEY = _resolve_secret('GEMINI_API_KEY', default='')
-GEMINI_MODEL = config('GEMINI_MODEL', default='gemini-1.5-pro')
+# Production: gpt-4o — best accuracy for rubric-based writing/speaking evaluation.
+# Dev/CI fallback: gpt-4o-mini (set OPENAI_MODEL in .env to override).
+# Do NOT use gpt-4o-mini in production — student scores depend on evaluation accuracy.
+OPENAI_MODEL = config('OPENAI_MODEL', default='gpt-4o')
 
 # ── OpenAI rate limit configuration ──────────────────────────────────────────
 # These values match the per-key limits shown on your OpenAI usage dashboard.
@@ -688,23 +683,16 @@ def _validate_settings():
         )
 
     # --- LLM provider keys ---
-    if LLM_PROVIDER == 'openai':
-        if not OPENAI_API_KEYS:
-            _log.warning(
-                'LLM_PROVIDER=openai but OPENAI_API_KEY is not set — '
-                'writing and speaking evaluation will fail.'
-            )
-        else:
-            _log.info(
-                'openai_key_pool configured: primary_keys=%d has_standby=%s — '
-                'add OPENAI_API_KEY_2…_5 and OPENAI_STANDBY_KEY for higher throughput.',
-                len(OPENAI_API_KEYS), bool(OPENAI_STANDBY_KEY),
-            )
-
-    if LLM_PROVIDER == 'gemini' and not GEMINI_API_KEY:
+    if not OPENAI_API_KEYS:
         _log.warning(
-            'LLM_PROVIDER=gemini but GEMINI_API_KEY is not set — '
+            'OPENAI_API_KEY is not set — '
             'writing and speaking evaluation will fail.'
+        )
+    else:
+        _log.info(
+            'openai_key_pool configured: primary_keys=%d has_standby=%s — '
+            'add OPENAI_API_KEY_2…_5 and OPENAI_STANDBY_KEY for higher throughput.',
+            len(OPENAI_API_KEYS), bool(OPENAI_STANDBY_KEY),
         )
 
 

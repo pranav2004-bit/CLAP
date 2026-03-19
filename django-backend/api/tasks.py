@@ -6,7 +6,6 @@ import json
 import re
 import os
 from importlib.util import find_spec
-from urllib import request as urlrequest
 from urllib.parse import urlparse
 
 from celery import shared_task
@@ -246,37 +245,10 @@ def _redact_pii(text: str):
     return redacted, replacements
 
 
-def _gemini_generate_json(prompt: str):
-    api_key = settings.GEMINI_API_KEY
-    if not api_key:
-        raise ValueError('GEMINI_API_KEY is not configured')
-
-    model = settings.GEMINI_MODEL
-    endpoint = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}'
-    payload = {
-        'contents': [{'parts': [{'text': prompt}]}],
-        'generationConfig': {'temperature': 0.2, 'responseMimeType': 'application/json'},
-    }
-    req = urlrequest.Request(
-        endpoint,
-        data=json.dumps(payload).encode('utf-8'),
-        headers={'Content-Type': 'application/json'},
-        method='POST',
-    )
-    with urlrequest.urlopen(req, timeout=120) as resp:
-        raw = json.loads(resp.read().decode('utf-8'))
-    text = raw['candidates'][0]['content']['parts'][0]['text']
-    return _extract_json(text)
-
-
 def _evaluate_writing_payload(essay: str, prompt: str):
     safe_essay, redactions = _redact_pii(essay or '')
     if redactions:
         log_event('info', 'pii_redacted', domain='writing', redactions=redactions)
-
-    provider = settings.LLM_PROVIDER.lower()
-    if provider == 'gemini':
-        return _gemini_generate_json(f'Prompt: {prompt}\nEssay: {safe_essay}\nReturn JSON with score(0-10) and feedback object.')
 
     result = openai_evaluate_writing(essay=safe_essay, prompt=prompt)
     return {
@@ -292,10 +264,6 @@ def _evaluate_speaking_payload(transcript: str, prompt: str):
     safe_transcript, redactions = _redact_pii(transcript or '')
     if redactions:
         log_event('info', 'pii_redacted', domain='speaking', redactions=redactions)
-
-    provider = settings.LLM_PROVIDER.lower()
-    if provider == 'gemini':
-        return _gemini_generate_json(f'Prompt: {prompt}\nTranscript: {safe_transcript}\nReturn JSON with score(0-10) and feedback object.')
 
     result = openai_evaluate_speaking(transcript=safe_transcript, prompt=prompt)
     return {
@@ -343,7 +311,7 @@ def _persist_llm_score(submission: AssessmentSubmission, domain: str, payload: d
             'feedback_json': feedback,
             'evaluated_by': 'llm',
             'evaluated_at': timezone.now(),
-            'llm_request_id': f"{settings.LLM_PROVIDER}-{timezone.now().timestamp()}",
+            'llm_request_id': f"openai-{timezone.now().timestamp()}",
         },
     )
 
