@@ -1282,13 +1282,72 @@ def generate_report(self, submission_id):
     except SoftTimeLimitExceeded:
         # C4: handle soft time limit explicitly so DLQ is recorded and DB connection
         # is cleaned up before the hard kill signal arrives (time_limit=300).
-        log_event('error', 'generate_report_soft_time_limit', submission_id=str(submission_id))
+        log_event('error', 'generate_report_soft_time_limit', submission_id=str(submission_id),
+                  attempt=self.request.retries)
         _record_dlq('generate_report', submission_id, {'submission_id': str(submission_id)},
                     RuntimeError('SoftTimeLimitExceeded'), self.request.retries)
+        # Reset status so the next retry re-enters the generation path instead of
+        # hitting Guard 2 (status != LLM_COMPLETE → skipped).
+        # On permanent failure (retries exhausted) mark as LLM_FAILED so the admin
+        # dashboard shows a clear terminal state and send_email_report skips gracefully.
+        try:
+            sub = AssessmentSubmission.objects.get(id=submission_id)
+            if sub.status == AssessmentSubmission.STATUS_REPORT_GENERATING:
+                target = (
+                    AssessmentSubmission.STATUS_LLM_FAILED
+                    if self.request.retries >= self.max_retries
+                    else AssessmentSubmission.STATUS_LLM_COMPLETE
+                )
+                _transition_submission_status(
+                    sub, target,
+                    expected_status=AssessmentSubmission.STATUS_REPORT_GENERATING,
+                )
+                log_event(
+                    'warning', 'generate_report_status_reset',
+                    submission_id=str(submission_id), reset_to=target,
+                    attempt=self.request.retries,
+                )
+        except Exception as reset_exc:
+            log_event('error', 'generate_report_status_reset_failed',
+                      submission_id=str(submission_id), error=str(reset_exc)[:200])
         raise
     except Exception as exc:
-        if self.request.retries >= self.max_retries:
-            _record_dlq('generate_report', submission_id, {'submission_id': str(submission_id)}, exc, self.request.retries)
+        # Reset status so retries can re-enter the generation path.
+        # Without this, the submission stays REPORT_GENERATING and every retry
+        # hits Guard 2 → returns 'skipped', wasting all retry attempts.
+        try:
+            sub = AssessmentSubmission.objects.get(id=submission_id)
+            if sub.status == AssessmentSubmission.STATUS_REPORT_GENERATING:
+                if self.request.retries >= self.max_retries:
+                    # Permanent failure — mark terminal so admin can investigate.
+                    _transition_submission_status(
+                        sub,
+                        AssessmentSubmission.STATUS_LLM_FAILED,
+                        expected_status=AssessmentSubmission.STATUS_REPORT_GENERATING,
+                    )
+                    _record_dlq(
+                        'generate_report', submission_id,
+                        {'submission_id': str(submission_id)}, exc, self.request.retries,
+                    )
+                    log_event(
+                        'error', 'generate_report_permanent_failure',
+                        submission_id=str(submission_id), error=str(exc)[:500],
+                    )
+                else:
+                    # Retryable — reset to LLM_COMPLETE so next attempt proceeds.
+                    _transition_submission_status(
+                        sub,
+                        AssessmentSubmission.STATUS_LLM_COMPLETE,
+                        expected_status=AssessmentSubmission.STATUS_REPORT_GENERATING,
+                    )
+                    log_event(
+                        'warning', 'generate_report_retrying',
+                        submission_id=str(submission_id), attempt=self.request.retries,
+                        error=str(exc)[:500],
+                    )
+        except Exception as reset_exc:
+            log_event('error', 'generate_report_status_reset_failed',
+                      submission_id=str(submission_id), error=str(reset_exc)[:200])
         raise
     finally:
         connection.close()
