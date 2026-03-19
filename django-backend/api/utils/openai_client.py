@@ -18,11 +18,13 @@ Architecture
   │      rotate to next key and retry immediately (no sleep on RPM 429).
   └── 6. On persistent failure: raise — caller (Celery task) handles DLQ.
 
-  Rate limits tracked per key
-  ├── RPM  : 3 req/min   (configurable via OPENAI_RPM_LIMIT)
-  ├── RPD  : 200 req/day (configurable via OPENAI_RPD_LIMIT)
-  ├── TPM  : 60 000 tokens/min (configurable via OPENAI_TPM_LIMIT)
-  └── TPD  : 200 000 tokens/day (configurable via OPENAI_TPD_LIMIT)
+  Rate limits tracked per key (Tier 1 defaults)
+  ├── RPM  : 500 req/min   (configurable via OPENAI_RPM_LIMIT)
+  ├── RPD  : 10 000 req/day (configurable via OPENAI_RPD_LIMIT)
+  ├── TPM  : 800 000 tokens/min (configurable via OPENAI_TPM_LIMIT)
+  ├── TPD  : 10 000 000 tokens/day (configurable via OPENAI_TPD_LIMIT)
+  └── Whisper RPM : 50 req/min per key (configurable via OPENAI_WHISPER_RPM_LIMIT)
+                    Tracked separately with Redis proactive counter.
 
   Security
   ├── API key values are NEVER logged — only a 12-char SHA-256 prefix.
@@ -390,13 +392,56 @@ def _with_quota_retry(
     raise RuntimeError('openai_all_retries_exhausted')
 
 
+# ── Whisper RPM tracker (Redis-backed, proactive) ─────────────────────────────
+
+def _whisper_rpm_key(api_key: str) -> str:
+    """Redis key for per-key Whisper RPM counter (current 60-second window)."""
+    import hashlib, math, time as _time
+    key_hash = hashlib.sha256(api_key.encode()).hexdigest()[:12]
+    minute   = math.floor(_time.time() / 60)
+    return f'whisper:rl:{key_hash}:rpm:{minute}'
+
+
+def _whisper_rpm_check_and_increment(api_key: str) -> bool:
+    """
+    Atomically check and increment the Whisper RPM counter for a key.
+    Returns True if the call is allowed, False if the key is at its RPM limit.
+    Fails open (returns True) when Redis is unavailable.
+    """
+    limit = getattr(settings, 'OPENAI_WHISPER_RPM_LIMIT', 50)
+    safe_limit = max(1, int(limit * getattr(settings, 'OPENAI_QUOTA_SAFETY_MARGIN', 0.90)))
+    redis_key = _whisper_rpm_key(api_key)
+
+    try:
+        from api.utils.quota_tracker import get_quota_tracker
+        tracker = get_quota_tracker()
+        r = getattr(tracker, '_redis', None)
+        if r is None:
+            return True  # Redis unavailable — fail open
+
+        pipe = r.pipeline()
+        pipe.incr(redis_key)
+        pipe.expire(redis_key, 65)  # 65 s TTL — slightly longer than a minute window
+        results = pipe.execute()
+        current = results[0]
+        if current > safe_limit:
+            logger.warning(
+                'whisper_rpm_limit_proactive key=%s current=%d limit=%d',
+                redis_key[-8:], current, safe_limit,
+            )
+            return False
+        return True
+    except Exception:
+        return True  # Fail open on any Redis error
+
+
 # ── Whisper retry wrapper (separate — different rate limits from chat) ─────────
 
 def _with_whisper_retry(func, retries: int = MAX_RETRIES):
     """
     Retry wrapper for Whisper transcription.
-    Whisper has independent rate limits (not counted in OPENAI_RPM_LIMIT).
-    Uses simple per-key cooldown (no quota pre-check for Whisper).
+    Whisper has independent rate limits from chat completions.
+    Uses proactive Redis RPM check + reactive 429 handling with key rotation.
     """
     from openai import RateLimitError, APIConnectionError, APITimeoutError
 
@@ -404,7 +449,17 @@ def _with_whisper_retry(func, retries: int = MAX_RETRIES):
     last_exc: Optional[Exception] = None
 
     for attempt in range(retries):
-        key = pool.get_key(estimated_tokens=0)  # 0 = skip token quota check for whisper
+        key = pool.get_key(estimated_tokens=0)  # 0 = skip token quota for whisper
+
+        # Proactive Whisper RPM check — rotate key if this one is at its limit
+        if not _whisper_rpm_check_and_increment(key):
+            pool.mark_rate_limited(key, DEFAULT_RETRY_AFTER_SECONDS)
+            logger.warning(
+                'whisper_rpm_proactive_block attempt=%d/%d rotating=True',
+                attempt + 1, retries,
+            )
+            continue
+
         try:
             from openai import OpenAI
             client = OpenAI(api_key=key, timeout=120.0)

@@ -559,27 +559,33 @@ EMAIL_WEBHOOK_SECRET = config('EMAIL_WEBHOOK_SECRET', default='')
 OPENAI_MODEL = config('OPENAI_MODEL', default='gpt-4o')
 
 # ── OpenAI rate limit configuration ──────────────────────────────────────────
-# These values match the per-key limits shown on your OpenAI usage dashboard.
-# With multiple API keys the effective limit multiplies (e.g. 5 keys × 3 RPM = 15 RPM).
-# Set these to match YOUR account's actual limits for accurate quota tracking.
+# Set these to match your OpenAI account tier exactly.
+# With N keys the effective limit scales: N × per-key value.
 #
-# gpt-4o-mini free/tier-1 limits (the defaults below):
-#   RPM  = 3    (3 requests per minute per key)
-#   RPD  = 200  (200 requests per day per key)
-#   TPM  = 60 000 tokens per minute per key
-#   TPD  = 200 000 tokens per day per key
+# ┌──────────────┬─────────┬──────────┬───────────┬────────────────┐
+# │ Tier         │ RPM     │ RPD      │ TPM       │ TPD            │
+# ├──────────────┼─────────┼──────────┼───────────┼────────────────┤
+# │ Free         │       3 │      200 │    30 000 │     90 000     │
+# │ Tier 1 (≥$5) │     500 │   10 000 │   800 000 │ no hard limit  │
+# │ Tier 2       │   5 000 │   10 000 │ 2 000 000 │ no hard limit  │
+# │ Tier 3       │   5 000 │   10 000 │ 4 000 000 │ no hard limit  │
+# └──────────────┴─────────┴──────────┴───────────┴────────────────┘
 #
-# Upgrade path (OpenAI tier-2+):
-#   Set OPENAI_RPM_LIMIT=500 OPENAI_RPD_LIMIT=10000
-#   OPENAI_TPM_LIMIT=2000000 OPENAI_TPD_LIMIT=unlimited (set very high)
-OPENAI_RPM_LIMIT  = config('OPENAI_RPM_LIMIT',  default=3,       cast=int)
-OPENAI_RPD_LIMIT  = config('OPENAI_RPD_LIMIT',  default=200,     cast=int)
-OPENAI_TPM_LIMIT  = config('OPENAI_TPM_LIMIT',  default=60_000,  cast=int)
-OPENAI_TPD_LIMIT  = config('OPENAI_TPD_LIMIT',  default=200_000, cast=int)
+# Whisper (audio transcription) has SEPARATE rate limits from chat completions:
+#   Tier 1 Whisper RPM = 50 per key  (independent of gpt-4o RPM budget)
+#   Tier 2+ Whisper RPM = 50 per key (same limit at higher tiers currently)
+#
+# Default below = Tier 1 (the current account tier).
+# Override in .env when you upgrade to a higher tier.
+OPENAI_RPM_LIMIT         = config('OPENAI_RPM_LIMIT',         default=500,        cast=int)
+OPENAI_RPD_LIMIT         = config('OPENAI_RPD_LIMIT',         default=10_000,     cast=int)
+OPENAI_TPM_LIMIT         = config('OPENAI_TPM_LIMIT',         default=800_000,    cast=int)
+OPENAI_TPD_LIMIT         = config('OPENAI_TPD_LIMIT',         default=10_000_000, cast=int)  # no hard limit on Tier 1 — set high
+OPENAI_WHISPER_RPM_LIMIT = config('OPENAI_WHISPER_RPM_LIMIT', default=50,         cast=int)
 
 # Safety margin: only use this fraction of stated limits (prevents riding the edge).
 # 0.90 = use max 90 % of each limit, keeping a 10 % buffer.
-# Lower this (e.g. 0.80) if you observe sporadic 429s despite headroom.
+# Lower to 0.80 if you observe sporadic 429s despite headroom.
 OPENAI_QUOTA_SAFETY_MARGIN = config('OPENAI_QUOTA_SAFETY_MARGIN', default=0.90, cast=float)
 
 CELERY_BEAT_SCHEDULE = {

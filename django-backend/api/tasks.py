@@ -247,6 +247,121 @@ def _compute_grade(total: Decimal, max_total: Decimal) -> str:
     return 'B'
 
 
+def _preprocess_audio_for_whisper(raw_bytes: bytes, ext: str) -> tuple:
+    """
+    Preprocess audio for maximum Whisper accuracy before transcription.
+
+    Pipeline (executed via FFmpeg — already present in the Docker image):
+      1. afftdn=nf=-25    — FFT-based noise reduction (removes background hiss/hum)
+      2. highpass=f=80    — strip sub-bass rumble below 80 Hz (HVAC, handling noise)
+      3. lowpass=f=8000   — strip high-frequency hiss above speech band (8 kHz)
+      4. loudnorm         — EBU R128 loudness normalisation (-16 LUFS target)
+                            ensures consistent volume regardless of device/distance
+      5. -ar 16000 -ac 1  — resample to 16 kHz mono (Whisper's native input format)
+      6. pcm_s16le WAV    — lossless output: avoids re-encoding degradation vs MP3
+
+    Handles all common student recording conditions:
+      - Noisy classrooms / cafeteria background
+      - Mobile phones at arm's length or pocket
+      - Weak internet causing audio compression artifacts
+      - Quiet/whispering students (loudnorm brings them up)
+      - Extremely loud students clipping the mic (loudnorm brings them down)
+
+    Fails open: returns (raw_bytes, original mime_type) unchanged if:
+      - FFmpeg is not available in PATH
+      - Input is too small to process (< 1 KB — likely empty/corrupt)
+      - Subprocess exceeds 60 s (never blocks the Celery task)
+      - Any unexpected error occurs
+
+    Returns:
+        (processed_bytes, mime_type)  where mime_type is 'audio/wav' on success
+        or the original (raw_bytes, original_mime_type) on fallback.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+
+    original_mime = f'audio/{ext}' if ext else 'audio/webm'
+
+    if shutil.which('ffmpeg') is None:
+        log_event('warning', 'audio_preprocess_ffmpeg_missing')
+        return raw_bytes, original_mime
+
+    if len(raw_bytes) < 1024:
+        log_event('warning', 'audio_preprocess_too_small', size=len(raw_bytes))
+        return raw_bytes, original_mime
+
+    inp_path = None
+    out_path = None
+    try:
+        # Write input to a named temp file — FFmpeg needs a seekable file
+        with tempfile.NamedTemporaryFile(suffix=f'.{ext or "webm"}', delete=False) as inp_f:
+            inp_f.write(raw_bytes)
+            inp_path = inp_f.name
+
+        out_path = inp_path + '_denoised.wav'
+
+        cmd = [
+            'ffmpeg', '-y',
+            '-i', inp_path,
+            '-af', (
+                'afftdn=nf=-25,'                       # FFT noise reduction
+                'highpass=f=80,'                       # remove sub-bass rumble
+                'lowpass=f=8000,'                      # remove hiss above speech band
+                'loudnorm=I=-16:TP=-1.5:LRA=11'        # EBU R128 loudness normalisation
+            ),
+            '-ar', '16000',                            # 16 kHz — Whisper optimal
+            '-ac', '1',                                # mono
+            '-c:a', 'pcm_s16le',                       # 16-bit PCM WAV (lossless)
+            '-t', '300',                               # hard cap: max 5 minutes
+            out_path,
+        ]
+
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            timeout=60,                                # never block >60 s
+        )
+
+        if result.returncode != 0:
+            log_event(
+                'warning', 'audio_preprocess_ffmpeg_error',
+                returncode=result.returncode,
+                stderr=result.stderr.decode('utf-8', errors='replace')[:500],
+            )
+            return raw_bytes, original_mime
+
+        with open(out_path, 'rb') as out_f:
+            processed = out_f.read()
+
+        if len(processed) < 512:
+            log_event('warning', 'audio_preprocess_empty_output', size=len(processed))
+            return raw_bytes, original_mime
+
+        log_event(
+            'info', 'audio_preprocessed',
+            original_bytes=len(raw_bytes),
+            processed_bytes=len(processed),
+            reduction_pct=round((1 - len(processed) / max(len(raw_bytes), 1)) * 100, 1),
+        )
+        return processed, 'audio/wav'
+
+    except subprocess.TimeoutExpired:
+        log_event('warning', 'audio_preprocess_timeout')
+        return raw_bytes, original_mime
+    except Exception as exc:
+        log_event('warning', 'audio_preprocess_error', error=str(exc)[:200])
+        return raw_bytes, original_mime
+    finally:
+        for path in (inp_path, out_path):
+            if path:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+
+
 def _record_llm_domain_failure(submission: AssessmentSubmission, domain: str) -> None:
     """
     Atomically record that an LLM domain permanently failed (all retries exhausted).
@@ -639,11 +754,10 @@ def score_rule_based(self, submission_id):
     # ── Reliability ──────────────────────────────────────────────────────────
     acks_late=True,            # Task re-queued if worker dies before completion
     reject_on_worker_lost=True,
-    # ── Celery-level rate limit (safety net — quota tracker is the primary control)
-    # 3/m = max 3 chat-completion calls per minute per worker.
-    # With 1 LLM worker this directly mirrors the per-key RPM limit.
-    # With multiple keys the quota tracker handles higher throughput.
-    rate_limit='3/m',
+    # ── Celery-level rate limit ───────────────────────────────────────────────
+    # Not set here — the QuotaTracker (Redis) is the authoritative rate limiter.
+    # It enforces per-key RPM/RPD/TPM/TPD limits atomically across all workers.
+    # A Celery rate_limit here would under-utilise Tier 1 capacity (500 RPM/key).
     # ── Time limits ──────────────────────────────────────────────────────────
     time_limit=200,
     soft_time_limit=175,
@@ -756,14 +870,13 @@ def evaluate_writing(self, submission_id):
     acks_late=True,
     reject_on_worker_lost=True,
     # ── Celery rate limit ─────────────────────────────────────────────────────
-    # 3/m = at most 3 chat completions per minute per worker (safety net).
-    # Note: Whisper transcription uses a separate API endpoint and is NOT
-    # counted against the GPT RPM limit, so it is not rate-limited here.
-    rate_limit='3/m',
+    # Not set here — QuotaTracker handles gpt-4o RPM/RPD/TPM/TPD per key.
+    # Whisper RPM is tracked separately in openai_client._with_whisper_retry
+    # via a proactive Redis counter (OPENAI_WHISPER_RPM_LIMIT, default 50/key).
     # ── Time limits ──────────────────────────────────────────────────────────
-    # Higher than writing because Whisper transcription adds ~30-120s.
-    time_limit=360,
-    soft_time_limit=330,
+    # Higher than writing: audio preprocessing (FFmpeg) + Whisper adds 30-120s.
+    time_limit=420,
+    soft_time_limit=390,
 )
 def evaluate_speaking(self, submission_id):
     if _task_already_processed(self.request.id):
@@ -817,29 +930,48 @@ def evaluate_speaking(self, submission_id):
                     if s3_client:
                         without_scheme = audio.file_path[len('s3://'):]
                         s3_bucket, _, s3_key = without_scheme.partition('/')
-                        ext = audio.file_path.rsplit('.', 1)[-1]
+                        ext = audio.file_path.rsplit('.', 1)[-1].lower()
                         with tempfile.SpooledTemporaryFile(
                             max_size=5 * 1024 * 1024,  # spill to disk above 5 MB
                             suffix=f'.{ext}',
                         ) as tmp:
                             s3_client.download_fileobj(s3_bucket, s3_key, tmp)
                             tmp.seek(0)
-                            # Whisper API expects (filename, bytes, content_type)
+                            raw_bytes = tmp.read()
+
+                        # ── Audio size guard ──────────────────────────────────
+                        if len(raw_bytes) < 1024:
+                            log_event('warning', 'audio_too_small_skipping',
+                                      submission_id=str(submission_id), size=len(raw_bytes))
+                        else:
+                            # ── Noise reduction + format normalisation ────────
+                            clean_bytes, effective_mime = _preprocess_audio_for_whisper(raw_bytes, ext)
                             audio_file_obj = (
-                                f'audio.{ext}',
-                                tmp.read(),
-                                audio.mime_type or 'audio/webm',
+                                f'audio.{"wav" if effective_mime == "audio/wav" else ext}',
+                                clean_bytes,
+                                effective_mime,
                             )
                             transcript = transcribe_audio(
-                                audio_file_obj, mime_type=audio.mime_type or 'audio/webm'
+                                audio_file_obj, mime_type=effective_mime
                             ) or ''
-                        # SpooledTemporaryFile auto-deleted on context manager exit
                 elif audio.file_path:
                     # Local filesystem audio — open with context manager (no FD leak)
                     full_path = os.path.join(settings.MEDIA_ROOT, audio.file_path)
                     if os.path.exists(full_path):
+                        ext = audio.file_path.rsplit('.', 1)[-1].lower()
                         with open(full_path, 'rb') as f:
-                            transcript = transcribe_audio(f, mime_type=audio.mime_type or 'audio/webm') or ''
+                            raw_bytes = f.read()
+                        if len(raw_bytes) < 1024:
+                            log_event('warning', 'audio_too_small_skipping',
+                                      submission_id=str(submission_id), size=len(raw_bytes))
+                        else:
+                            clean_bytes, effective_mime = _preprocess_audio_for_whisper(raw_bytes, ext)
+                            audio_file_obj = (
+                                f'audio.{"wav" if effective_mime == "audio/wav" else ext}',
+                                clean_bytes,
+                                effective_mime,
+                            )
+                            transcript = transcribe_audio(audio_file_obj, mime_type=effective_mime) or ''
 
                 if transcript:
                     # Persist so future re-runs skip Whisper
