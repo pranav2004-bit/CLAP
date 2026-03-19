@@ -7,16 +7,25 @@ GET /api/health/
 Returns 200 when the service is ready to accept requests, 503 when degraded.
 
 Checks performed:
-  - Database: executes SELECT 1 (verifies DB connection and query path)
-  - Redis:    PING (verifies broker/cache connectivity)
+  - Database:    executes SELECT 1 (verifies DB connection and query path)
+  - Redis:       PING (verifies broker/cache connectivity)
+  - LLM pool:   reports OpenAI key count, cooling keys, and quota health
 
 Response format:
   {
     "status": "ok" | "degraded",
     "checks": {
-      "database": "ok" | "error: <reason>",
-      "redis":    "ok" | "error: <reason>"
+      "database":   "ok" | "error: <reason>",
+      "redis":      "ok" | "error: <reason>",
+      "llm_openai": {
+        "primary_keys": 3,
+        "has_standby": true,
+        "primary_keys_cooling": 0,
+        "standby_cooling": false,
+        "provider": "openai"
+      }
     },
+    "llm_provider": "openai",
     "version": "<app version from settings, optional>"
   }
 """
@@ -37,6 +46,36 @@ if find_spec('redis') is not None:
     import redis as _redis_lib
 else:
     _redis_lib = None
+
+
+def _llm_pool_check() -> dict:
+    """
+    Return OpenAI pool health.
+
+    Fails open — if the pool singleton is not yet initialised (no tasks have run
+    yet), reports the configured key count from settings instead of live stats.
+    Never raises; exceptions are caught and reported as error strings.
+    """
+    result = {}
+
+    try:
+        from api.utils.openai_client import get_pool_status as _openai_status
+        status = _openai_status()
+        result['llm_openai'] = {**status, 'provider': 'openai'}
+    except Exception as exc:
+        # Pool not yet initialised — report configured key count as fallback
+        primary_keys = getattr(settings, 'OPENAI_API_KEYS', [])
+        standby      = getattr(settings, 'OPENAI_STANDBY_KEY', '')
+        result['llm_openai'] = {
+            'primary_keys': len([k for k in primary_keys if k]),
+            'has_standby': bool(standby),
+            'primary_keys_cooling': 0,
+            'standby_cooling': False,
+            'provider': 'openai',
+            'note': f'pool not yet initialised: {exc}',
+        }
+
+    return result
 
 
 @csrf_exempt
@@ -77,9 +116,19 @@ def health_check(request):
     else:
         checks['redis'] = 'redis library not installed'
 
+    # ── LLM pool check (observability only — never degrades overall status) ──
+    # Pool exhaustion / key cooling is operational, not a service failure.
+    # Load balancers should never take the app out of rotation for quota issues.
+    try:
+        pool_checks = _llm_pool_check()
+        checks.update(pool_checks)
+    except Exception as exc:
+        checks['llm_pool'] = f'error: {exc}'
+
     payload = {
         'status': overall,
         'checks': checks,
+        'llm_provider': 'openai',
     }
 
     app_version = getattr(settings, 'APP_VERSION', None)
