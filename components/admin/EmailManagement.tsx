@@ -24,8 +24,11 @@ import { toast } from 'sonner'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-/** Auto-refresh interval in milliseconds. */
-const REFRESH_MS = 30_000
+/** Auto-refresh interval (ms). */
+const REFRESH_MS = 60_000
+
+/** How often to re-fetch the test list so new tests appear in the dropdown (ms). */
+const TESTS_REFRESH_MS = 60_000
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -242,36 +245,69 @@ export function EmailManagement() {
   const abortRef = useRef<AbortController | null>(null)
 
   /**
-   * Timer ref — owns the 30-second setInterval handle so we can reset the
-   * countdown after a manual refresh (avoids near-immediate double-fetch).
+   * Timer ref — owns the setInterval handle so we can reset the countdown
+   * after a manual refresh (avoids near-immediate double-fetch).
    */
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // ── Fetch test list ────────────────────────────────────────────────────
   /**
-   * Fetches the list of available CLAP tests for the scope selector.
-   * Accepts an optional AbortSignal so the initial mount fetch can be
-   * cancelled cleanly on unmount.
-   * Called on mount AND on every manual refresh so the list stays current.
+   * Separate abort ref for the test-list polling — independent lifecycle
+   * from the email data polling so they never cancel each other.
    */
-  const fetchTests = useCallback(async (signal?: AbortSignal) => {
+  const testsAbortRef = useRef<AbortController | null>(null)
+
+  // ── Fetch + periodically refresh test list ────────────────────────────
+  /**
+   * Fetches all CLAP tests for the scope dropdown.
+   * Runs on mount and every TESTS_REFRESH_MS so newly created tests
+   * appear automatically without a page reload.
+   * Uses its own AbortController; errors are logged, never silently dropped.
+   */
+  const fetchTests = useCallback(async () => {
+    testsAbortRef.current?.abort()
+    const ctrl = new AbortController()
+    testsAbortRef.current = ctrl
+
     try {
       const res = await fetch(getApiUrl('admin/clap-tests'), {
         headers: getAuthHeaders(),
-        signal,
+        signal:  ctrl.signal,
       })
-      if (!res.ok) return
+      if (ctrl.signal.aborted) return
+      if (!res.ok) {
+        console.error('[Emails] Tests list fetch failed:', res.status, res.statusText)
+        return
+      }
       const json = await res.json()
-      const list: ClapTestOption[] = Array.isArray(json)
+      const raw: ClapTestOption[] = Array.isArray(json)
         ? json
         : (json.clapTests ?? json.tests ?? json.results ?? [])
-      setTests(list.filter((t: ClapTestOption) => Boolean(t.id)))
-    } catch {
-      // Non-fatal — selector gracefully degrades to "All Tests (Global)" only
+      const list = raw.filter((t: ClapTestOption) => Boolean(t.id))
+      if (ctrl.signal.aborted) return
+      // Stable update — skip re-render if list is unchanged
+      setTests(prev => {
+        if (
+          prev.length === list.length &&
+          prev.every((t, i) => t.id === list[i].id && t.name === list[i].name)
+        ) return prev
+        return list
+      })
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') return
+      console.error('[Emails] Tests list fetch error:', err)
     } finally {
-      setTestsLoading(false)
+      if (!ctrl.signal.aborted) setTestsLoading(false)
     }
   }, [])
+
+  useEffect(() => {
+    fetchTests()
+    const id = setInterval(fetchTests, TESTS_REFRESH_MS)
+    return () => {
+      clearInterval(id)
+      testsAbortRef.current?.abort()
+    }
+  }, [fetchTests])
 
   // ── Core fetch (status + logs in parallel) ────────────────────────────
   /**
@@ -342,22 +378,15 @@ export function EmailManagement() {
     timerRef.current = setInterval(doFetch, REFRESH_MS)
   }, [doFetch])
 
-  /** Manual refresh: immediate fetch + reset 30s countdown + refresh test list. */
+  /** Manual refresh: immediate fetch + reset the 60s countdown. */
   const handleRefresh = useCallback(() => {
     doFetch()
     resetTimer()
-    fetchTests()
-  }, [doFetch, resetTimer, fetchTests])
+  }, [doFetch, resetTimer])
 
-  // ── Lifecycle ──────────────────────────────────────────────────────────
-  // Fetch test list once on mount (separate signal so it doesn't block data fetch)
-  useEffect(() => {
-    const ctrl = new AbortController()
-    fetchTests(ctrl.signal)
-    return () => ctrl.abort()
-  }, [fetchTests])
-
-  // Main data fetch + auto-refresh — re-runs when doFetch/resetTimer change
+  // ── Main data lifecycle ────────────────────────────────────────────────
+  // Re-runs whenever doFetch/resetTimer change (i.e. when selectedTestId /
+  // statusPage / logsPage change), which triggers an automatic re-fetch.
   // (which happens when selectedTestId / statusPage / logsPage change)
   useEffect(() => {
     doFetch()
@@ -513,7 +542,7 @@ export function EmailManagement() {
           <h2 className="text-xl font-bold text-gray-900">Email Management</h2>
           <p className="text-sm text-gray-500 mt-0.5">
             {statusData
-              ? `${scopeLabel} · Last updated ${staleSec}s ago · auto-refreshes every 30s`
+              ? `${scopeLabel} · Last updated ${staleSec}s ago · auto-refreshes every 60 s`
               : 'Loading email data…'}
           </p>
         </div>
@@ -593,8 +622,8 @@ export function EmailManagement() {
             }`}
           >
             {tab === 'status'
-              ? `Recent Emails (${statusData?.pagination.total.toLocaleString() ?? 0})`
-              : `Bounce/Complaint Logs (${logsData?.pagination.total.toLocaleString() ?? 0})`}
+              ? `Recent Emails (${statusData?.pagination?.total?.toLocaleString() ?? 0})`
+              : `Bounce/Complaint Logs (${logsData?.pagination?.total?.toLocaleString() ?? 0})`}
           </button>
         ))}
       </div>

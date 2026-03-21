@@ -244,16 +244,21 @@ def dashboard_stats(request):
     dlq_unresolved = DeadLetterQueue.objects.filter(resolved=False).count()
 
     # ── Submission status breakdown — ALL statuses (drives pipeline widget) ─
-    # Returned as a list so the frontend renders every status that actually
-    # exists in the DB — including SUPERSEDED_LLM_PROCESSING and any future
-    # statuses added to the pipeline — keeping the total always consistent.
+    # IMPORTANT: we build a FRESH queryset here rather than reusing sub_qs.
+    # After .aggregate() is evaluated on sub_qs Django may cache internal
+    # queryset state; starting from a clean queryset guarantees the
+    # .values().annotate() result is always consistent with sub_agg totals.
+    _sb_qs = AssessmentSubmission.objects
+    if selected_test is not None:
+        _sb_qs = _sb_qs.filter(assessment=selected_test)
+
     status_breakdown = [
         {'status': s['status'], 'count': s['count']}
         for s in (
-            sub_qs
+            _sb_qs
             .values('status')
             .annotate(count=Count('id'))
-            .order_by('status')
+            .order_by('-count')   # most-common first — cleaner visual ordering
         )
     ]
 
