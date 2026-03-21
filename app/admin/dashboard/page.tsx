@@ -14,22 +14,35 @@ import {
   Activity,
   ClipboardList,
   Zap,
+  ChevronDown,
 } from 'lucide-react'
 import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
 
+// ── Constants ──────────────────────────────────────────────────────────────
+
+/** Auto-refresh interval in milliseconds. */
+const REFRESH_MS = 30_000
+
 // ── Types ──────────────────────────────────────────────────────────────────
 
+interface ClapTestOption {
+  id: string
+  test_id: string | null
+  name: string
+}
+
 interface DashboardStats {
+  selected_test: { id: string; test_id: string | null; name: string } | null
   students:    { total: number; active: number }
   assignments: { total: number; started: number; completed: number }
   submissions: { total: number; pending: number; processing: number; complete: number; failed: number }
   avg_score:   number | null
   dlq_unresolved: number
   recent_activity: Array<{
-    event_type: string
-    created_at: string | null
-    old_status:  string | null
-    new_status:  string | null
+    event_type:    string
+    created_at:    string | null
+    old_status:    string | null
+    new_status:    string | null
     submission_id: string | null
   }>
   generated_at: string
@@ -54,19 +67,23 @@ function eventLabel(event: string): string {
 }
 
 function eventColor(event: string): string {
-  if (event.includes('error') || event.includes('fail') || event.includes('dlq')) return 'bg-red-100 text-red-700'
-  if (event.includes('complete') || event.includes('sent') || event.includes('success')) return 'bg-green-100 text-green-700'
-  if (event.includes('retry') || event.includes('resend') || event.includes('retrigger')) return 'bg-amber-100 text-amber-700'
+  if (event.includes('error') || event.includes('fail') || event.includes('dlq'))
+    return 'bg-red-100 text-red-700'
+  if (event.includes('complete') || event.includes('sent') || event.includes('success'))
+    return 'bg-green-100 text-green-700'
+  if (event.includes('retry') || event.includes('resend') || event.includes('retrigger'))
+    return 'bg-amber-100 text-amber-700'
   return 'bg-gray-100 text-gray-600'
 }
 
 function dlqSeverity(count: number): { cls: string; label: string } {
   if (count === 0) return { cls: 'text-green-700 bg-green-50 border-green-200', label: 'Healthy' }
   if (count <= 5)  return { cls: 'text-amber-700 bg-amber-50 border-amber-200', label: `${count} unresolved` }
-  return              { cls: 'text-red-700 bg-red-50 border-red-200',   label: `${count} unresolved — Action needed` }
+  return               { cls: 'text-red-700 bg-red-50 border-red-200',   label: `${count} unresolved — Action needed` }
 }
 
-// Skeleton card used during initial load
+// ── Sub-components ─────────────────────────────────────────────────────────
+
 function SkeletonCard() {
   return (
     <Card className="border border-gray-200">
@@ -84,51 +101,186 @@ function SkeletonCard() {
   )
 }
 
+interface TestScopeSelectorProps {
+  tests:          ClapTestOption[]
+  testsLoading:   boolean
+  selectedTestId: string | null
+  onChange:       (id: string | null) => void
+}
+
+function TestScopeSelector({ tests, testsLoading, selectedTestId, onChange }: TestScopeSelectorProps) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-xs text-gray-500 font-medium whitespace-nowrap hidden sm:block">View:</span>
+      <div className="relative">
+        <select
+          className="appearance-none pl-3 pr-8 py-1.5 text-sm border border-gray-200 rounded-lg bg-white text-gray-700 font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-400 disabled:opacity-50 disabled:cursor-not-allowed min-w-[190px] cursor-pointer"
+          value={selectedTestId ?? ''}
+          onChange={e => onChange(e.target.value || null)}
+          disabled={testsLoading}
+          aria-label="Select test scope"
+        >
+          <option value="">All Tests (Global)</option>
+          {tests.map(t => (
+            <option key={t.id} value={t.id}>
+              {t.test_id ? `${t.test_id} — ${t.name}` : t.name}
+            </option>
+          ))}
+        </select>
+        <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+      </div>
+    </div>
+  )
+}
+
 // ── Main Component ─────────────────────────────────────────────────────────
 
 export default function AdminDashboardPage() {
-  const [stats, setStats]       = useState<DashboardStats | null>(null)
-  const [loading, setLoading]   = useState(true)
-  const [error, setError]       = useState<string | null>(null)
-  // Tracks seconds since last successful fetch for the freshness label
+  const [stats, setStats]     = useState<DashboardStats | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError]     = useState<string | null>(null)
   const [staleSec, setStaleSec] = useState(0)
   const lastFetchRef = useRef<number>(0)
 
-  const fetchStats = useCallback(async () => {
-    // Skip fetch if tab is hidden — saves server load with many concurrent admins
-    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
-    setLoading(true)
-    setError(null)
-    try {
-      const res = await fetch(getApiUrl('admin/stats/dashboard'), { headers: getAuthHeaders() })
-      if (!res.ok) {
-        setError(`Server returned ${res.status}`)
-        return
+  // Per-test scope selector
+  const [tests, setTests]             = useState<ClapTestOption[]>([])
+  const [testsLoading, setTestsLoading] = useState(true)
+  const [selectedTestId, setSelectedTestId] = useState<string | null>(null)
+
+  /**
+   * Abort ref — always holds the AbortController for the most-recent in-flight
+   * request. Cancels automatically when:
+   *   • selectedTestId changes  (fetchStats is recreated → useEffect re-runs)
+   *   • component unmounts      (useEffect cleanup)
+   *   • manual refresh fires    (handleRefresh calls doFetch which aborts first)
+   * Prevents stale responses from overwriting newer data.
+   */
+  const abortRef = useRef<AbortController | null>(null)
+
+  /**
+   * Timer ref — owns the setInterval handle so we can reset the 30-second
+   * countdown after a manual refresh (avoids near-immediate double-fetch).
+   */
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // ── Fetch available tests once on mount ───────────────────────────────
+  useEffect(() => {
+    let cancelled = false
+    const ctrl = new AbortController()
+
+    ;(async () => {
+      try {
+        const res = await fetch(getApiUrl('admin/clap-tests'), {
+          headers: getAuthHeaders(),
+          signal:  ctrl.signal,
+        })
+        if (!res.ok || cancelled) return
+        const json = await res.json()
+        const list: ClapTestOption[] = Array.isArray(json)
+          ? json
+          : (json.tests ?? json.results ?? [])
+        if (!cancelled) setTests(list.filter((t: ClapTestOption) => Boolean(t.id)))
+      } catch {
+        // Non-fatal — selector degrades to "All Tests (Global)" only
+      } finally {
+        if (!cancelled) setTestsLoading(false)
       }
-      setStats(await res.json())
-      lastFetchRef.current = Date.now()
-      setStaleSec(0)
-    } catch {
-      setError('Network error — retrying in 30 s')
-    } finally {
-      setLoading(false)
+    })()
+
+    return () => {
+      cancelled = true
+      ctrl.abort()
     }
   }, [])
 
-  // Initial fetch + 30-second auto-refresh
+  // ── Core fetch function ───────────────────────────────────────────────
+  /**
+   * Cancels any in-flight request, starts a new one with its own AbortSignal.
+   * Guards against updating state on an aborted/unmounted instance.
+   */
+  const doFetch = useCallback(async () => {
+    // Skip while tab is hidden — saves server load across many admin sessions
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+
+    // Cancel previous in-flight request
+    abortRef.current?.abort()
+    const ctrl = new AbortController()
+    abortRef.current = ctrl
+
+    setLoading(true)
+    setError(null)
+
+    try {
+      const qs = new URLSearchParams()
+      if (selectedTestId) qs.set('test_id', selectedTestId)
+      const qsStr = qs.toString()
+      const url = getApiUrl(`admin/stats/dashboard${qsStr ? `?${qsStr}` : ''}`)
+
+      const res = await fetch(url, {
+        headers: getAuthHeaders(),
+        signal:  ctrl.signal,
+      })
+
+      // Check abort before processing — another request may have superseded this one
+      if (ctrl.signal.aborted) return
+
+      if (!res.ok) throw new Error(`Server returned ${res.status}`)
+
+      const json: DashboardStats = await res.json()
+
+      if (ctrl.signal.aborted) return   // aborted during JSON parse
+
+      setStats(json)
+      lastFetchRef.current = Date.now()
+      setStaleSec(0)
+    } catch (err: unknown) {
+      if (ctrl.signal.aborted) return   // intentional cancel — suppress error UI
+      const msg = err instanceof Error ? err.message : 'Unknown error'
+      setError(`${msg} — retrying automatically`)
+    } finally {
+      // Only clear loading if this request wasn't superseded
+      if (!ctrl.signal.aborted) setLoading(false)
+    }
+  }, [selectedTestId])
+
+  // ── Interval management ───────────────────────────────────────────────
+  /**
+   * (Re)starts the 30-second auto-refresh countdown from now.
+   * Calling this after a manual refresh prevents a near-immediate auto-refresh.
+   */
+  const resetTimer = useCallback(() => {
+    if (timerRef.current !== null) clearInterval(timerRef.current)
+    timerRef.current = setInterval(doFetch, REFRESH_MS)
+  }, [doFetch])
+
+  /** Manual refresh: fetch immediately + reset the countdown. */
+  const handleRefresh = useCallback(() => {
+    doFetch()
+    resetTimer()
+  }, [doFetch, resetTimer])
+
+  // ── Lifecycle: mount → fetch + start timer; re-run when scope changes ─
   useEffect(() => {
-    fetchStats()
-    const interval = setInterval(fetchStats, 30_000)
-    // Resume fetch immediately when tab becomes visible again
-    const onVisible = () => { if (document.visibilityState === 'visible') fetchStats() }
+    doFetch()
+    resetTimer()
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        doFetch()
+        resetTimer()
+      }
+    }
     document.addEventListener('visibilitychange', onVisible)
+
     return () => {
-      clearInterval(interval)
+      // Cancel in-flight request and stop auto-refresh on unmount / scope change
+      abortRef.current?.abort()
+      if (timerRef.current !== null) clearInterval(timerRef.current)
       document.removeEventListener('visibilitychange', onVisible)
     }
-  }, [fetchStats])
+  }, [doFetch, resetTimer])
 
-  // Freshness ticker — updates the "Last updated X s ago" label every second
+  // ── Freshness ticker — updates "X s ago" label every second ──────────
   useEffect(() => {
     const id = setInterval(() => {
       if (lastFetchRef.current) {
@@ -144,29 +296,48 @@ export default function AdminDashboardPage() {
     ? Math.round((stats.submissions.complete / stats.submissions.total) * 100)
     : 0
 
+  const scopeLabel = stats?.selected_test
+    ? (stats.selected_test.test_id
+        ? `${stats.selected_test.test_id} — ${stats.selected_test.name}`
+        : stats.selected_test.name)
+    : 'All Tests (Global)'
+
   // ── Render ───────────────────────────────────────────────────────────────
   return (
     <div className="p-4 sm:p-6 space-y-6 bg-gray-50 min-h-full">
+
       {/* Page header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-gray-900">System Overview</h1>
           <p className="text-sm text-gray-500 mt-0.5">
             {stats
-              ? `Last updated ${staleSec}s ago · auto-refreshes every 30 s`
+              ? `${scopeLabel} · Last updated ${staleSec}s ago · auto-refreshes every 30 s`
               : 'Loading real-time data…'}
           </p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={fetchStats}
-          disabled={loading}
-        >
-          {loading
-            ? <Loader2 className="w-4 h-4 animate-spin" />
-            : <RefreshCw className="w-4 h-4" />}
-        </Button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <TestScopeSelector
+            tests={tests}
+            testsLoading={testsLoading}
+            selectedTestId={selectedTestId}
+            onChange={id => {
+              setSelectedTestId(id)
+              setStats(null)   // clear stale data immediately; new data loads via useEffect
+            }}
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRefresh}
+            disabled={loading}
+            aria-label="Refresh dashboard"
+          >
+            {loading
+              ? <Loader2 className="w-4 h-4 animate-spin" />
+              : <RefreshCw className="w-4 h-4" />}
+          </Button>
+        </div>
       </div>
 
       {/* Error banner */}
@@ -182,8 +353,9 @@ export default function AdminDashboardPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
           {Array.from({ length: 5 }).map((_, i) => <SkeletonCard key={i} />)}
         </div>
-      ) : stats && (
+      ) : stats ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+
           {/* Active Students */}
           <Card className="border border-gray-200 bg-white shadow-sm hover:shadow-md transition-shadow">
             <CardContent className="p-6">
@@ -286,11 +458,12 @@ export default function AdminDashboardPage() {
             </CardContent>
           </Card>
         </div>
-      )}
+      ) : null}
 
-      {/* Submission pipeline breakdown */}
+      {/* Submission pipeline breakdown + Recent Activity */}
       {stats && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
           <Card className="border border-gray-200 bg-white shadow-sm">
             <CardContent className="p-5">
               <h3 className="text-sm font-semibold text-gray-700 mb-4 flex items-center gap-2">
@@ -325,7 +498,6 @@ export default function AdminDashboardPage() {
             </CardContent>
           </Card>
 
-          {/* Recent Activity feed */}
           <Card className="border border-gray-200 bg-white shadow-sm">
             <CardContent className="p-5">
               <h3 className="text-sm font-semibold text-gray-700 mb-4 flex items-center gap-2">

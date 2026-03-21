@@ -188,10 +188,13 @@ def export_scores(request):
         if not batch_id:
             return JsonResponse({'error': 'batch_id is required for scope=batch'}, status=400)
         qs = qs.filter(user__batch_id=batch_id)
-    elif scope == 'assessment':
-        assessment_id = request.GET.get('assessment_id')
+    elif scope in ('assessment', 'test'):
+        assessment_id = request.GET.get('assessment_id') or request.GET.get('test_id')
         if not assessment_id:
-            return JsonResponse({'error': 'assessment_id is required for scope=assessment'}, status=400)
+            return JsonResponse(
+                {'error': 'assessment_id (or test_id) is required for scope=assessment/test'},
+                status=400,
+            )
         qs = qs.filter(assessment_id=assessment_id)
 
     created_from = request.GET.get('created_from')

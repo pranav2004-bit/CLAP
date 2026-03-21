@@ -29,41 +29,36 @@ const testTypes = [
     name: 'Listening',
     icon: Headphones,
     color: 'listening',
-    description: '2 audio clips with MCQ questions',
-    marks: 10,
-    duration: '20 min'
+    description: '1 audio clip with MCQ questions',
+    marks: 10
   },
   {
     name: 'Speaking',
     icon: Mic,
     color: 'speaking',
     description: 'Voice recording with AI evaluation',
-    marks: 10,
-    duration: '5 min'
+    marks: 10
   },
   {
     name: 'Reading',
     icon: BookOpen,
     color: 'reading',
-    description: '2 passages with comprehension MCQs',
-    marks: 10,
-    duration: '25 min'
+    description: '1 passage with comprehension MCQs',
+    marks: 10
   },
   {
     name: 'Writing',
     icon: PenTool,
     color: 'writing',
     description: 'Essay writing with AI scoring',
-    marks: 10,
-    duration: '30 min'
+    marks: 10
   },
   {
-    name: 'Vocabulary & Grammar',
+    name: 'Verbal Ability',
     icon: Brain,
     color: 'vocabulary',
     description: '10 MCQs on language skills',
-    marks: 10,
-    duration: '15 min'
+    marks: 10
   }
 ]
 
@@ -102,7 +97,7 @@ export default function LandingPage() {
             <div className="hidden md:flex items-center gap-8">
               <a href="#features" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Features</a>
               <a href="#tests" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Tests</a>
-              <Link href="/about" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">About</Link>
+              <ActionButton href="/about" variant="ghost" size="sm" className="text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-transparent transition-colors h-auto p-0">About</ActionButton>
             </div>
 
             <div className="flex items-center gap-3">
@@ -166,7 +161,7 @@ export default function LandingPage() {
                 <div className="text-[10px] sm:text-xs md:text-sm font-medium text-muted-foreground uppercase tracking-widest text-center leading-tight">Marks</div>
               </div>
               <div className="flex flex-col items-center justify-center p-3 sm:p-4 md:p-6 rounded-xl sm:rounded-2xl bg-secondary/30 border border-border/50 backdrop-blur-sm">
-                <div className="text-2xl sm:text-3xl md:text-4xl font-bold text-foreground mb-1">95m</div>
+                <div className="text-2xl sm:text-3xl md:text-4xl font-bold text-foreground mb-1">45m</div>
                 <div className="text-[10px] sm:text-xs md:text-sm font-medium text-muted-foreground uppercase tracking-widest text-center leading-tight">Duration</div>
               </div>
             </div>
@@ -233,11 +228,7 @@ export default function LandingPage() {
                   <CardTitle className="text-lg sm:text-base">{test.name}</CardTitle>
                 </CardHeader>
                 <CardContent className="px-4 sm:px-5 pb-4 sm:pb-5 pt-0 lg:px-6 lg:pb-6">
-                  <p className="text-xs sm:text-sm text-muted-foreground mb-3">{test.description}</p>
-                  <div className="flex items-center text-[11px] sm:text-xs text-muted-foreground font-medium">
-                    <Clock className="w-3 h-3 mr-1" />
-                    {test.duration}
-                  </div>
+                  <p className="text-xs sm:text-sm text-muted-foreground">{test.description}</p>
                 </CardContent>
               </Card>
             ))}
@@ -264,11 +255,11 @@ export default function LandingPage() {
                 <strong>Choose Your Path:</strong> Take tests in any order that suits your preference.
               </p>
               <p className="text-sm text-muted-foreground">
-                Each test auto-submits when time expires. Complete all 5 tests to receive your comprehensive report.
+                A single global timer governs the entire assessment. Complete all 5 tests before time expires to receive your comprehensive report.
               </p>
               <div className="flex flex-wrap justify-center gap-4 mt-4">
                 <Badge variant="outline" className="text-xs">Flexible Ordering</Badge>
-                <Badge variant="outline" className="text-xs">Individual Time Limits</Badge>
+                <Badge variant="outline" className="text-xs">Global Timer</Badge>
                 <Badge variant="outline" className="text-xs">Progress Tracking</Badge>
               </div>
             </div>
