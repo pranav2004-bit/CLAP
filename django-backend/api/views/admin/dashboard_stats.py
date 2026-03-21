@@ -48,6 +48,7 @@ from api.utils.auth import require_admin as _require_admin
 # ---------------------------------------------------------------------------
 
 PERIOD_DAYS: dict[str, int] = {
+    'last24h': 1,   # today 00:00 → now (calendar day, not rolling 24 h)
     'week':    7,
     'month':  30,
     'quarter': 90,
@@ -242,6 +243,20 @@ def dashboard_stats(request):
     # ── DLQ — always global (pipeline health is not per-test) ──────────────
     dlq_unresolved = DeadLetterQueue.objects.filter(resolved=False).count()
 
+    # ── Submission status breakdown — ALL statuses (drives pipeline widget) ─
+    # Returned as a list so the frontend renders every status that actually
+    # exists in the DB — including SUPERSEDED_LLM_PROCESSING and any future
+    # statuses added to the pipeline — keeping the total always consistent.
+    status_breakdown = [
+        {'status': s['status'], 'count': s['count']}
+        for s in (
+            sub_qs
+            .values('status')
+            .annotate(count=Count('id'))
+            .order_by('status')
+        )
+    ]
+
     # ── Recent activity (last 10 audit events) ────────────────────────────
     recent_qs = AuditLog.objects.order_by('-created_at')
     if selected_test is not None:
@@ -280,10 +295,11 @@ def dashboard_stats(request):
             'complete':   sub_agg['complete']   or 0,
             'failed':     sub_agg['failed']     or 0,
         },
-        'avg_score':       avg_score,
-        'dlq_unresolved':  dlq_unresolved,
-        'recent_activity': recent_activity,
-        'generated_at':    timezone.now().isoformat(),
+        'avg_score':        avg_score,
+        'dlq_unresolved':   dlq_unresolved,
+        'status_breakdown': status_breakdown,
+        'recent_activity':  recent_activity,
+        'generated_at':     timezone.now().isoformat(),
     })
 
 
@@ -322,7 +338,13 @@ def analytics_stats(request):
             status=400,
         )
     period, days = period_result
-    start = timezone.now() - timedelta(days=days)
+    now = timezone.now()
+    if period == 'last24h':
+        # Calendar-day scope: today 00:00:00 UTC → now
+        # "today night 12 am to next day night 12 am"
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    else:
+        start = now - timedelta(days=days)
 
     # ── Base querysets — optionally scoped to a single test ────────────────
     sub_base   = AssessmentSubmission.objects

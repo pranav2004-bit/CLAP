@@ -43,7 +43,7 @@ const EXPORT_TIMEOUT_MS = 30_000
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-type Period = 'week' | 'month' | 'quarter'
+type Period = 'last24h' | 'week' | 'month' | 'quarter'
 
 interface ClapTestOption {
   id:      string
@@ -98,6 +98,14 @@ const STATUS_COLOR_MAP: Record<string, string> = {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+/** Human-readable label for each period value. */
+const PERIOD_LABELS: Record<Period, string> = {
+  last24h: 'Today',
+  week:    'Week',
+  month:   'Month',
+  quarter: 'Quarter',
+}
 
 function fmtDomain(domain: string): string {
   return DOMAIN_LABELS[domain] ?? (domain.charAt(0).toUpperCase() + domain.slice(1))
@@ -197,7 +205,7 @@ export default function AnalyticsDashboard() {
         const json = await res.json()
         const list: ClapTestOption[] = Array.isArray(json)
           ? json
-          : (json.tests ?? json.results ?? [])
+          : (json.clapTests ?? json.tests ?? json.results ?? [])
         if (!cancelled) setTests(list.filter((t: ClapTestOption) => Boolean(t.id)))
       } catch {
         // Non-fatal — degrades to "All Tests (Global)" only
@@ -406,7 +414,7 @@ export default function AnalyticsDashboard() {
 
           {/* Period */}
           <div className="flex rounded-lg border border-gray-200 bg-white overflow-hidden text-sm">
-            {(['week', 'month', 'quarter'] as Period[]).map(p => (
+            {(['last24h', 'week', 'month', 'quarter'] as Period[]).map(p => (
               <button
                 key={p}
                 onClick={() => setPeriod(p)}
@@ -416,7 +424,7 @@ export default function AnalyticsDashboard() {
                     : 'text-gray-600 hover:bg-gray-50'
                 }`}
               >
-                {p.charAt(0).toUpperCase() + p.slice(1)}
+                {PERIOD_LABELS[p]}
               </button>
             ))}
           </div>

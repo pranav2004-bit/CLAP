@@ -36,6 +36,8 @@ interface DashboardStats {
   students:    { total: number; active: number }
   assignments: { total: number; started: number; completed: number }
   submissions: { total: number; pending: number; processing: number; complete: number; failed: number }
+  /** All pipeline statuses with counts — drives the Pipeline widget accurately. */
+  status_breakdown: Array<{ status: string; count: number }>
   avg_score:   number | null
   dlq_unresolved: number
   recent_activity: Array<{
@@ -74,6 +76,29 @@ function eventColor(event: string): string {
   if (event.includes('retry') || event.includes('resend') || event.includes('retrigger'))
     return 'bg-amber-100 text-amber-700'
   return 'bg-gray-100 text-gray-600'
+}
+
+/** Maps every known pipeline status to a Tailwind bar colour. */
+const STATUS_BAR: Record<string, string> = {
+  COMPLETE:                   'bg-green-500',
+  PENDING:                    'bg-gray-400',
+  LLM_PROCESSING:             'bg-indigo-500',
+  LLM_COMPLETE:               'bg-violet-500',
+  RULES_COMPLETE:             'bg-blue-400',
+  REPORT_GENERATING:          'bg-amber-500',
+  REPORT_READY:               'bg-orange-400',
+  EMAIL_SENDING:              'bg-cyan-500',
+  LLM_FAILED:                 'bg-red-500',
+  SUPERSEDED_LLM_PROCESSING:  'bg-gray-300',
+}
+
+function statusBarClass(s: string): string {
+  return STATUS_BAR[s] ?? 'bg-gray-300'
+}
+
+function statusLabel(s: string): string {
+  // e.g. "SUPERSEDED_LLM_PROCESSING" → "Superseded Llm Processing"
+  return s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
 }
 
 function dlqSeverity(count: number): { cls: string; label: string } {
@@ -178,7 +203,7 @@ export default function AdminDashboardPage() {
         const json = await res.json()
         const list: ClapTestOption[] = Array.isArray(json)
           ? json
-          : (json.tests ?? json.results ?? [])
+          : (json.clapTests ?? json.tests ?? json.results ?? [])
         if (!cancelled) setTests(list.filter((t: ClapTestOption) => Boolean(t.id)))
       } catch {
         // Non-fatal — selector degrades to "All Tests (Global)" only
@@ -470,22 +495,21 @@ export default function AdminDashboardPage() {
                 <Activity className="w-4 h-4 text-indigo-500" />
                 Submission Pipeline
               </h3>
+              {/* Rendered from status_breakdown — every status in the DB is shown,
+                  total always equals sum of all bars, zero discrepancy. */}
               <div className="space-y-2">
-                {[
-                  { label: 'Pending',    count: stats.submissions.pending,    cls: 'bg-gray-400' },
-                  { label: 'Processing', count: stats.submissions.processing,  cls: 'bg-indigo-500' },
-                  { label: 'Complete',   count: stats.submissions.complete,    cls: 'bg-green-500' },
-                  { label: 'Failed',     count: stats.submissions.failed,      cls: 'bg-red-500' },
-                ].map(row => {
+                {(stats.status_breakdown ?? []).map(row => {
                   const pct = stats.submissions.total > 0
                     ? Math.round((row.count / stats.submissions.total) * 100)
                     : 0
                   return (
-                    <div key={row.label} className="flex items-center gap-3">
-                      <span className="text-xs text-gray-500 w-20 shrink-0">{row.label}</span>
+                    <div key={row.status} className="flex items-center gap-3">
+                      <span className="text-xs text-gray-500 w-36 shrink-0 truncate" title={statusLabel(row.status)}>
+                        {statusLabel(row.status)}
+                      </span>
                       <div className="flex-1 bg-gray-100 rounded-full h-2">
                         <div
-                          className={`${row.cls} h-2 rounded-full transition-all duration-500`}
+                          className={`${statusBarClass(row.status)} h-2 rounded-full transition-all duration-500`}
                           style={{ width: `${pct}%` }}
                         />
                       </div>
