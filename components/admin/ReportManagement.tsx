@@ -19,34 +19,82 @@ import {
   ChevronRight,
   Save,
   Eye,
+  ChevronDown,
+  Globe,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
+// ── Constants ────────────────────────────────────────────────────────────────
+
+const REFRESH_MS       = 60_000   // auto-refresh reports every 60 s
+const TESTS_REFRESH_MS = 60_000   // refresh test-scope dropdown every 60 s
+
 // ── Types ──────────────────────────────────────────────────────────────────
 
+interface ClapTestOption {
+  id:      string
+  test_id: string | null
+  name:    string
+}
+
 interface ReportRow {
-  submission_id: string
-  student_name: string
-  student_email: string
-  assessment_name: string | null
-  report_url: string | null
+  submission_id:       string
+  student_id:          string
+  student_name:        string
+  student_email:       string
+  assessment_id:       string | null
+  assessment_name:     string | null
+  report_url:          string | null
   report_download_url: string | null
-  status: string
-  generated_at: string | null
+  status:              string
+  generated_at:        string | null
 }
 
 interface Pagination {
-  page: number
-  page_size: number
+  page:        number
+  page_size:   number
   total_count: number
   total_pages: number
 }
 
 interface TemplateConfig {
-  institution_name: string
-  institution_tagline: string
-  show_logo: boolean
-  layout: 'default' | 'compact'
+  institution_name:     string
+  institution_tagline:  string
+  show_logo:            boolean
+  layout:               'default' | 'compact'
+}
+
+// ── TestScopeSelector ─────────────────────────────────────────────────────
+
+interface TestScopeSelectorProps {
+  tests:          ClapTestOption[]
+  selectedTestId: string
+  onChange:       (id: string) => void
+}
+
+function TestScopeSelector({ tests, selectedTestId, onChange }: TestScopeSelectorProps) {
+  const selected = tests.find((t) => t.id === selectedTestId)
+  const label    = selected ? (selected.test_id ?? selected.name) : 'All Tests (Global)'
+
+  return (
+    <div className="relative inline-flex items-center">
+      <Globe className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
+      <select
+        value={selectedTestId}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-8 pl-8 pr-7 text-xs border border-gray-200 rounded-md bg-white text-gray-700 font-medium appearance-none focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 cursor-pointer"
+        aria-label="Select CLAP test scope"
+      >
+        <option value="">All Tests (Global)</option>
+        {tests.map((t) => (
+          <option key={t.id} value={t.id}>
+            {t.test_id ? `${t.test_id} — ${t.name}` : t.name}
+          </option>
+        ))}
+      </select>
+      <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400 pointer-events-none" />
+    </div>
+  )
 }
 
 // ── Component ──────────────────────────────────────────────────────────────
@@ -59,6 +107,14 @@ export function ReportManagement() {
   const [searchInput, setSearchInput] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null)
+
+  // Test scope
+  const [tests, setTests]               = useState<ClapTestOption[]>([])
+  const [selectedTestId, setSelectedTestId] = useState<string>('')
+
+  // AbortController refs
+  const abortRef      = useRef<AbortController | null>(null)
+  const testsAbortRef = useRef<AbortController | null>(null)
 
   // Template modal
   const [showTemplateModal, setShowTemplateModal]   = useState(false)
@@ -80,15 +136,64 @@ export function ReportManagement() {
     return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current) }
   }, [searchInput])
 
-  // ── Fetch reports (server-side search + pagination) ──────────────────────
+  // ── Fetch CLAP test list (periodic) ──────────────────────────────────────
+
+  const fetchTests = useCallback(async () => {
+    testsAbortRef.current?.abort()
+    const ctrl = new AbortController()
+    testsAbortRef.current = ctrl
+
+    try {
+      const res = await fetch(getApiUrl('admin/clap-tests'), {
+        headers: getAuthHeaders(),
+        signal: ctrl.signal,
+      })
+      if (!res.ok || ctrl.signal.aborted) return
+      const data = await res.json()
+      const incoming: ClapTestOption[] = (data.clapTests ?? []).map((t: any) => ({
+        id:      t.id,
+        test_id: t.test_id ?? null,
+        name:    t.name,
+      }))
+      setTests((prev) => {
+        if (
+          prev.length === incoming.length &&
+          prev.every((p, i) => p.id === incoming[i].id && p.name === incoming[i].name)
+        ) return prev
+        return incoming
+      })
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') console.error('[ReportManagement] test-list fetch failed:', err)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchTests()
+    const id = setInterval(fetchTests, TESTS_REFRESH_MS)
+    return () => {
+      clearInterval(id)
+      testsAbortRef.current?.abort()
+    }
+  }, [fetchTests])
+
+  // ── Fetch reports (server-side search + pagination + test scope) ─────────
 
   const fetchReports = useCallback(async () => {
+    abortRef.current?.abort()
+    const ctrl = new AbortController()
+    abortRef.current = ctrl
+
     setLoading(true)
     try {
       const params = new URLSearchParams({ page: String(page), page_size: '30' })
-      if (searchQuery.trim()) params.set('search', searchQuery.trim())
+      if (searchQuery.trim())  params.set('search',        searchQuery.trim())
+      if (selectedTestId)      params.set('assessment_id', selectedTestId)
 
-      const res = await fetch(getApiUrl(`admin/reports?${params}`), { headers: getAuthHeaders() })
+      const res = await fetch(getApiUrl(`admin/reports?${params}`), {
+        headers: getAuthHeaders(),
+        signal:  ctrl.signal,
+      })
+      if (ctrl.signal.aborted) return
       if (!res.ok) {
         if (res.status !== 401) toast.error('Failed to load reports')
         return
@@ -96,14 +201,30 @@ export function ReportManagement() {
       const data = await res.json()
       setReports(data.reports ?? [])
       if (data.pagination) setPagination(data.pagination)
-    } catch {
-      toast.error('Network error loading reports')
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') toast.error('Network error loading reports')
     } finally {
-      setLoading(false)
+      if (!ctrl.signal.aborted) setLoading(false)
     }
-  }, [page, searchQuery])
+  }, [page, searchQuery, selectedTestId])
 
+  // Trigger fetch when deps change
   useEffect(() => { fetchReports() }, [fetchReports])
+
+  // Auto-refresh every 60 s
+  useEffect(() => {
+    const id = setInterval(fetchReports, REFRESH_MS)
+    return () => {
+      clearInterval(id)
+      abortRef.current?.abort()
+    }
+  }, [fetchReports])
+
+  // Reset to page 1 when scope or search changes
+  const handleTestChange = (id: string) => {
+    setPage(1)
+    setSelectedTestId(id)
+  }
 
   // ── Regenerate report ────────────────────────────────────────────────────
 
@@ -134,7 +255,6 @@ export function ReportManagement() {
     setTemplateLoading(true)
     setPreviewHtml(null)
     try {
-      // Auth header is required — backend enforces admin auth on this endpoint
       const res = await fetch(getApiUrl('admin/reports/template-config'), { headers: getAuthHeaders() })
       if (res.ok) {
         const data = await res.json()
@@ -202,17 +322,32 @@ export function ReportManagement() {
     fetchTemplateConfig()
   }
 
+  // ── Scope label ──────────────────────────────────────────────────────────
+
+  const scopeLabel = (() => {
+    if (!selectedTestId) return 'all CLAP tests'
+    const t = tests.find((x) => x.id === selectedTestId)
+    return t ? (t.test_id ? `${t.test_id} — ${t.name}` : t.name) : 'selected test'
+  })()
+
   // ── Render ───────────────────────────────────────────────────────────────
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="text-xl font-bold text-gray-900">Report Management</h2>
-          <p className="text-sm text-gray-500 mt-1">View, regenerate, and download assessment reports</p>
+          <p className="text-sm text-gray-500 mt-1">
+            View, regenerate, and download assessment reports · auto-refreshes every 60 s
+          </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <TestScopeSelector
+            tests={tests}
+            selectedTestId={selectedTestId}
+            onChange={handleTestChange}
+          />
           <Button variant="outline" size="sm" onClick={openTemplateModal}>
             <Settings className="w-4 h-4 mr-2" />
             Template
@@ -229,19 +364,39 @@ export function ReportManagement() {
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
         <Input
           type="text"
-          placeholder="Search by student name, email, or ID…"
+          placeholder="Search by student ID or email address…"
           value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
+          onChange={(e) => {
+            setPage(1)
+            setSearchInput(e.target.value)
+          }}
           className="pl-9"
         />
       </div>
+
+      {/* Scope info badge */}
+      {selectedTestId && (
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-500">Showing reports for</span>
+          <span className="inline-flex items-center gap-1 text-xs font-medium bg-indigo-50 text-indigo-700 px-2.5 py-0.5 rounded-full border border-indigo-100">
+            {scopeLabel}
+            <button
+              onClick={() => handleTestChange('')}
+              className="ml-1 text-indigo-400 hover:text-indigo-600"
+              aria-label="Clear test filter"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </span>
+        </div>
+      )}
 
       {/* Reports List */}
       <Card className="border border-gray-200">
         <CardHeader className="pb-3">
           <CardTitle className="text-sm font-medium flex items-center gap-2">
             <FileText className="w-4 h-4" />
-            Reports ({pagination.total_count})
+            Reports ({loading ? '…' : pagination.total_count.toLocaleString()})
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
@@ -252,7 +407,11 @@ export function ReportManagement() {
             </div>
           ) : reports.length === 0 ? (
             <p className="text-sm text-gray-500 text-center py-10">
-              {searchQuery ? `No reports found for "${searchQuery}"` : 'No reports found'}
+              {searchQuery
+                ? `No reports found for "${searchQuery}"`
+                : selectedTestId
+                  ? `No reports found for ${scopeLabel}`
+                  : 'No reports found'}
             </p>
           ) : (
             <div className="divide-y divide-gray-100">
@@ -262,15 +421,33 @@ export function ReportManagement() {
                   className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors"
                 >
                   <div className="flex-1 min-w-0 mr-3">
+                    {/* Row 1: submission ID + status */}
                     <div className="flex items-center gap-2 flex-wrap">
-                      <code className="text-xs text-gray-400 font-mono">{report.submission_id.slice(0, 8)}…</code>
-                      <Badge className={report.report_url ? 'bg-green-100 text-green-800 text-xs' : 'bg-amber-100 text-amber-800 text-xs'}>
+                      <code className="text-xs text-gray-400 font-mono">
+                        {report.submission_id.slice(0, 8)}…
+                      </code>
+                      <Badge
+                        className={
+                          report.report_url
+                            ? 'bg-green-100 text-green-800 text-xs'
+                            : 'bg-amber-100 text-amber-800 text-xs'
+                        }
+                      >
                         {report.report_url ? 'Generated' : 'Pending'}
                       </Badge>
                     </div>
+                    {/* Row 2: student name */}
                     <p className="text-sm text-gray-800 mt-0.5 truncate font-medium">
                       {report.student_name || report.student_email || 'Unknown'}
                     </p>
+                    {/* Row 3: email + student ID */}
+                    <p className="text-xs text-gray-500 truncate">
+                      {report.student_email ?? ''}
+                      {report.student_id && (
+                        <> &middot; <code className="font-mono text-gray-400">{report.student_id.slice(0, 8)}…</code></>
+                      )}
+                    </p>
+                    {/* Row 4: assessment + generated_at */}
                     <p className="text-xs text-gray-400 truncate">
                       {report.assessment_name || 'Assessment'}
                       {report.generated_at && (
@@ -279,17 +456,40 @@ export function ReportManagement() {
                     </p>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
+                    {/* Preview — opens report in browser tab */}
                     {report.report_download_url && (
                       <Button
                         size="sm"
                         variant="ghost"
                         onClick={() => window.open(report.report_download_url!, '_blank', 'noopener,noreferrer')}
                         className="h-8 w-8 p-0"
+                        title="Preview Report"
+                      >
+                        <Eye className="w-4 h-4 text-gray-500" />
+                      </Button>
+                    )}
+                    {/* Download */}
+                    {report.report_download_url && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          const a = document.createElement('a')
+                          a.href   = report.report_download_url!
+                          a.target = '_blank'
+                          a.rel    = 'noopener noreferrer'
+                          a.download = `report_${report.submission_id.slice(0, 8)}.pdf`
+                          document.body.appendChild(a)
+                          a.click()
+                          document.body.removeChild(a)
+                        }}
+                        className="h-8 w-8 p-0"
                         title="Download PDF Report"
                       >
                         <Download className="w-4 h-4 text-gray-500" />
                       </Button>
                     )}
+                    {/* Regenerate */}
                     <Button
                       size="sm"
                       variant="ghost"
@@ -313,7 +513,9 @@ export function ReportManagement() {
           {pagination.total_pages > 1 && (
             <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-sm text-gray-500">
               <span>
-                {loading ? 'Loading…' : `Showing ${reports.length} of ${pagination.total_count} reports`}
+                {loading
+                  ? 'Loading…'
+                  : `Showing ${reports.length} of ${pagination.total_count.toLocaleString()} reports`}
               </span>
               <div className="flex items-center gap-2">
                 <Button
@@ -437,7 +639,8 @@ export function ReportManagement() {
                 </>
               ) : (
                 <p className="text-sm text-gray-500 text-center py-6">
-                  Failed to load template configuration. <button className="text-indigo-600 underline" onClick={fetchTemplateConfig}>Retry</button>
+                  Failed to load template configuration.{' '}
+                  <button className="text-indigo-600 underline" onClick={fetchTemplateConfig}>Retry</button>
                 </p>
               )}
 

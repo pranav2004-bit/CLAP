@@ -2,6 +2,7 @@ import csv
 import io
 import json
 import os
+import uuid as _uuid_mod
 import zipfile
 from urllib.parse import urlparse
 
@@ -350,15 +351,17 @@ def report_list(request):
     if assessment_id:
         qs = qs.filter(assessment_id=assessment_id)
 
-    # Server-side search: matches student email, full name, or username
+    # Server-side search: email (partial) or student UUID (exact).
+    # Intentionally limited to these two fields — name/username excluded per spec.
     from django.db.models import Q as _Q
     search = (request.GET.get('search') or '').strip()
     if search:
-        qs = qs.filter(
-            _Q(user__email__icontains=search)
-            | _Q(user__full_name__icontains=search)
-            | _Q(user__username__icontains=search)
-        )
+        try:
+            uid = _uuid_mod.UUID(search)
+            qs = qs.filter(_Q(user__email__icontains=search) | _Q(user_id=uid))
+        except ValueError:
+            # Not a valid UUID — search by email fragment only
+            qs = qs.filter(user__email__icontains=search)
 
     # Pagination — hard-capped at 30 records per page
     try:
