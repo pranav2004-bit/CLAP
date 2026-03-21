@@ -35,8 +35,11 @@ import { toast } from 'sonner'
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-/** Auto-refresh interval for analytics (less frequent than dashboard). */
+/** Auto-refresh interval for analytics data (ms). */
 const REFRESH_MS = 60_000
+
+/** How often to re-fetch the test list so new tests appear in the dropdown (ms). */
+const TESTS_REFRESH_MS = 60_000
 
 /** Maximum wait for a CSV export response before aborting (ms). */
 const EXPORT_TIMEOUT_MS = 30_000
@@ -190,35 +193,63 @@ export default function AnalyticsDashboard() {
   /** Interval ref — allows resetting the 60 s countdown after manual refresh. */
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // ── Fetch test list once on mount ─────────────────────────────────────
-  useEffect(() => {
-    let cancelled = false
+  /**
+   * Separate abort ref for tests-list polling — independent from analytics
+   * abort so they never cancel each other.
+   */
+  const testsAbortRef = useRef<AbortController | null>(null)
+
+  // ── Fetch + periodically refresh test list ────────────────────────────
+  /**
+   * Fetches the list of CLAP tests for the scope dropdown.
+   * Re-runs every TESTS_REFRESH_MS so tests created after page load
+   * appear automatically — zero manual refresh required.
+   */
+  const fetchTests = useCallback(async () => {
+    testsAbortRef.current?.abort()
     const ctrl = new AbortController()
+    testsAbortRef.current = ctrl
 
-    ;(async () => {
-      try {
-        const res = await fetch(getApiUrl('admin/clap-tests'), {
-          headers: getAuthHeaders(),
-          signal:  ctrl.signal,
-        })
-        if (!res.ok || cancelled) return
-        const json = await res.json()
-        const list: ClapTestOption[] = Array.isArray(json)
-          ? json
-          : (json.clapTests ?? json.tests ?? json.results ?? [])
-        if (!cancelled) setTests(list.filter((t: ClapTestOption) => Boolean(t.id)))
-      } catch {
-        // Non-fatal — degrades to "All Tests (Global)" only
-      } finally {
-        if (!cancelled) setTestsLoading(false)
+    try {
+      const res = await fetch(getApiUrl('admin/clap-tests'), {
+        headers: getAuthHeaders(),
+        signal:  ctrl.signal,
+      })
+      if (ctrl.signal.aborted) return
+      if (!res.ok) {
+        console.error('[Analytics] Tests list fetch failed:', res.status, res.statusText)
+        return
       }
-    })()
-
-    return () => {
-      cancelled = true
-      ctrl.abort()
+      const json = await res.json()
+      const raw: ClapTestOption[] = Array.isArray(json)
+        ? json
+        : (json.clapTests ?? json.tests ?? json.results ?? [])
+      const list = raw.filter((t: ClapTestOption) => Boolean(t.id))
+      if (ctrl.signal.aborted) return
+      // Stable update — skip re-render if list content is unchanged
+      setTests(prev => {
+        if (
+          prev.length === list.length &&
+          prev.every((t, i) => t.id === list[i].id && t.name === list[i].name)
+        ) return prev
+        return list
+      })
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') return
+      console.error('[Analytics] Tests list fetch error:', err)
+    } finally {
+      if (!ctrl.signal.aborted) setTestsLoading(false)
     }
   }, [])
+
+  useEffect(() => {
+    fetchTests()
+    const id = setInterval(fetchTests, TESTS_REFRESH_MS)
+    return () => {
+      clearInterval(id)
+      testsAbortRef.current?.abort()
+    }
+  }, [fetchTests])
 
   // ── Core fetch ────────────────────────────────────────────────────────
   const doFetch = useCallback(async () => {

@@ -20,8 +20,11 @@ import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-/** Auto-refresh interval in milliseconds. */
-const REFRESH_MS = 30_000
+/** Auto-refresh interval for dashboard stats (ms). */
+const REFRESH_MS = 60_000
+
+/** How often to re-fetch the test list so new tests appear in the dropdown (ms). */
+const TESTS_REFRESH_MS = 60_000
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -174,49 +177,78 @@ export default function AdminDashboardPage() {
 
   /**
    * Abort ref — always holds the AbortController for the most-recent in-flight
-   * request. Cancels automatically when:
-   *   • selectedTestId changes  (fetchStats is recreated → useEffect re-runs)
+   * stats request. Cancels automatically when:
+   *   • selectedTestId changes  (doFetch is recreated → useEffect re-runs)
    *   • component unmounts      (useEffect cleanup)
-   *   • manual refresh fires    (handleRefresh calls doFetch which aborts first)
+   *   • manual refresh fires    (handleRefresh aborts previous then fetches)
    * Prevents stale responses from overwriting newer data.
    */
   const abortRef = useRef<AbortController | null>(null)
 
   /**
-   * Timer ref — owns the setInterval handle so we can reset the 30-second
+   * Timer ref — owns the setInterval handle so we can reset the 60-second
    * countdown after a manual refresh (avoids near-immediate double-fetch).
    */
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // ── Fetch available tests once on mount ───────────────────────────────
-  useEffect(() => {
-    let cancelled = false
+  /**
+   * Separate abort ref for the tests-list polling — independent lifecycle
+   * from the stats polling so they never cancel each other.
+   */
+  const testsAbortRef = useRef<AbortController | null>(null)
+
+  // ── Fetch + periodically refresh test list ────────────────────────────
+  /**
+   * Fetches the list of CLAP tests for the scope dropdown.
+   * Called on mount and every TESTS_REFRESH_MS so new tests appear
+   * automatically without a page reload.
+   * Uses its own AbortController so it never races with stats fetches.
+   */
+  const fetchTests = useCallback(async () => {
+    testsAbortRef.current?.abort()
     const ctrl = new AbortController()
+    testsAbortRef.current = ctrl
 
-    ;(async () => {
-      try {
-        const res = await fetch(getApiUrl('admin/clap-tests'), {
-          headers: getAuthHeaders(),
-          signal:  ctrl.signal,
-        })
-        if (!res.ok || cancelled) return
-        const json = await res.json()
-        const list: ClapTestOption[] = Array.isArray(json)
-          ? json
-          : (json.clapTests ?? json.tests ?? json.results ?? [])
-        if (!cancelled) setTests(list.filter((t: ClapTestOption) => Boolean(t.id)))
-      } catch {
-        // Non-fatal — selector degrades to "All Tests (Global)" only
-      } finally {
-        if (!cancelled) setTestsLoading(false)
+    try {
+      const res = await fetch(getApiUrl('admin/clap-tests'), {
+        headers: getAuthHeaders(),
+        signal:  ctrl.signal,
+      })
+      if (ctrl.signal.aborted) return
+      if (!res.ok) {
+        console.error('[Dashboard] Tests list fetch failed:', res.status, res.statusText)
+        return
       }
-    })()
-
-    return () => {
-      cancelled = true
-      ctrl.abort()
+      const json = await res.json()
+      const raw: ClapTestOption[] = Array.isArray(json)
+        ? json
+        : (json.clapTests ?? json.tests ?? json.results ?? [])
+      const list = raw.filter((t: ClapTestOption) => Boolean(t.id))
+      if (ctrl.signal.aborted) return
+      // Stable update — skip re-render if list is identical
+      setTests(prev => {
+        if (
+          prev.length === list.length &&
+          prev.every((t, i) => t.id === list[i].id && t.name === list[i].name)
+        ) return prev
+        return list
+      })
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') return
+      console.error('[Dashboard] Tests list fetch error:', err)
+    } finally {
+      if (!ctrl.signal.aborted) setTestsLoading(false)
     }
   }, [])
+
+  useEffect(() => {
+    fetchTests()
+    const id = setInterval(fetchTests, TESTS_REFRESH_MS)
+    return () => {
+      clearInterval(id)
+      testsAbortRef.current?.abort()
+    }
+  }, [fetchTests])
 
   // ── Core fetch function ───────────────────────────────────────────────
   /**
@@ -316,7 +348,16 @@ export default function AdminDashboardPage() {
   }, [])
 
   // ── Derived values ───────────────────────────────────────────────────────
-  const dlq = stats ? dlqSeverity(stats.dlq_unresolved) : null
+  //
+  // Pipeline Alerts accuracy:
+  //   • Global scope  → DLQ unresolved count (system-wide dead-letter queue)
+  //   • Per-test scope → LLM_FAILED submissions for that test
+  //     (already in the scoped status_breakdown — zero extra queries)
+  //
+  const alertCount = stats
+    ? (selectedTestId ? stats.submissions.failed : stats.dlq_unresolved)
+    : 0
+  const dlq = stats ? dlqSeverity(alertCount) : null
   const completionPct = stats && stats.submissions.total > 0
     ? Math.round((stats.submissions.complete / stats.submissions.total) * 100)
     : 0
@@ -337,7 +378,7 @@ export default function AdminDashboardPage() {
           <h1 className="text-xl font-bold text-gray-900">System Overview</h1>
           <p className="text-sm text-gray-500 mt-0.5">
             {stats
-              ? `${scopeLabel} · Last updated ${staleSec}s ago · auto-refreshes every 30 s`
+              ? `${scopeLabel} · Last updated ${staleSec}s ago · auto-refreshes every 60 s`
               : 'Loading real-time data…'}
           </p>
         </div>
@@ -465,16 +506,18 @@ export default function AdminDashboardPage() {
             </CardContent>
           </Card>
 
-          {/* Pipeline Alerts */}
+          {/* Pipeline Alerts — DLQ when global; LLM_FAILED count when per-test */}
           <Card className={`border shadow-sm hover:shadow-md transition-shadow ${dlq?.cls}`}>
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium">Pipeline Alerts</p>
-                  <p className="text-3xl font-bold mt-1">{stats.dlq_unresolved}</p>
+                  <p className="text-sm font-medium">
+                    {selectedTestId ? 'Failed Submissions' : 'Pipeline Alerts'}
+                  </p>
+                  <p className="text-3xl font-bold mt-1">{alertCount}</p>
                 </div>
                 <div className="w-12 h-12 rounded-xl bg-white/60 flex items-center justify-center shrink-0">
-                  {stats.dlq_unresolved === 0
+                  {alertCount === 0
                     ? <Zap className="w-6 h-6 text-green-600" />
                     : <AlertTriangle className="w-6 h-6 text-red-500" />}
                 </div>
@@ -496,29 +539,43 @@ export default function AdminDashboardPage() {
                 Submission Pipeline
               </h3>
               {/* Rendered from status_breakdown — every status in the DB is shown,
-                  total always equals sum of all bars, zero discrepancy. */}
-              <div className="space-y-2">
-                {(stats.status_breakdown ?? []).map(row => {
-                  const pct = stats.submissions.total > 0
-                    ? Math.round((row.count / stats.submissions.total) * 100)
-                    : 0
-                  return (
-                    <div key={row.status} className="flex items-center gap-3">
-                      <span className="text-xs text-gray-500 w-36 shrink-0 truncate" title={statusLabel(row.status)}>
-                        {statusLabel(row.status)}
-                      </span>
-                      <div className="flex-1 bg-gray-100 rounded-full h-2">
-                        <div
-                          className={`${statusBarClass(row.status)} h-2 rounded-full transition-all duration-500`}
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
-                      <span className="text-xs font-medium text-gray-700 w-8 text-right shrink-0">{row.count}</span>
-                    </div>
-                  )
-                })}
-                <p className="text-xs text-gray-400 mt-2 text-right">{stats.submissions.total} total</p>
-              </div>
+                  total always equals sum of all bars, zero discrepancy.
+                  Empty state shown when no submissions exist for the selected scope. */}
+              {(stats.status_breakdown ?? []).length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-8 text-center">
+                  <Activity className="w-8 h-8 text-gray-200 mb-2" />
+                  <p className="text-sm text-gray-400">
+                    {selectedTestId
+                      ? 'No submissions for this test yet'
+                      : 'No submissions in the system yet'}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {(stats.status_breakdown ?? [])
+                    .sort((a, b) => b.count - a.count)
+                    .map(row => {
+                      const pct = stats.submissions.total > 0
+                        ? Math.round((row.count / stats.submissions.total) * 100)
+                        : 0
+                      return (
+                        <div key={row.status} className="flex items-center gap-3">
+                          <span className="text-xs text-gray-500 w-36 shrink-0 truncate" title={statusLabel(row.status)}>
+                            {statusLabel(row.status)}
+                          </span>
+                          <div className="flex-1 bg-gray-100 rounded-full h-2">
+                            <div
+                              className={`${statusBarClass(row.status)} h-2 rounded-full transition-all duration-500`}
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                          <span className="text-xs font-medium text-gray-700 w-8 text-right shrink-0">{row.count}</span>
+                        </div>
+                      )
+                  })}
+                  <p className="text-xs text-gray-400 mt-2 text-right">{stats.submissions.total} total</p>
+                </div>
+              )}
             </CardContent>
           </Card>
 
