@@ -1,0 +1,42 @@
+name: Deploy to AWS EC2
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Deploy Backend to EC2
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          timeout: 300s
+          script: |
+            set -e
+            cd /home/ubuntu/CLAP
+
+            echo "==> Pulling latest code..."
+            git pull origin main
+
+            echo "==> Rebuilding Django image..."
+            docker compose build django
+
+            echo "==> Restarting services..."
+            docker compose up -d --force-recreate django celery-llm celery-reports celery-scoring celery-beat
+
+            echo "==> Waiting for Django to become healthy..."
+            timeout 60 bash -c 'until [ "$(docker inspect --format="{{.State.Health.Status}}" clap-django-1 2>/dev/null)" = "healthy" ]; do sleep 3; done'
+
+            echo "==> Running migrations..."
+            docker compose exec -T django python manage.py migrate --no-input
+
+            echo "==> Pruning old images..."
+            docker image prune -f
+
+            echo "==> Deploy complete."
