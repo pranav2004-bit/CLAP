@@ -55,13 +55,12 @@ const nextConfig = {
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: blob: https:",
               "font-src 'self'",
-              // 'self' for same-origin API calls; http://localhost:8000 for local dev;
-              // https: to allow production backend on any HTTPS domain
-              "connect-src 'self' http://localhost:8000 https:",
+              // 'self' for same-origin API calls; localhost for local dev;
+              // NEXT_PUBLIC_API_URL covers the production backend (HTTP or HTTPS);
+              // https: covers S3 presigned URLs and any other HTTPS origins
+              `connect-src 'self' http://localhost:8000 ${process.env.NEXT_PUBLIC_API_URL || ''} https:`,
               // blob: required for audio playback (MediaRecorder output)
-              // http://localhost:8000 — local dev Django audio endpoint
-              // https: — production backend audio / S3 presigned URLs
-              "media-src 'self' blob: http://localhost:8000 https:",
+              `media-src 'self' blob: http://localhost:8000 ${process.env.NEXT_PUBLIC_API_URL || ''} https:`,
               "frame-ancestors 'none'",
               "base-uri 'self'",
               "form-action 'self'",
