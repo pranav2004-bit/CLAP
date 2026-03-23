@@ -41,7 +41,7 @@ services:
   # TLS (HTTPS): add a port 443 server block + Certbot/ACM in production.
   # Scale: nginx:1.25-alpine handles 10 000+ concurrent connections on one core.
   nginx:
-    image: nginx:1.25-alpine
+    image: nginx:alpine
     restart: unless-stopped
     ports:
       - "80:80"
