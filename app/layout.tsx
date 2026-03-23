@@ -65,8 +65,8 @@ export default function RootLayout({
             </div>
 
             <div className="hidden md:flex flex-1 justify-end items-center gap-1.5 opacity-80">
-              <span className="italic font-light text-foreground/90">Co-Powered by</span>
-              <span className="font-semibold text-primary tracking-wide">Aura-Tech-Vision</span>
+              <span className="italic font-light text-foreground opacity-70">Co-Powered by</span>
+              <span className="font-black text-primary tracking-wide">Aura-Tech-Vision</span>
             </div>
           </div>
         </footer>
