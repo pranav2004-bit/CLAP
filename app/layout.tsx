@@ -59,9 +59,9 @@ export default function RootLayout({
             <div className="hidden md:block flex-1"></div> {/* Left spacer for desktop symmetry */}
 
             <div className="flex justify-center items-baseline gap-2 flex-none md:flex-1 w-full md:w-auto">
-              <span className="uppercase tracking-[0.15em] font-medium opacity-70 text-[9px] md:text-[10px]">A</span>
+              <span className="uppercase tracking-[0.15em] font-medium text-foreground opacity-70 text-[9px] md:text-[10px]">A</span>
               <span className="font-black text-primary tracking-[0.2em] text-[11px] md:text-[13px] uppercase antialiased">SANJIVO</span>
-              <span className="tracking-[0.15em] font-medium opacity-70 text-[9px] md:text-[10px]">Product</span>
+              <span className="tracking-[0.15em] font-medium text-foreground opacity-70 text-[9px] md:text-[10px]">Product</span>
             </div>
 
             <div className="hidden md:flex flex-1 justify-end items-center gap-1.5 opacity-80">
