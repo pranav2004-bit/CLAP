@@ -3,14 +3,14 @@ Admin Audio Upload Views
 Handles file uploads for audio_block items.
 
 Storage routing (controlled by STORAGE_PROVIDER env var):
-  'aws' / 'supabase' -> file uploaded to S3 via api.utils.storage
-  ''                 -> file saved to local MEDIA_ROOT (dev only)
+  'aws' -> file uploaded to AWS S3 via api.utils.storage
+  ''    -> file saved to local MEDIA_ROOT (dev only)
 """
 
 import os
 from datetime import datetime
 from django.conf import settings
-from django.http import JsonResponse, FileResponse, HttpResponseRedirect
+from django.http import JsonResponse, FileResponse, StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from api.models import ClapTestItem, ClapSetItem, AdminAudioFile
@@ -29,7 +29,7 @@ def upload_audio_file(request, item_id):
     Upload audio file for audio_block item.
     POST /api/admin/clap-items/{item_id}/upload-audio
 
-    Supports both S3 (aws/supabase) and local filesystem storage.
+    Supports AWS S3 and local filesystem storage.
     Storage backend is selected by STORAGE_PROVIDER in settings.
     """
     # Authentication
@@ -134,18 +134,20 @@ def _process_audio_upload(request, item, is_set_item, user):
 
     # ── Build the object key / relative path ─────────────────────
     now = datetime.now()
+    _item_id_str = str(item.id)   # item_id is available on the model; the calling
+                                   # functions don't pass the raw URL param here.
     object_key = os.path.join(
         'admin_audio',
         str(now.year),
         f"{now.month:02d}",
-        f"{item_id}_{now.strftime('%Y%m%d_%H%M%S')}.{file_ext}",
+        f"{_item_id_str}_{now.strftime('%Y%m%d_%H%M%S')}.{file_ext}",
     ).replace('\\', '/')   # S3 keys must use forward slashes on all platforms
 
     # ── Try S3 upload first; fall back to local disk ──────────────
     storage_provider = getattr(settings, 'STORAGE_PROVIDER', '').lower()
     file_path = None
 
-    if storage_provider in ('aws', 'supabase'):
+    if storage_provider == 'aws':
         try:
             # Phase 2.2: admin listening audio is a shared asset — all students on
             # the same test hear the same file.  Mark it publicly CDN-cacheable for
@@ -156,8 +158,8 @@ def _process_audio_upload(request, item, is_set_item, user):
                 cache_control='public, max-age=86400, s-maxage=86400',
             )
         except RuntimeError as exc:
-            logger.error('Admin audio S3 upload failed for item %s: %s', item_id, exc)
-            return JsonResponse({'error': f'Storage error: {exc}'}, status=500)
+            logger.error('Admin audio S3 upload failed for item %s: %s', _item_id_str, exc, exc_info=True)
+            return JsonResponse({'error': 'Storage error. Please try again.'}, status=500)
 
     if file_path is None:
         # Local disk fallback (dev or S3 not configured)
@@ -171,8 +173,8 @@ def _process_audio_upload(request, item, is_set_item, user):
                 for chunk in audio_file.chunks():
                     dest.write(chunk)
         except Exception as exc:
-            logger.error('Admin audio local save failed for item %s: %s', item_id, exc)
-            return JsonResponse({'error': f'Failed to save file: {exc}'}, status=500)
+            logger.error('Admin audio local save failed for item %s: %s', _item_id_str, exc, exc_info=True)
+            return JsonResponse({'error': 'Failed to save file. Please try again.'}, status=500)
         # Store the relative path (consistent with existing local convention)
         file_path = object_key
 
@@ -221,8 +223,8 @@ def _process_audio_upload(request, item, is_set_item, user):
             full_path = os.path.join(settings.MEDIA_ROOT, file_path)
             if os.path.exists(full_path):
                 os.remove(full_path)
-        logger.error('Admin audio DB create failed for item %s: %s', item_id, exc)
-        return JsonResponse({'error': f'Database error: {exc}'}, status=500)
+        logger.error('Admin audio DB create failed for item %s: %s', _item_id_str, exc, exc_info=True)
+        return JsonResponse({'error': 'Database error saving audio record. Please try again.'}, status=500)
 
 
 @csrf_exempt
@@ -287,16 +289,24 @@ def _process_handle_audio(request, item, is_set_item):
             try:
                 without_scheme = admin_audio.file_path[len('s3://'):]
                 bucket, _, key = without_scheme.partition('/')
-                presigned_url = client.generate_presigned_url(
-                    ClientMethod='get_object',
-                    Params={'Bucket': bucket, 'Key': key},
-                    ExpiresIn=900,
+                # Stream through Django instead of redirecting to S3.
+                # A browser fetch() follows the 302 redirect to S3, but S3 presigned
+                # URLs are cross-origin and blocked by CORS unless the bucket has an
+                # explicit AllowedOrigins CORS rule for each frontend domain.
+                # Streaming through Django sidesteps S3 CORS entirely — the browser
+                # only ever talks to the Django origin it already trusts.
+                s3_obj = client.get_object(Bucket=bucket, Key=key)
+                content_type = admin_audio.mime_type or s3_obj.get('ContentType', 'audio/mpeg')
+                response = StreamingHttpResponse(
+                    s3_obj['Body'].iter_chunks(chunk_size=65536),
+                    content_type=content_type,
                 )
-                redirect = HttpResponseRedirect(presigned_url)
-                redirect['Cache-Control'] = 'no-store'
-                return redirect
+                response['Content-Disposition'] = 'inline'
+                response['Cache-Control'] = 'private, max-age=900'
+                return response
             except Exception as exc:
-                return JsonResponse({'error': f'Failed to generate audio URL: {exc}'}, status=500)
+                logger.error('Admin audio S3 fetch failed for item %s: %s', item.id, exc, exc_info=True)
+                return JsonResponse({'error': 'Failed to fetch audio from storage. Please try again.'}, status=500)
 
         # Local filesystem
         file_path = os.path.join(settings.MEDIA_ROOT, admin_audio.file_path)
@@ -313,7 +323,8 @@ def _process_handle_audio(request, item, is_set_item):
         except Exception as exc:
             if fh is not None:
                 fh.close()
-            return JsonResponse({'error': f'Failed to serve file: {exc}'}, status=500)
+            logger.error('Admin audio local serve failed for item %s: %s', item.id, exc, exc_info=True)
+            return JsonResponse({'error': 'Failed to serve audio file. Please try again.'}, status=500)
 
     elif request.method == "DELETE":
         # Delete physical file

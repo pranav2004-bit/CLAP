@@ -1,17 +1,19 @@
 import json
+import logging
 from datetime import timedelta
 
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.db.models import Q
 from django.http import JsonResponse
-from django.template.loader import render_to_string
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from api.models import AssessmentSubmission, AuditLog, DeadLetterQueue, User
 from api.utils.jwt_utils import get_user_from_request
+
+logger = logging.getLogger(__name__)
 
 
 def _require_admin(request):
@@ -171,17 +173,47 @@ def send_daily_summary(request):
     if not to_emails:
         return JsonResponse({'error': 'No active admin recipients found'}, status=400)
 
-    try:
-        html_body = render_to_string(
-            'emails/submission_ready.html',
-            {
-                'student_name': 'Admin Team',
-                'scores': [],
-                'report_url': '',
-            },
-        )
-    except Exception:
-        html_body = '<p>CLAP Daily Pipeline Summary</p>'
+    # Build admin summary HTML inline — the student submission_ready.html template
+    # is not appropriate here (wrong variables, wrong audience).
+    logo_url = getattr(settings, 'CLAP_LOGO_PUBLIC_URL', '')
+    alert_rows = ''.join(
+        f"<tr><td style='padding:6px 12px;color:{'#b91c1c' if a['type']=='error' else '#92400e'}'>"
+        f"[{a['tier']}] {a['title']}</td>"
+        f"<td style='padding:6px 12px;font-size:13px'>{a['message']}</td></tr>"
+        for a in alerts
+    ) or "<tr><td colspan='2' style='padding:8px 12px;color:#166534'>No alerts — all systems normal.</td></tr>"
+
+    html_body = f"""<!DOCTYPE html>
+<html><body style="font-family:Arial,sans-serif;max-width:680px;margin:0 auto;padding:24px">
+  {'<img src="' + logo_url + '" alt="CLAP" style="height:40px;margin-bottom:16px">' if logo_url else ''}
+  <h2 style="color:#1e3a5f">CLAP Daily Pipeline Summary</h2>
+  <p style="color:#374151">Window: last {summary['window_hours']} hours
+     &nbsp;|&nbsp; {summary['window_start'][:10]} → {summary['window_end'][:10]}</p>
+  <table width="100%" cellpadding="0" cellspacing="0"
+         style="border-collapse:collapse;margin-bottom:20px">
+    <tr style="background:#f3f4f6">
+      <th style="padding:8px 12px;text-align:left">Metric</th>
+      <th style="padding:8px 12px;text-align:left">Value</th>
+    </tr>
+    <tr><td style="padding:6px 12px">Total submissions</td>
+        <td style="padding:6px 12px">{summary['submissions']['total']}</td></tr>
+    <tr style="background:#f9fafb">
+        <td style="padding:6px 12px">Completed</td>
+        <td style="padding:6px 12px">{summary['submissions']['completed']}</td></tr>
+    <tr><td style="padding:6px 12px">Failed</td>
+        <td style="padding:6px 12px">{summary['submissions']['failed_like']}</td></tr>
+    <tr style="background:#f9fafb">
+        <td style="padding:6px 12px">Unresolved DLQ</td>
+        <td style="padding:6px 12px">{summary['dlq']['unresolved_count']}</td></tr>
+  </table>
+  <h3 style="color:#1e3a5f">Alerts ({len(alerts)})</h3>
+  <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
+    {alert_rows}
+  </table>
+  <p style="margin-top:32px;font-size:11px;color:#9ca3af">
+    Sent by CLAP &mdash; A <strong>SANJIVO</strong> Product
+  </p>
+</body></html>"""
 
     plain_lines = [
         f"CLAP Daily Pipeline Summary ({summary['window_hours']}h)",
@@ -206,7 +238,11 @@ def send_daily_summary(request):
         message.attach_alternative(html_body, 'text/html')
         message.send()
     except Exception as exc:
-        return JsonResponse({'error': f'Email delivery failed: {exc}'}, status=500)
+        logger.error(
+            'Daily summary email delivery failed | recipients=%s | %s',
+            to_emails, exc, exc_info=True,
+        )
+        return JsonResponse({'error': 'Email delivery failed. Check SMTP/Resend configuration.'}, status=500)
 
     try:
         sample_submission = AssessmentSubmission.objects.order_by('-created_at').first()
@@ -219,8 +255,9 @@ def send_daily_summary(request):
                 worker_id=f'admin:{admin_user.id}',
                 error_detail=f'recipients={len(to_emails)}; window_hours={window_hours}; alerts={len(alerts)}',
             )
-    except Exception:
-        pass  # audit log failure must not abort the response
+    except Exception as exc:
+        logger.warning('Audit log write failed after daily summary send: %s', exc, exc_info=True)
+        # Non-fatal — audit log failure must never abort the successful email response
 
     return JsonResponse(
         {

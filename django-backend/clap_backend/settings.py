@@ -39,6 +39,10 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
+    # Global DB error handler — converts OperationalError→503, IntegrityError→409,
+    # DatabaseError→500 into structured JSON before any other middleware runs.
+    # Must sit above CorsMiddleware so CORS headers are still added to error responses.
+    'api.middleware.db_error.DatabaseErrorMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     # A5/E1: IP-based rate limiting — placed early to reject abuse before view logic runs
     'api.middleware.rate_limit.ApiRateLimitMiddleware',
@@ -76,12 +80,12 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'clap_backend.wsgi.application'
 
-# Database - Using Supabase PostgreSQL
+# Database — AWS PostgreSQL
 # Same database as Next.js frontend
 DB_APP_USER = config('DB_APP_USER', default=config('DB_USER', default='postgres'))
 DB_APP_PASSWORD = config('DB_APP_PASSWORD', default=config('DB_PASSWORD', default=''))
 
-# Database - Using Supabase PostgreSQL
+# Database — AWS PostgreSQL
 # Same database as Next.js frontend
 # Least-privilege note:
 # - API deployments should run with DB_APP_USER/DB_APP_PASSWORD (no schema modification privileges).
@@ -446,11 +450,8 @@ REDIS_URL = config('REDIS_URL', default='redis://localhost:6379/2')
 # ── Media Storage Configuration ──────────────────────────────────────────────
 # STORAGE_PROVIDER controls where audio recordings and PDF reports are stored.
 # Options:
-#   'aws'      — Amazon S3 (set S3_BUCKET_NAME + S3_ACCESS_KEY_ID + S3_SECRET_ACCESS_KEY)
-#   'supabase' — Supabase Storage (S3-compatible; set SUPABASE_STORAGE_BUCKET +
-#                SUPABASE_STORAGE_ACCESS_KEY + SUPABASE_STORAGE_SECRET_KEY +
-#                SUPABASE_PROJECT_REF)
-#   ''         — No cloud storage; files saved locally under MEDIA_ROOT (dev only)
+#   'aws' — Amazon S3 (set S3_BUCKET_NAME + S3_ACCESS_KEY_ID + S3_SECRET_ACCESS_KEY)
+#   ''    — No cloud storage; files saved locally under MEDIA_ROOT (dev only)
 STORAGE_PROVIDER = config('STORAGE_PROVIDER', default='').lower()
 
 # ── AWS S3 credentials (used when STORAGE_PROVIDER=aws) ─────────────────────
@@ -459,26 +460,8 @@ S3_REGION_NAME = config('S3_REGION_NAME', default='')
 S3_ACCESS_KEY_ID = config('S3_ACCESS_KEY_ID', default='')
 S3_SECRET_ACCESS_KEY = config('S3_SECRET_ACCESS_KEY', default='')
 
-# ── Supabase Storage credentials (used when STORAGE_PROVIDER=supabase) ───────
-# Supabase Storage is fully S3-compatible — uses the same boto3 under the hood.
-# Get these from: Supabase Dashboard → Storage → S3 Access
-SUPABASE_PROJECT_REF = config('SUPABASE_PROJECT_REF', default='')          # e.g. abcxyzprojectref
-SUPABASE_STORAGE_BUCKET = config('SUPABASE_STORAGE_BUCKET', default='')    # bucket name in Supabase Storage
-SUPABASE_STORAGE_ACCESS_KEY = config('SUPABASE_STORAGE_ACCESS_KEY', default='')
-SUPABASE_STORAGE_SECRET_KEY = config('SUPABASE_STORAGE_SECRET_KEY', default='')
-SUPABASE_STORAGE_REGION = config('SUPABASE_STORAGE_REGION', default='ap-southeast-1')
-
-# ── Resolve active storage credentials based on provider ─────────────────────
-if STORAGE_PROVIDER == 'supabase' and SUPABASE_PROJECT_REF:
-    S3_BUCKET_NAME = SUPABASE_STORAGE_BUCKET
-    S3_REGION_NAME = SUPABASE_STORAGE_REGION
-    S3_ACCESS_KEY_ID = SUPABASE_STORAGE_ACCESS_KEY
-    S3_SECRET_ACCESS_KEY = SUPABASE_STORAGE_SECRET_KEY
-    # Supabase Storage S3-compatible endpoint — path-style required
-    S3_ENDPOINT_URL = f'https://{SUPABASE_PROJECT_REF}.supabase.co/storage/v1/s3'
-    S3_SIGNATURE_VERSION = 's3v4'
-    S3_ADDRESSING_STYLE = 'path'   # Supabase requires path-style (not virtual-hosted)
-elif STORAGE_PROVIDER == 'aws':
+# ── Resolve active storage credentials ───────────────────────────────────────
+if STORAGE_PROVIDER == 'aws':
     S3_ENDPOINT_URL = config('S3_ENDPOINT_URL', default='')
     S3_SIGNATURE_VERSION = config('S3_SIGNATURE_VERSION', default='s3v4')
     S3_ADDRESSING_STYLE = config('S3_ADDRESSING_STYLE', default='virtual')
@@ -499,14 +482,12 @@ AWS_S3_ENDPOINT_URL = S3_ENDPOINT_URL or None
 AWS_S3_SIGNATURE_VERSION = S3_SIGNATURE_VERSION
 AWS_S3_ADDRESSING_STYLE = S3_ADDRESSING_STYLE
 AWS_QUERYSTRING_EXPIRE = S3_PRESIGNED_URL_EXPIRY_SECONDS
-# E3/E4: For AWS S3 explicitly enforce private ACL (defence-in-depth; bucket-level
+# E3/E4: Enforce private ACL on all S3 objects (defence-in-depth; bucket-level
 # public-access-block should ALSO be enabled, but per-object ACL is a second layer).
-# For Supabase Storage the ACL concept does not apply (bucket RLS controls access)
-# so we leave it as None to avoid sending an unsupported ACL header.
-AWS_DEFAULT_ACL = 'private' if STORAGE_PROVIDER == 'aws' else None
+AWS_DEFAULT_ACL = 'private'
 AWS_S3_FILE_OVERWRITE = False
 
-if S3_BUCKET_NAME and STORAGE_PROVIDER in ('aws', 'supabase'):
+if S3_BUCKET_NAME and STORAGE_PROVIDER == 'aws':
     STORAGES = {
         'default': {
             'BACKEND': 'storages.backends.s3.S3Storage',
@@ -658,7 +639,7 @@ def _validate_settings():
     _log = _logging.getLogger(__name__)
 
     # --- Storage provider ---
-    _valid_storage = ('aws', 'supabase', '')
+    _valid_storage = ('aws', '')
     if STORAGE_PROVIDER not in _valid_storage:
         raise ValueError(
             f"STORAGE_PROVIDER='{STORAGE_PROVIDER}' is invalid. "
@@ -669,12 +650,6 @@ def _validate_settings():
         _log.warning(
             'STORAGE_PROVIDER=aws but S3_BUCKET_NAME is not set — '
             'reports and audio will fall back to local disk storage.'
-        )
-
-    if STORAGE_PROVIDER == 'supabase' and not SUPABASE_PROJECT_REF:
-        _log.warning(
-            'STORAGE_PROVIDER=supabase but SUPABASE_PROJECT_REF is not set — '
-            'the S3-compatible endpoint URL cannot be built; storage will fail.'
         )
 
     # --- Email provider ---
