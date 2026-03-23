@@ -33,6 +33,30 @@
 
 services:
 
+  # ── Nginx Reverse Proxy ──────────────────────────────────────────
+  # Entry point for all HTTP traffic on port 80.
+  # Provides: rate limiting, gzip, client buffering, X-User-Id strip,
+  # real-IP forwarding, keepalive to Gunicorn, security headers.
+  #
+  # TLS (HTTPS): add a port 443 server block + Certbot/ACM in production.
+  # Scale: nginx:1.25-alpine handles 10 000+ concurrent connections on one core.
+  nginx:
+    image: nginx:1.25-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      django:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost/api/health/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
   # ── Database ────────────────────────────────────────────────────
   db:
     image: postgres:15-alpine
@@ -82,9 +106,10 @@ services:
       REDIS_URL: "redis://redis:6379/2"
       CELERY_BROKER_URL: "redis://redis:6379/0"
       CELERY_RESULT_BACKEND: "redis://redis:6379/1"
-      # Keep local containers memory-safe (override in prod via env)
-      GUNICORN_WORKERS: "2"
-      GUNICORN_THREADS: "2"
+      # 4 workers × 4 threads = 16 concurrent requests — handles 100 concurrent users
+      # Formula: workers ≈ 2×CPU+1 (4 is safe on 2-CPU servers, scale up for 4-CPU)
+      GUNICORN_WORKERS: "4"
+      GUNICORN_THREADS: "4"
       GUNICORN_TIMEOUT: "120"
       # Skip automatic migrations for production-style external DBs
       RUN_MIGRATIONS: "false"
