@@ -1,6 +1,7 @@
 """
 Admin email management endpoints.
 
+GET  /api/admin/emails/preview                    — render email template preview (HTML)
 GET  /api/admin/emails/status                     — paginated delivery status per submission
 POST /api/admin/emails/submissions/<id>/resend    — re-queue single email
 POST /api/admin/emails/bulk-resend                — bulk re-queue (requires scope)
@@ -26,16 +27,20 @@ Stats accuracy:
     by the email webhook handler.
 """
 
+import base64 as _base64
 import json
+import os
 import uuid as _uuid
 
+from django.db import transaction
 from django.db.models import Q
 from django.http import JsonResponse
+from django.template.loader import render_to_string
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from api.models import AssessmentSubmission, AuditLog, ClapTest
+from api.models import AssessmentSubmission, AuditLog, ClapTest, SubmissionScore
 from api.utils.auth import require_admin as _require_admin
 
 from importlib.util import find_spec
@@ -300,13 +305,18 @@ def resend_email(request, submission_id):
     """
     Re-queue the email report for a single submission.
 
-    Guards:
-      - Submission must exist.
-      - report_url must be set (report must be generated first).
-      - Celery must be available.
-
-    Resets email_sent_at and status to REPORT_READY before dispatching
-    so the pipeline picks it up cleanly.
+    Guards (in order):
+      1. Admin authentication required.
+      2. Celery must be available.
+      3. submission_id must be a valid UUID — returns 400 otherwise.
+      4. Submission must exist — returns 404 otherwise.
+      5. report_url must be set and non-empty — returns 400 otherwise.
+      6. Row-level lock (SELECT FOR UPDATE) prevents concurrent double-dispatch
+         when two admins click resend simultaneously.
+      7. Status guard — returns 409 if email is already in-flight.
+      8. DB update + AuditLog wrapped in transaction.atomic().
+      9. Celery dispatch happens AFTER commit; if it fails the DB is
+         rolled back to the pre-resend status so no stuck state is possible.
     """
     admin_user, err = _require_admin(request)
     if err:
@@ -318,38 +328,106 @@ def resend_email(request, submission_id):
             status=503,
         )
 
+    # ── 1. Validate submission_id is a proper UUID ─────────────────────────
     try:
-        submission = AssessmentSubmission.objects.select_related('user', 'assessment').get(
-            id=submission_id
-        )
-    except AssessmentSubmission.DoesNotExist:
-        return _no_cache_json({'error': 'Submission not found'}, status=404)
-
-    if not submission.report_url:
+        sub_uuid = _uuid.UUID(str(submission_id))
+    except (ValueError, AttributeError):
         return _no_cache_json(
-            {'error': 'Cannot send email: report has not been generated yet (report_url is missing)'},
+            {'error': 'Invalid submission_id — must be a valid UUID'},
             status=400,
         )
 
-    old_status             = submission.status
-    submission.status      = AssessmentSubmission.STATUS_REPORT_READY
-    submission.email_sent_at = None
-    submission.updated_at  = timezone.now()
-    submission.save(update_fields=['status', 'email_sent_at', 'updated_at'])
+    # ── 2. Atomic block: lock row → guard → update → audit ─────────────────
+    old_status = None
+    try:
+        with transaction.atomic():
+            # select_for_update() acquires a row-level lock so concurrent
+            # resend requests for the same submission queue up instead of
+            # both succeeding and dispatching two Celery tasks.
+            try:
+                submission = (
+                    AssessmentSubmission.objects
+                    .select_for_update()
+                    .select_related('user', 'assessment')
+                    .get(id=sub_uuid)
+                )
+            except AssessmentSubmission.DoesNotExist:
+                return _no_cache_json({'error': 'Submission not found'}, status=404)
 
-    AuditLog.objects.create(
-        submission=submission,
-        event_type='admin_email_resend_requested',
-        old_status=old_status,
-        new_status=submission.status,
-        worker_id=f'admin:{admin_user.id}',
-        error_detail='manual_resend_single',
-    )
+            # ── 3. Report must exist and be non-empty ──────────────────────
+            if not (submission.report_url or '').strip():
+                return _no_cache_json(
+                    {
+                        'error': (
+                            'Cannot send email: report has not been generated yet. '
+                            'Generate the report first, then resend.'
+                        )
+                    },
+                    status=400,
+                )
 
-    result = send_email_report.apply_async(
-        args=[str(submission.id)],
-        headers={'correlation_id': submission.correlation_id or str(submission.id)},
-    )
+            # ── 4. Idempotency guard — do not double-dispatch ──────────────
+            if submission.status == AssessmentSubmission.STATUS_EMAIL_SENDING:
+                return _no_cache_json(
+                    {
+                        'error': (
+                            'Email is already being dispatched for this submission. '
+                            'Wait for the current task to complete before retrying.'
+                        )
+                    },
+                    status=409,
+                )
+
+            old_status               = submission.status
+            submission.status        = AssessmentSubmission.STATUS_REPORT_READY
+            submission.email_sent_at = None
+            submission.updated_at    = timezone.now()
+            submission.save(update_fields=['status', 'email_sent_at', 'updated_at'])
+
+            AuditLog.objects.create(
+                submission=submission,
+                event_type='admin_email_resend_requested',
+                old_status=old_status,
+                new_status=submission.status,
+                worker_id=f'admin:{admin_user.id}',
+                error_detail='manual_resend_single',
+            )
+            # transaction commits here — row lock is released
+    except Exception as exc:
+        # Catches DB errors (connection loss, lock timeout, etc.)
+        return _no_cache_json(
+            {'error': f'Database error preparing resend: {exc}'},
+            status=500,
+        )
+
+    # ── 3. Dispatch Celery task AFTER DB commit ────────────────────────────
+    # Dispatching inside the transaction risks the worker reading stale data
+    # before commit. Dispatching after commit is the correct pattern.
+    # If dispatch fails we roll back the status so no stuck state remains.
+    try:
+        result = send_email_report.apply_async(
+            args=[str(submission.id)],
+            headers={'correlation_id': submission.correlation_id or str(submission.id)},
+        )
+    except Exception as exc:
+        # Task broker is unavailable — restore submission to its previous state
+        AssessmentSubmission.objects.filter(id=sub_uuid).update(
+            status=old_status,
+            email_sent_at=None,
+            updated_at=timezone.now(),
+        )
+        AuditLog.objects.create(
+            submission_id=sub_uuid,
+            event_type='admin_email_resend_dispatch_failed',
+            old_status=AssessmentSubmission.STATUS_REPORT_READY,
+            new_status=old_status,
+            worker_id=f'admin:{admin_user.id}',
+            error_detail=f'celery_dispatch_failed: {exc}',
+        )
+        return _no_cache_json(
+            {'error': f'Failed to queue email task — Celery broker may be unavailable: {exc}'},
+            status=503,
+        )
 
     return _no_cache_json(
         {
@@ -561,3 +639,104 @@ def bounce_complaint_logs(request):
         },
         'generated_at': timezone.now().isoformat(),
     })
+
+
+# ── Email template preview ────────────────────────────────────────────────────
+
+def _get_email_logo_uri() -> str:
+    logo_path = os.path.join(
+        os.path.dirname(__file__), '..', '..', 'templates', 'reports', 'clap-logo-original.png'
+    )
+    try:
+        with open(os.path.normpath(logo_path), 'rb') as f:
+            return 'data:image/png;base64,' + _base64.b64encode(f.read()).decode()
+    except Exception:
+        return ''
+
+
+_EMAIL_PREVIEW_SAMPLE_SCORES = [
+    {'domain': 'listening',  'score': 8.0},
+    {'domain': 'reading',    'score': 7.5},
+    {'domain': 'speaking',   'score': 7.0},
+    {'domain': 'vocabulary', 'score': 8.5},
+    {'domain': 'writing',    'score': 7.0},
+]
+
+
+@csrf_exempt
+@require_http_methods(['GET'])
+def email_template_preview(request):
+    """
+    Render emails/submission_ready.html with sample data and return the HTML.
+    Used by the admin Email Management preview modal.
+    If a real complete submission exists it is used for richer preview data.
+    """
+    admin_user, err = _require_admin(request)
+    if err:
+        return err
+
+    student_name    = 'Sample Student'
+    student_email   = 'student@example.com'
+    assessment_name = 'Sample Assessment'
+    report_url      = 'https://example.com/report/sample.pdf'
+    scores          = _EMAIL_PREVIEW_SAMPLE_SCORES
+
+    # Use real data from the most recently completed submission if available
+    try:
+        real_sub = (
+            AssessmentSubmission.objects
+            .select_related('user', 'assessment')
+            .filter(status=AssessmentSubmission.STATUS_COMPLETE)
+            .order_by('-updated_at')
+            .first()
+        )
+        if real_sub:
+            student_name    = (
+                (getattr(real_sub.user, 'full_name', None) or '').strip()
+                or (getattr(real_sub.user, 'username', None) or '').strip()
+                or real_sub.user.email
+            )
+            student_email   = real_sub.user.email
+            assessment_name = getattr(real_sub.assessment, 'name', assessment_name)
+            report_url      = real_sub.report_url or report_url
+            real_scores = list(
+                SubmissionScore.objects
+                .filter(submission=real_sub)
+                .order_by('domain')
+                .values('domain', 'score')
+            )
+            if real_scores:
+                scores = real_scores
+    except Exception:
+        pass  # fall through to sample data
+
+    total_score = sum(float(s['score']) for s in scores)
+    max_total   = 10 * len(scores)
+    percentage  = (total_score / max_total * 100) if max_total else 0
+    if percentage >= 90:
+        grade = 'O'
+    elif percentage >= 80:
+        grade = 'A+'
+    elif percentage >= 70:
+        grade = 'A'
+    elif percentage >= 60:
+        grade = 'B+'
+    else:
+        grade = 'B'
+
+    try:
+        html = render_to_string('emails/submission_ready.html', {
+            'student_name':    student_name,
+            'student_email':   student_email,
+            'assessment_name': assessment_name,
+            'report_url':      report_url,
+            'scores':          scores,
+            'total_score':     total_score,
+            'max_total':       max_total,
+            'grade':           grade,
+            'logo_data_uri':   _get_email_logo_uri(),
+        })
+    except Exception as exc:
+        return JsonResponse({'error': f'Email template render failed: {exc}'}, status=500)
+
+    return _no_cache_json({'html_preview': html})

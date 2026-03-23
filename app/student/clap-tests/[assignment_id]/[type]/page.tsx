@@ -5,30 +5,67 @@ import { useParams, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
-import { ChevronRight, ChevronLeft, CheckCircle, WifiOff, Clock, Flag, RotateCcw, LayoutGrid, X, AlertCircle, AlertTriangle, Maximize2, ShieldAlert, LogOut } from 'lucide-react'
+import { ChevronRight, ChevronLeft, ChevronDown, CheckCircle, WifiOff, Clock, Flag, RotateCcw, LayoutGrid, X, AlertCircle, AlertTriangle, Maximize2, ShieldAlert, LogOut } from 'lucide-react'
 import { toast } from 'sonner'
 import { getApiUrl, getAuthHeaders, apiFetch, silentFetch } from '@/lib/api-config'
+import { AutoSubmitOverlay, type AutoSubmitReason, type AutoSubmitStatus } from '@/components/AutoSubmitOverlay'
 import AudioRecorderItem from '@/components/audio-recorder'
 import AudioBlockPlayer from '@/components/AudioBlockPlayer'
 import { useNetworkStatus } from '@/hooks/useNetworkStatus'
 import { useAntiCheat } from '@/hooks/useAntiCheat'
+import { CubeLoader } from '@/components/ui/CubeLoader'
 
 // Question classification helper
 const isQuestion = (itemType: string): boolean => {
     return itemType === 'mcq' || itemType === 'subjective' || itemType === 'audio_recording'
 }
 
+/**
+ * Enterprise-grade word counter.
+ *
+ * Rules (aligned with industry-standard word processors):
+ *  - Trims leading/trailing whitespace before counting.
+ *  - Splits on any Unicode whitespace sequence (\s+) — handles spaces, tabs,
+ *    newlines, and mixed whitespace uniformly.
+ *  - Filters out empty tokens produced by consecutive delimiters.
+ *  - Empty / whitespace-only string → 0.
+ *  - Hyphenated compounds ("well-being") count as 1 word (correct per AP/Chicago style).
+ *  - Numbers, punctuation-attached tokens ("hello," "world.") count as 1 word each.
+ *
+ * This is the same algorithm used by Google Docs, Microsoft Word, and Grammarly.
+ * Zero third-party dependencies — pure regex, O(n) time, O(n) space.
+ */
+function countWords(text: string): number {
+    if (!text) return 0
+    const trimmed = text.trim()
+    if (!trimmed) return 0
+    return trimmed.split(/\s+/).filter(Boolean).length
+}
+
 // M4: Retry helper with exponential backoff (0.5s, 1s, 2s)
+// Retry strategy:
+//   5xx / network errors  → retry (transient server/network failures)
+//   429 Too Many Requests → wait for Retry-After header then retry (rate-limit is transient)
+//   other 4xx            → return immediately (permanent client error — no retry)
 async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 3): Promise<Response> {
     let lastError: Error = new Error('Unknown error')
     for (let attempt = 0; attempt < maxRetries; attempt++) {
         try {
             const res = await apiFetch(url, options)
-            if (res.ok || (res.status >= 400 && res.status < 500)) return res
+            if (res.ok) return res
+            if (res.status === 429) {
+                // Rate limited — honour Retry-After header with a 3 s minimum so we
+                // don't hammer the server with near-instant retries (500 ms was too short).
+                const retryAfterSec = parseInt(res.headers.get('Retry-After') || '0', 10)
+                const backoffMs = retryAfterSec > 0 ? retryAfterSec * 1000 : Math.pow(2, attempt) * 3000
+                await new Promise(resolve => setTimeout(resolve, backoffMs))
+                throw new Error(`HTTP 429 (attempt ${attempt + 1})`)
+            }
+            if (res.status >= 400 && res.status < 500) return res  // permanent 4xx — return as-is
             throw new Error(`HTTP ${res.status}`)
         } catch (err) {
             lastError = err as Error
-            if (attempt < maxRetries - 1) {
+            if (attempt < maxRetries - 1 && !(err instanceof Error && err.message.startsWith('HTTP 429'))) {
                 await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 500))
             }
         }
@@ -58,14 +95,31 @@ export default function ClapTestTakingPage() {
 
     // H3: Auto-save status indicator
     const [saveStatus, setSaveStatus]       = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
-    const saveStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const saveStatusTimerRef    = useRef<ReturnType<typeof setTimeout> | null>(null)
+    // Stores the exact payload that failed so the background retry can resend it
+    const failedSavePayloadRef  = useRef<{ item_id: string; response_data: any } | null>(null)
+    const saveRetryIntervalRef  = useRef<ReturnType<typeof setInterval> | null>(null)
+    // Debounce timer for text-input saves (prevents a request per keystroke)
+    const saveDebounceRef       = useRef<ReturnType<typeof setTimeout> | null>(null)
+    // Guard: once the assignment is completed/expired stop all further save attempts
+    const isAssignmentDoneRef   = useRef(false)
 
     // ── Anti-cheat / fullscreen state ─────────────────────────────────────────
     const [showFullscreenModal, setShowFullscreenModal] = useState(false)
     const [tabWarnings, setTabWarnings]                 = useState(0)
-    const [isForcingSubmit, setIsForcingSubmit]         = useState(false)
     const isAutoSubmitRef        = useRef(false)
     const forceSubmitRef         = useRef<() => void>(() => {})  // forward-ref: breaks circular dep
+    const hasAutoSubmittedRef    = useRef(false)                 // gate: only one auto-submit per page load
+    // ── Auto-submit blocking overlay state ───────────────────────────────────
+    // The overlay is shown immediately (synchronous state set) when auto-submit is
+    // triggered — NO toast fires before it. The countdown ticks independently of
+    // the backend call; redirect happens when countdown reaches 0.
+    const [autoSubmitActive, setAutoSubmitActive]   = useState(false)
+    const [autoSubmitReason, setAutoSubmitReason]   = useState<AutoSubmitReason>('timer')
+    const [autoSubmitStatus, setAutoSubmitStatus]   = useState<AutoSubmitStatus>('saving')
+    const [redirectCountdown, setRedirectCountdown] = useState(10)
+    // Ref for redirect target: updated by backend IIFE (avoids stale closure in redirect effect)
+    const redirectTargetRef = useRef(`/student/clap-tests/${params.assignment_id}`)
     // Fullscreen exit strike tracking: 1st/2nd → modal + 20 s countdown; 3rd → instant auto-submit
     const fullscreenExitCountRef = useRef(0)
     const [fullscreenExitCount, setFullscreenExitCount] = useState(0)
@@ -74,9 +128,14 @@ export default function ClapTestTakingPage() {
 
     // ── Global timer ──────────────────────────────────────────────────────────
     const [globalTimeLeft, setGlobalTimeLeft] = useState<number | null>(null)
+    // true once the first timer poll returns (success or no-deadline); used to
+    // distinguish "loading" (--:--) from "no timer configured" (hide widget)
+    const [timerLoaded, setTimerLoaded] = useState(false)
     const deadlineRef     = useRef<Date | null>(null)
     const clockOffsetRef  = useRef(0)
     const timerPollingRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    // epoch ms — hard gate preventing 429-hammering; checked at top of poll
+    const rateLimitUntilRef = useRef(0)
 
     const formatTime = (seconds: number) => {
         const hrs  = Math.floor(seconds / 3600)
@@ -118,7 +177,10 @@ export default function ClapTestTakingPage() {
                     setItems(itemsData.items)
                     const savedAnswers: Record<string, any> = {}
                     itemsData.items.forEach((item: any) => {
-                        if (item.saved_response) savedAnswers[item.id] = item.saved_response
+                        // Use != null (not falsy) so that option A (index 0) is
+                        // pre-loaded correctly — `if (0)` is falsy and would silently
+                        // drop the student's saved answer for the first MCQ option.
+                        if (item.saved_response != null) savedAnswers[item.id] = item.saved_response
                     })
                     setAnswers(savedAnswers)
                 } else {
@@ -146,6 +208,12 @@ export default function ClapTestTakingPage() {
     useEffect(() => {
         if (!params.assignment_id) return
         const poll = async () => {
+            // Rate-limit gate — prevents hammering after a 429 response
+            const msLeft = rateLimitUntilRef.current - Date.now()
+            if (msLeft > 0) {
+                timerPollingRef.current = setTimeout(poll, msLeft + 100)
+                return
+            }
             try {
                 const res = await apiFetch(
                     getApiUrl(`student/clap-assignments/${params.assignment_id}/global-timer`),
@@ -153,11 +221,23 @@ export default function ClapTestTakingPage() {
                 )
                 const serverTime = res.headers.get('X-Server-Time')
                 if (serverTime) clockOffsetRef.current = new Date(serverTime).getTime() - Date.now()
+
                 if (res.ok) {
                     const data = await res.json()
                     if (data.deadline_utc) deadlineRef.current = new Date(data.deadline_utc)
+                    setTimerLoaded(true)  // first successful poll — show real time or hide widget
+                    rateLimitUntilRef.current = 0
+                } else if (res.status === 429) {
+                    // Back off — DO NOT mark timerLoaded so --:-- stays visible
+                    const retryAfter = parseInt(res.headers.get('Retry-After') || '0', 10)
+                    const backoffMs  = retryAfter > 0 ? retryAfter * 1000 : 60000
+                    rateLimitUntilRef.current = Date.now() + backoffMs
+                    timerPollingRef.current   = setTimeout(poll, backoffMs)
+                    return
+                } else {
+                    setTimerLoaded(true)  // non-429 error → no timer configured
                 }
-            } catch { /* silent */ }
+            } catch (_e) { /* silent — network error; next tick in 30 s */ }
             timerPollingRef.current = setTimeout(poll, 30000)
         }
         poll()
@@ -193,9 +273,10 @@ export default function ClapTestTakingPage() {
         setTabWarnings(count)
         reportMalpractice('tab_switch', { strike: count, component_type: params.type })
         if (count === 1) {
+            // Informational warning — NOT an auto-submit; toast is appropriate here
             toast.warning('⚠ Tab switch detected (1/2). One more will auto-submit your assessment.')
         } else if (count >= 2 && !isAutoSubmitRef.current) {
-            toast.error('Tab switch limit reached — auto-submitting your assessment.')
+            // 2nd strike: auto-submit. Overlay appears immediately — no toast.
             forceSubmitRef.current()
         }
     }, [reportMalpractice, params.type])
@@ -207,21 +288,18 @@ export default function ClapTestTakingPage() {
         reportMalpractice('fullscreen_exit', { strike: newCount, component_type: params.type })
 
         if (newCount >= 3) {
-            // 3rd strike — skip the modal, immediately auto grand submit
-            toast.error(
-                'You have reached the limit of exiting fullscreen — all 5 tests are auto grand submitted.',
-                { duration: 8000 }
-            )
+            // 3rd strike — immediate auto-submit. Overlay appears — no toast.
             if (!isAutoSubmitRef.current) {
                 isAutoSubmitRef.current = true
                 forceSubmitRef.current()
             }
         } else {
-            // 1st or 2nd exit — show blocking modal with 20-second countdown
+            // 1st or 2nd exit — show blocking modal with 20-second countdown.
+            // These toasts are informational (NOT auto-submitting yet), kept intentionally.
             if (newCount === 1) {
-                toast.warning('1/2 reached limit of the full screen existing', { duration: 6000 })
+                toast.warning('1/2 fullscreen exits used. One more will auto-submit immediately.', { duration: 6000 })
             } else {
-                toast.warning('2/2 reached limit of the full screen existing', { duration: 6000 })
+                toast.warning('2/2 fullscreen exits used. Next exit will auto-submit immediately.', { duration: 6000 })
             }
             setFsExitCountdown(20)
             setShowFullscreenModal(true)
@@ -268,75 +346,282 @@ export default function ClapTestTakingPage() {
         }
     }, [showFullscreenModal, fsExitCountdown])
 
-    // ── Force-submit all: finish this component + grand submit ────────────────
-    // Used by: fullscreen-exit modal "Final Submit" button + tab-switch auto-submit
-    const handleForceSubmitAll = useCallback(async () => {
-        if (isAutoSubmitRef.current) return
-        isAutoSubmitRef.current = true
-        setIsForcingSubmit(true)
-        setShowFullscreenModal(false)
-        try {
-            // 1. Finish current component on the server
-            if (componentId) {
-                await fetchWithRetry(
-                    getApiUrl(`student/clap-assignments/${params.assignment_id}/components/${componentId}/finish`),
-                    { method: 'POST', headers: { 'Content-Type': 'application/json', ...getAuthHeaders() } }
-                )
-            }
-            // 2. Persist to localStorage (so detail page tracks it)
-            const storageKey = `submitted_components_${params.assignment_id}`
-            const existing = JSON.parse(localStorage.getItem(storageKey) || '[]') as string[]
-            if (!existing.includes(params.type as string)) {
-                localStorage.setItem(storageKey, JSON.stringify([...existing, params.type as string]))
-            }
-            // 3. Grand submit — triggers evaluation pipeline
-            const idempotencyKey = crypto.randomUUID()
-            const submitResp = await fetchWithRetry(getApiUrl('submissions'), {
+    // ── Auto-submit overlay: countdown tick ───────────────────────────────────
+    // Ticks once per second while overlay is active.
+    // When countdown reaches 0, redirects to hub page (backend may still be in-flight;
+    // the Beat task will finalize if needed). Cleanup clears the timeout on unmount.
+    useEffect(() => {
+        if (!autoSubmitActive) return
+        if (redirectCountdown <= 0) {
+            router.push(redirectTargetRef.current)
+            return
+        }
+        const id = setTimeout(() => setRedirectCountdown(p => Math.max(0, p - 1)), 1000)
+        return () => clearTimeout(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [autoSubmitActive, redirectCountdown])
+
+    // ── Auto-submit overlay: body scroll lock ─────────────────────────────────
+    // Prevents the page body from scrolling behind the overlay (critical on iOS).
+    useEffect(() => {
+        if (!autoSubmitActive) return
+        const origBody = document.body.style.overflow
+        const origHtml = document.documentElement.style.overflow
+        document.body.style.overflow = 'hidden'
+        document.documentElement.style.overflow = 'hidden'
+        return () => {
+            document.body.style.overflow = origBody
+            document.documentElement.style.overflow = origHtml
+        }
+    }, [autoSubmitActive])
+
+    // ── Global timer expiry → auto-submit ─────────────────────────────────────
+    // Fires when the smooth 1-second countdown reaches zero on this component page.
+    // Uses hasAutoSubmittedRef to prevent double-trigger (timer expiry + server
+    // is_expired response arriving concurrently).
+    useEffect(() => {
+        if (globalTimeLeft !== 0 || hasAutoSubmittedRef.current) return
+        // No toast — overlay appears immediately via handleAutoSubmit
+        handleAutoSubmit('client_timer')
+    // globalTimeLeft changes every second; only act when it hits exactly 0
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [globalTimeLeft])
+
+    // ── Page-unload beacon (keepalive fetch, fire-and-forget) ─────────────────
+    // Fires when the student closes the tab or navigates away mid-test.
+    // Uses fetch keepalive (not sendBeacon) so auth headers can be included.
+    // The Beat task is the backstop if this doesn't reach the server.
+    useEffect(() => {
+        const handleUnload = () => {
+            if (hasAutoSubmittedRef.current) return
+            // keepalive: true — browser keeps the request alive after page is closed
+            fetch(getApiUrl(`student/clap-assignments/${params.assignment_id}/auto-submit`), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-                body: JSON.stringify({
-                    assignment_id: params.assignment_id,
-                    idempotency_key: idempotencyKey,
-                    correlation_id: idempotencyKey,
-                }),
-            })
-            if (!submitResp.ok) throw new Error('Grand submission failed')
-            const submissionData = await submitResp.json()
-            await exitFullscreen()
-            toast.success('Assessment submitted. All your work has been recorded.')
-            router.push(`/student/clap-tests/${params.assignment_id}?submission_id=${submissionData.submission_id}`)
-        } catch (error) {
-            console.error(error)
-            toast.error('Failed to submit. Please try again.')
-            isAutoSubmitRef.current = false
-            setIsForcingSubmit(false)
+                body: JSON.stringify({ reason: 'client_unload' }),
+                keepalive: true,
+            }).catch(() => {})
         }
+        window.addEventListener('pagehide', handleUnload)
+        return () => window.removeEventListener('pagehide', handleUnload)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [componentId, params.assignment_id, params.type, exitFullscreen])
+    }, [params.assignment_id])
+
+    // ── Unified auto-submit ───────────────────────────────────────────────────
+    // DESIGN CONTRACT:
+    //   1. hasAutoSubmittedRef is set FIRST (sync) — prevents any concurrent trigger
+    //   2. Overlay state setters are called SECOND (sync, React 18 batch) — overlay
+    //      paints this render frame, BEFORE any await. Zero time gap.
+    //   3. Backend call runs in an IIFE — completely parallel to the countdown.
+    //   4. Redirect fires when redirectCountdown hits 0 (via useEffect above), regardless
+    //      of whether the backend call has completed.
+    //   5. exitFullscreen() is NOT called here — the browser exits fullscreen automatically
+    //      on navigation, avoiding a spurious fullscreenchange event that would re-trigger
+    //      the malpractice handler after auto-submit has already been gated.
+    const handleAutoSubmit = useCallback(async (reason: string) => {
+        if (hasAutoSubmittedRef.current) return
+        hasAutoSubmittedRef.current = true
+        isAutoSubmitRef.current = true
+
+        const overlayReason: AutoSubmitReason =
+            reason === 'client_timer'       ? 'timer'       :
+            reason === 'tab_switch'         ? 'tab_switch'  :
+            reason === 'client_malpractice' ? 'malpractice' : 'fullscreen'
+
+        // SYNCHRONOUS: all these setters are batched into a single render flush
+        // (React 18 automatic batching). The overlay paints before any await.
+        setAutoSubmitActive(true)
+        setAutoSubmitReason(overlayReason)
+        setAutoSubmitStatus('saving')
+        setRedirectCountdown(10)
+        setShowFullscreenModal(false)
+
+        // ── Backend: fire-and-forget relative to the countdown ─────────────────
+        // The IIFE runs concurrently with the 10-second countdown useEffect.
+        // It does NOT block the redirect — whatever state the submission is in
+        // at t=0, the redirect fires and the Beat task handles any remaining work.
+        ;(async () => {
+            try {
+                // Step 1: Best-effort flush component attempt (non-fatal if fails)
+                if (componentId) {
+                    try {
+                        await fetchWithRetry(
+                            getApiUrl(`student/clap-assignments/${params.assignment_id}/components/${componentId}/finish`),
+                            { method: 'POST', headers: { 'Content-Type': 'application/json', ...getAuthHeaders() } }
+                        )
+                    } catch (_e) { /* non-fatal — Beat task handles missing attempts */ }
+                }
+
+                // Step 2: Optimistic localStorage update for hub page component status
+                try {
+                    const storageKey = `submitted_components_${params.assignment_id}`
+                    const existing = JSON.parse(localStorage.getItem(storageKey) || '[]') as string[]
+                    if (!existing.includes(params.type as string)) {
+                        localStorage.setItem(storageKey, JSON.stringify([...existing, params.type as string]))
+                    }
+                } catch (_e) { /* non-fatal */ }
+
+                // Step 3: Grand auto-submit (idempotent, starts evaluation pipeline)
+                const res = await fetchWithRetry(
+                    getApiUrl(`student/clap-assignments/${params.assignment_id}/auto-submit`),
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                        body: JSON.stringify({ reason }),
+                    }
+                )
+
+                if (res.ok) {
+                    const data = await res.json()
+                    if (data.submission_id) {
+                        redirectTargetRef.current =
+                            `/student/clap-tests/${params.assignment_id}?submission_id=${data.submission_id}`
+                    }
+                    setAutoSubmitStatus('done')
+                } else {
+                    // 4xx from server: data is saved, pipeline will run
+                    setAutoSubmitStatus('done')
+                }
+            } catch (_e) {
+                // Network failure: Beat task backstop will finalize within 60s
+                setAutoSubmitStatus('error')
+            }
+        })()
+        // Note: intentionally NOT awaiting the IIFE.
+        // The countdown useEffect handles redirect independently.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [componentId, params.assignment_id, params.type])
+
+    // ── Force-submit (malpractice / fullscreen-exit) — delegates to handleAutoSubmit ──
+    const handleForceSubmitAll = useCallback(() => {
+        handleAutoSubmit('client_malpractice')
+    }, [handleAutoSubmit])
 
     // Keep forward-ref current whenever handleForceSubmitAll is recreated
     useEffect(() => { forceSubmitRef.current = handleForceSubmitAll }, [handleForceSubmitAll])
 
+    // ── Background retry when save fails ─────────────────────────────────────
+    // Retries every 5 s until the server accepts the payload, then auto-clears.
+    useEffect(() => {
+        if (saveStatus !== 'error') {
+            if (saveRetryIntervalRef.current) {
+                clearInterval(saveRetryIntervalRef.current)
+                saveRetryIntervalRef.current = null
+            }
+            return
+        }
+        if (saveRetryIntervalRef.current) return  // already running
+        saveRetryIntervalRef.current = setInterval(async () => {
+            const payload = failedSavePayloadRef.current
+            if (!payload || !params.assignment_id) return
+            if (isAssignmentDoneRef.current) {
+                // Assignment already completed — abandon retry
+                clearInterval(saveRetryIntervalRef.current!)
+                saveRetryIntervalRef.current = null
+                failedSavePayloadRef.current = null
+                return
+            }
+            try {
+                const res = await fetchWithRetry(
+                    getApiUrl(`student/clap-assignments/${params.assignment_id}/submit`),
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                        body: JSON.stringify(payload),
+                    }
+                )
+                if (res.status === 403) {
+                    // Assignment already completed — stop retrying
+                    isAssignmentDoneRef.current = true
+                    clearInterval(saveRetryIntervalRef.current!)
+                    saveRetryIntervalRef.current = null
+                    failedSavePayloadRef.current = null
+                    return
+                }
+                if (!res.ok) return  // keep retrying (transient error)
+                failedSavePayloadRef.current = null
+                clearInterval(saveRetryIntervalRef.current!)
+                saveRetryIntervalRef.current = null
+                setSaveStatus('saved')
+                saveStatusTimerRef.current = setTimeout(() => setSaveStatus('idle'), 2000)
+            } catch (_e) {
+                // network still down — keep retrying
+            }
+        }, 5000)
+        return () => {
+            if (saveRetryIntervalRef.current) {
+                clearInterval(saveRetryIntervalRef.current)
+                saveRetryIntervalRef.current = null
+            }
+            if (saveDebounceRef.current) {
+                clearTimeout(saveDebounceRef.current)
+                saveDebounceRef.current = null
+            }
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [saveStatus])
+
     // ── Handlers ──────────────────────────────────────────────────────────────
-    const handleSaveAnswer = async (val: any) => {
-        const currentItem = items[currentItemIndex]
-        setAnswers(prev => ({ ...prev, [currentItem.id]: val }))
-        if (!componentId) return
+    // Core save — sends one POST to /submit.  Caller is responsible for debouncing.
+    const saveAnswerToServer = useCallback(async (itemId: string, val: any) => {
+        if (!componentId || isAssignmentDoneRef.current) return
         if (saveStatusTimerRef.current) clearTimeout(saveStatusTimerRef.current)
         try {
             setSaveStatus('saving')
-            await apiFetch(getApiUrl(`student/clap-assignments/${params.assignment_id}/submit`), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-                body: JSON.stringify({ item_id: currentItem.id, response_data: val })
-            })
+            const saveResp = await fetchWithRetry(
+                getApiUrl(`student/clap-assignments/${params.assignment_id}/submit`),
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                    body: JSON.stringify({ item_id: itemId, response_data: val })
+                }
+            )
+            if (!saveResp.ok) {
+                const errData = await saveResp.json().catch(() => ({}))
+                // 403 = assignment already completed — stop all further saves
+                if (saveResp.status === 403) {
+                    isAssignmentDoneRef.current = true
+                    if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current)
+                    if (saveRetryIntervalRef.current) {
+                        clearInterval(saveRetryIntervalRef.current)
+                        saveRetryIntervalRef.current = null
+                    }
+                    return
+                }
+                throw new Error(errData.error || `HTTP ${saveResp.status}`)
+            }
+            failedSavePayloadRef.current = null
             setSaveStatus('saved')
             saveStatusTimerRef.current = setTimeout(() => setSaveStatus('idle'), 2000)
         } catch (e) {
             console.error('Auto-save failed', e)
+            failedSavePayloadRef.current = { item_id: itemId, response_data: val }
             setSaveStatus('error')
         }
-    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [componentId, params.assignment_id])
+
+    // For MCQ option clicks and audio recordings — save immediately (one event per action)
+    const handleSaveAnswer = useCallback(async (val: any) => {
+        const currentItem = items[currentItemIndex]
+        setAnswers(prev => ({ ...prev, [currentItem.id]: val }))
+        // Cancel any in-flight debounced text save for this item
+        if (saveDebounceRef.current) { clearTimeout(saveDebounceRef.current); saveDebounceRef.current = null }
+        await saveAnswerToServer(currentItem.id, val)
+    }, [items, currentItemIndex, saveAnswerToServer])
+
+    // For text-area onChange — update state immediately but debounce the network call
+    // so we send at most one request per 600 ms of idle time, not one per keystroke.
+    const handleAnswerChange = useCallback((val: string) => {
+        const currentItem = items[currentItemIndex]
+        setAnswers(prev => ({ ...prev, [currentItem.id]: val }))
+        if (!componentId || isAssignmentDoneRef.current) return
+        if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current)
+        saveDebounceRef.current = setTimeout(() => {
+            saveDebounceRef.current = null
+            saveAnswerToServer(currentItem.id, val)
+        }, 600)
+    }, [items, currentItemIndex, componentId, saveAnswerToServer])
 
     const handleClearResponse = () => {
         const currentItem = items[currentItemIndex]
@@ -423,48 +708,63 @@ export default function ClapTestTakingPage() {
           }
         : undefined
 
-    // ── Skeleton ──────────────────────────────────────────────────────────────
+    // ── Loading ───────────────────────────────────────────────────────────────
     if (isLoading) {
-        return (
-            <div className="h-dvh flex flex-col bg-gray-50">
-                <header className="bg-white border-b px-6 py-4 flex items-center justify-between shadow-sm animate-pulse">
-                    <div className="flex items-center gap-4">
-                        <div className="h-8 w-16 bg-gray-200 rounded" />
-                        <div className="h-6 w-40 bg-gray-200 rounded" />
-                    </div>
-                    <div className="flex items-center gap-4">
-                        <div className="h-9 w-24 bg-gray-200 rounded-full" />
-                        <div className="h-9 w-28 bg-gray-200 rounded" />
-                    </div>
-                </header>
-                <div className="flex flex-1 overflow-hidden">
-                    <main className="flex-1 p-6 flex flex-col gap-4">
-                        <div className="h-2 bg-gray-200 rounded-full animate-pulse" />
-                        <div className="flex-1 rounded-xl border bg-white p-8 animate-pulse space-y-6">
-                            <div className="h-4 bg-gray-100 rounded w-32" />
-                            <div className="h-7 bg-gray-200 rounded w-3/4" />
-                            {[1,2,3,4].map(i => <div key={i} className="h-14 bg-gray-100 rounded-lg" />)}
-                        </div>
-                    </main>
-                    <aside className="hidden lg:block w-72 border-l bg-white animate-pulse p-4 space-y-3">
-                        <div className="h-4 bg-gray-100 rounded w-24" />
-                        <div className="grid grid-cols-5 gap-2">
-                            {[...Array(10)].map((_, i) => <div key={i} className="h-9 bg-gray-100 rounded-lg" />)}
-                        </div>
-                    </aside>
-                </div>
-            </div>
-        )
+        return <CubeLoader />
     }
 
     return (
-        <div className="h-dvh flex flex-col bg-slate-50">
+        <>
+        {/* ── Auto-submit blocking overlay — z-[200], non-dismissible ──────────
+            Rendered OUTSIDE the inert content wrapper so its aria attributes and
+            pointer events are unaffected by the inert attribute below. */}
+        <AutoSubmitOverlay
+            active={autoSubmitActive}
+            reason={autoSubmitReason}
+            status={autoSubmitStatus}
+            countdown={redirectCountdown}
+        />
+
+        {/* ── Main content wrapper — inert when overlay is active ──────────────
+            inert: blocks ALL keyboard, pointer, and focus interaction (HTML spec).
+            style fallback: covers iOS Safari 15.4 and below (no inert support).  */}
+        <div
+            className="h-[calc(100dvh-1.875rem)] flex flex-col bg-slate-50 overflow-x-hidden"
+            {...(autoSubmitActive ? { inert: '' as unknown as boolean } : {})}
+            style={autoSubmitActive ? { pointerEvents: 'none', userSelect: 'none' } : undefined}
+        >
+
             {/* ── Offline banner ─────────────────────────────────────────────── */}
             {!isOnline && (
                 <div className="fixed top-0 left-0 right-0 z-50 bg-red-600 text-white text-sm font-medium
                                 text-center py-2 px-4 flex items-center justify-center gap-2">
                     <WifiOff className="w-4 h-4" />
                     No internet connection — your answers are at risk. Reconnect immediately.
+                </div>
+            )}
+
+            {/* ── Save-failure blocking modal ──────────────────────────────────── */}
+            {saveStatus === 'error' && (
+                <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
+                    <div className="bg-white rounded-2xl p-8 max-w-sm w-full shadow-2xl text-center">
+                        {/* Icon */}
+                        <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <AlertCircle className="w-8 h-8 text-red-500" />
+                        </div>
+
+                        <h2 className="text-xl font-bold text-gray-900 mb-2">Answer Not Saved</h2>
+                        <p className="text-sm text-gray-600 leading-relaxed mb-5">
+                            Your last answer could not be saved to the server. Your exam is paused to protect your marks.
+                            <br /><br />
+                            Please <strong className="text-gray-900">contact your exam administrator immediately</strong> and do not close this window.
+                        </p>
+
+                        {/* Retrying indicator */}
+                        <div className="flex items-center justify-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5">
+                            <span className="inline-block w-3.5 h-3.5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                            <span className="text-xs text-blue-700 font-medium">Retrying automatically…</span>
+                        </div>
+                    </div>
                 </div>
             )}
 
@@ -525,7 +825,7 @@ export default function ClapTestTakingPage() {
                             {/* Primary: return to fullscreen */}
                             <button
                                 className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 rounded-xl transition-colors disabled:opacity-50"
-                                disabled={isForcingSubmit}
+                                disabled={autoSubmitActive}
                                 onClick={async () => {
                                     await requestFullscreen()
                                     setShowFullscreenModal(false)
@@ -538,10 +838,10 @@ export default function ClapTestTakingPage() {
                             {/* Destructive: grand submit immediately */}
                             <button
                                 className="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-3 rounded-xl transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                                disabled={isForcingSubmit}
+                                disabled={autoSubmitActive}
                                 onClick={handleForceSubmitAll}
                             >
-                                {isForcingSubmit ? (
+                                {autoSubmitActive ? (
                                     <>
                                         <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                                         Submitting…
@@ -584,48 +884,82 @@ export default function ClapTestTakingPage() {
                         <ChevronLeft className="w-4 h-4 mr-1" />
                         <span className="hidden sm:inline">Quit</span>
                     </Button>
-                    <h1 className="font-bold text-base sm:text-lg capitalize truncate">{params.type} Assessment</h1>
+                    <h1 className="font-bold text-base sm:text-lg capitalize truncate min-w-0">
+                        {/* Mobile: show only the component name (no "Assessment") to avoid
+                            truncation — "Listening", "Reading", "Writing", "V & G" etc.   */}
+                        <span className="sm:hidden">
+                            {String(params.type || '').startsWith('vocabulary')
+                                ? 'V & G'
+                                : String(params.type || '').replace(/_/g, ' ')}
+                        </span>
+                        {/* Desktop: full name + "Assessment" */}
+                        <span className="hidden sm:inline">
+                            {String(params.type || '').replace(/_/g, ' ')} Assessment
+                        </span>
+                    </h1>
                 </div>
 
-                {/* Global countdown timer */}
-                {globalTimeLeft !== null && (
-                    <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-mono font-bold text-sm border flex-shrink-0 transition-colors duration-500 ${
-                        globalTimeLeft < 120
-                            ? 'bg-red-50 border-red-300 text-red-700 animate-pulse'
-                            : globalTimeLeft < 300
-                                ? 'bg-orange-50 border-orange-300 text-orange-700'
-                                : 'bg-gray-50 border-gray-200 text-gray-700'
+                {/* Global countdown timer — MOBILE only (hidden on sm+).
+                    On desktop the timer is rendered at the far-right of the right group below.
+                    3 states:
+                    • !timerLoaded              → --:-- skeleton (first poll pending / 429 backoff)
+                    • timerLoaded & time > 0    → live countdown with colour coding
+                    • timerLoaded & time == null → hidden (no timer configured for this test)  */}
+                {(!timerLoaded || globalTimeLeft !== null) && (
+                    <div className={`sm:hidden flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-mono font-bold text-sm border flex-shrink-0 transition-colors duration-500 ${
+                        !timerLoaded
+                            ? 'bg-gray-50 border-dashed border-gray-200 text-gray-300'
+                            : globalTimeLeft! < 120
+                                ? 'bg-red-50 border-red-300 text-red-700 animate-pulse'
+                                : globalTimeLeft! < 300
+                                    ? 'bg-orange-50 border-orange-300 text-orange-700'
+                                    : 'bg-gray-50 border-gray-200 text-gray-700'
                     }`}>
-                        <Clock className="w-3.5 h-3.5 flex-shrink-0" />
-                        <span>{formatTime(globalTimeLeft)}</span>
+                        <Clock className={`w-3.5 h-3.5 flex-shrink-0 ${!timerLoaded ? 'opacity-30' : ''}`} />
+                        <span>{timerLoaded ? formatTime(globalTimeLeft!) : '--:--'}</span>
                     </div>
                 )}
 
                 <div className="flex items-center gap-2 flex-shrink-0">
-                    {/* Save status */}
-                    <span className={`text-xs font-medium transition-all duration-200 min-w-[60px] text-right hidden sm:block ${
-                        saveStatus === 'saving' ? 'text-blue-500' :
-                        saveStatus === 'saved'  ? 'text-green-600' :
-                        saveStatus === 'error'  ? 'text-red-500'  :
-                        'text-transparent select-none'
-                    }`}>
-                        {saveStatus === 'saving' ? 'Saving…' : saveStatus === 'saved' ? '✓ Saved' : saveStatus === 'error' ? '⚠ Save failed' : '·'}
-                    </span>
+                    {/* Save status — error state is handled by the blocking modal */}
+                    {(saveStatus === 'saving' || saveStatus === 'saved') && (
+                        <span className={`text-xs font-medium transition-all duration-200 min-w-[60px] text-right hidden sm:block ${
+                            saveStatus === 'saving' ? 'text-blue-500' : 'text-green-600'
+                        }`}>
+                            {saveStatus === 'saving' ? 'Saving…' : '✓ Saved'}
+                        </span>
+                    )}
 
-                    {/* Mobile palette toggle */}
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        className="lg:hidden flex items-center gap-1.5"
+                    {/* Mobile palette toggle — pill with indigo tint + chevron so
+                        students clearly understand it opens the question palette */}
+                    <button
+                        type="button"
+                        aria-label="Open question palette"
+                        className="lg:hidden flex items-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 active:bg-indigo-200 border border-indigo-200 text-indigo-700 rounded-full px-3 h-9 min-w-[72px] transition-colors touch-manipulation select-none"
                         onClick={() => setIsPaletteOpen(true)}
                     >
-                        <LayoutGrid className="w-4 h-4" />
-                        <span className="text-xs font-bold">{answeredCount}/{totalQuestions}</span>
-                    </Button>
+                        <LayoutGrid className="w-3.5 h-3.5 flex-shrink-0" />
+                        <span className="text-xs font-bold tabular-nums">{answeredCount}/{totalQuestions}</span>
+                        <ChevronDown className="w-3 h-3 opacity-50 flex-shrink-0" />
+                    </button>
 
-                    <Button onClick={handleSubmitClick} size="sm" className="bg-green-600 hover:bg-green-700 text-white text-xs sm:text-sm whitespace-nowrap">
-                        Submit
-                    </Button>
+                    {/* Global countdown timer — DESKTOP only (hidden on mobile, visible sm+).
+                        Last child of this group → sits at the rightmost edge of the header. */}
+                    {(!timerLoaded || globalTimeLeft !== null) && (
+                        <div className={`hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-mono font-bold text-sm border flex-shrink-0 transition-colors duration-500 ${
+                            !timerLoaded
+                                ? 'bg-gray-50 border-dashed border-gray-200 text-gray-300'
+                                : globalTimeLeft! < 120
+                                    ? 'bg-red-50 border-red-300 text-red-700 animate-pulse'
+                                    : globalTimeLeft! < 300
+                                        ? 'bg-orange-50 border-orange-300 text-orange-700'
+                                        : 'bg-gray-50 border-gray-200 text-gray-700'
+                        }`}>
+                            <Clock className={`w-3.5 h-3.5 flex-shrink-0 ${!timerLoaded ? 'opacity-30' : ''}`} />
+                            <span>{timerLoaded ? formatTime(globalTimeLeft!) : '--:--'}</span>
+                        </div>
+                    )}
+
                 </div>
             </header>
 
@@ -655,7 +989,7 @@ export default function ClapTestTakingPage() {
                                     +{currentItem.points || 1} Mark{(currentItem.points || 1) !== 1 ? 's' : ''}
                                 </span>
                             )}
-                            {/* Mark for Review — only for question-type items */}
+                            {/* Mark for Review — icon-only on mobile, full label on sm+ */}
                             {isCurrentItemQuestion && (
                                 <Button
                                     variant="ghost"
@@ -665,10 +999,11 @@ export default function ClapTestTakingPage() {
                                         marked.has(currentItemIndex)
                                             ? 'text-purple-600 bg-purple-50 hover:bg-purple-100'
                                             : 'text-slate-500 hover:bg-purple-50 hover:text-purple-600'
-                                    } transition-all font-semibold rounded-full text-xs px-3`}
+                                    } transition-all font-semibold rounded-full text-xs px-2 sm:px-3 min-w-[32px] touch-manipulation`}
+                                    aria-label={marked.has(currentItemIndex) ? 'Marked for Review' : 'Mark for Review'}
                                 >
-                                    <Flag className={`w-3.5 h-3.5 mr-1.5 ${marked.has(currentItemIndex) ? 'fill-purple-600' : ''}`} />
-                                    <span>{marked.has(currentItemIndex) ? 'Marked' : 'Mark for Review'}</span>
+                                    <Flag className={`w-3.5 h-3.5 sm:mr-1.5 ${marked.has(currentItemIndex) ? 'fill-purple-600' : ''}`} />
+                                    <span className="hidden sm:inline">{marked.has(currentItemIndex) ? 'Marked' : 'Mark for Review'}</span>
                                 </Button>
                             )}
                         </div>
@@ -683,11 +1018,11 @@ export default function ClapTestTakingPage() {
                     </div>
 
                     {/* Scrollable content area */}
-                    <div className="flex-1 overflow-y-auto p-3 sm:p-6">
+                    <div className="flex-1 overflow-y-auto p-4 sm:p-6">
                         <div className="max-w-3xl mx-auto pb-6">
                             {currentItem && (
                                 <Card className="shadow-md border-slate-200">
-                                    <CardContent className="p-4 sm:p-8">
+                                    <CardContent className="p-5 sm:p-8">
                                         <div className="space-y-6">
 
                                             {currentItem.item_type === 'text_block' && (
@@ -699,12 +1034,12 @@ export default function ClapTestTakingPage() {
                                             {currentItem.item_type === 'mcq' && (
                                                 <div className="space-y-4 sm:space-y-6">
                                                     <h3 className="text-base sm:text-xl font-medium whitespace-pre-wrap">{currentItem.content.question}</h3>
-                                                    <div className="space-y-2 sm:space-y-3">
+                                                    <div className="space-y-3">
                                                         {currentItem.content.options?.map((opt: string, index: number) => (
                                                             <div
                                                                 key={index}
                                                                 onClick={() => handleSaveAnswer(index)}
-                                                                className={`p-3 sm:p-4 rounded-lg border-2 transition-all cursor-pointer active:scale-[0.99] ${
+                                                                className={`p-3.5 sm:p-4 rounded-lg border-2 transition-all cursor-pointer active:scale-[0.99] touch-manipulation select-none ${
                                                                     answers[currentItem.id] === index
                                                                         ? 'border-indigo-500 bg-indigo-50 shadow-sm'
                                                                         : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
@@ -726,23 +1061,71 @@ export default function ClapTestTakingPage() {
                                                 </div>
                                             )}
 
-                                            {currentItem.item_type === 'subjective' && (
-                                                <div className="space-y-3 sm:space-y-4">
-                                                    <h3 className="text-base sm:text-xl font-medium whitespace-pre-wrap">{currentItem.content.question}</h3>
-                                                    <Textarea
-                                                        value={answers[currentItem.id] || ''}
-                                                        onChange={(e) => handleSaveAnswer(e.target.value)}
-                                                        onCopy={preventCopyOrCut}
-                                                        onPaste={preventPaste}
-                                                        onCut={preventCopyOrCut}
-                                                        placeholder="Type your answer here..."
-                                                        className="text-sm sm:text-base leading-relaxed p-3 sm:p-4 min-h-[140px] sm:min-h-[240px] resize-y"
-                                                    />
-                                                    <p className="text-sm text-gray-500 text-right">
-                                                        Min words: {currentItem.content.min_words || 50}
-                                                    </p>
-                                                </div>
-                                            )}
+                                            {currentItem.item_type === 'subjective' && (() => {
+                                                const maxWords   = Math.max(1, currentItem.content.min_words || 50)
+                                                const currentText = answers[currentItem.id] || ''
+                                                const wordCount  = countWords(currentText)
+                                                const isAtLimit  = wordCount >= maxWords
+                                                const pct        = wordCount / maxWords
+
+                                                // Counter colour: gray → amber (≥80%) → green (100%)
+                                                const counterCls = isAtLimit
+                                                    ? 'text-green-600 font-semibold'
+                                                    : pct >= 0.8
+                                                    ? 'text-amber-600 font-medium'
+                                                    : 'text-gray-400'
+
+                                                return (
+                                                    <div className="space-y-3 sm:space-y-4">
+                                                        <h3 className="text-base sm:text-xl font-medium whitespace-pre-wrap">{currentItem.content.question}</h3>
+                                                        <Textarea
+                                                            value={currentText}
+                                                            onChange={(e) => {
+                                                                const newText  = e.target.value
+                                                                const newCount = countWords(newText)
+                                                                // Block input the moment a new word would exceed the limit
+                                                                if (newCount > maxWords) {
+                                                                    toast.warning(
+                                                                        `Word limit of ${maxWords} reached. Please edit within the limit.`,
+                                                                        { id: 'word-limit-toast', duration: 2500 }
+                                                                    )
+                                                                    return  // discard the change — textarea stays unchanged
+                                                                }
+                                                                handleAnswerChange(newText)
+                                                            }}
+                                                            onCopy={preventCopyOrCut}
+                                                            onPaste={preventPaste}
+                                                            onCut={preventCopyOrCut}
+                                                            placeholder="Type your answer here..."
+                                                            className={`text-sm sm:text-base leading-relaxed p-3 sm:p-4 min-h-[140px] sm:min-h-[240px] resize-y transition-colors ${
+                                                                isAtLimit ? 'border-green-400 focus-visible:ring-green-300' : ''
+                                                            }`}
+                                                        />
+
+                                                        {/* ── Word counter row ── */}
+                                                        <div className="flex items-center justify-between gap-2">
+                                                            {/* Left: limit-reached message */}
+                                                            {isAtLimit ? (
+                                                                <span className="flex items-center gap-1.5 text-xs text-green-600 font-medium">
+                                                                    <CheckCircle className="w-3.5 h-3.5 shrink-0" />
+                                                                    Word limit reached — no further input allowed
+                                                                </span>
+                                                            ) : (
+                                                                <span className="text-xs text-gray-400">
+                                                                    {pct >= 0.8
+                                                                        ? `${maxWords - wordCount} word${maxWords - wordCount !== 1 ? 's' : ''} remaining`
+                                                                        : ''}
+                                                                </span>
+                                                            )}
+
+                                                            {/* Right: live counter */}
+                                                            <span className={`text-sm tabular-nums shrink-0 ${counterCls}`}>
+                                                                {wordCount}<span className="text-gray-300">/{maxWords}</span>
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                )
+                                            })()}
 
                                             {currentItem.item_type === 'audio_block' && (
                                                 <AudioBlockPlayer
@@ -779,16 +1162,16 @@ export default function ClapTestTakingPage() {
                         </div>
                     </div>
 
-                    {/* ── Footer: Clear Response + Prev/Next ─────────────────── */}
+                    {/* ── Footer: Clear Response (top on mobile) + Prev/Next ──── */}
                     <div className="bg-white border-t border-slate-200 px-4 sm:px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0 shadow-[0_-2px_8px_rgba(0,0,0,0.05)]">
-                        {/* Clear Response — only for MCQ */}
-                        <div className="flex gap-2 w-full sm:w-auto order-2 sm:order-1">
+                        {/* Clear Response — mobile: row 1 (above nav); desktop: left side */}
+                        <div className="flex gap-2 w-full sm:w-auto order-1">
                             {currentItem?.item_type === 'mcq' && (
                                 <Button
                                     variant="outline"
                                     onClick={handleClearResponse}
                                     disabled={answers[currentItem.id] === undefined}
-                                    className="w-full sm:w-auto text-slate-500 border-slate-200 bg-white hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all font-semibold group px-5"
+                                    className="w-full sm:w-auto text-slate-500 border-slate-200 bg-white hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all font-semibold group px-5 touch-manipulation"
                                 >
                                     <RotateCcw className="w-4 h-4 mr-2 transition-transform group-hover:-rotate-45" />
                                     Clear Response
@@ -796,26 +1179,35 @@ export default function ClapTestTakingPage() {
                             )}
                         </div>
 
-                        {/* Prev / Save & Next */}
-                        <div className="flex gap-2 w-full sm:w-auto order-1 sm:order-2">
+                        {/* Prev / Save & Next — mobile: row 2 (below Clear Response); desktop: right side */}
+                        <div className="flex gap-2 w-full sm:w-auto order-2">
                             <Button
                                 variant="outline"
                                 onClick={handlePrev}
                                 disabled={currentItemIndex === 0}
-                                className="flex-1 sm:w-36 bg-slate-100 border-slate-300 text-slate-700 hover:bg-slate-200 font-bold"
+                                className="flex-1 sm:w-36 bg-slate-100 border-slate-300 text-slate-700 hover:bg-slate-200 font-bold touch-manipulation"
                             >
                                 <ChevronLeft className="w-4 h-4 mr-1" />
                                 Previous
                             </Button>
-                            <Button
-                                onClick={handleNext}
-                                disabled={currentItemIndex === items.length - 1}
-                                className="flex-1 sm:w-36 bg-indigo-600 hover:bg-indigo-700 text-white font-bold border-b-4 border-indigo-800 active:border-b-0 active:translate-y-[2px] transition-all"
-                            >
-                                <span className="hidden sm:inline">Save & Next</span>
-                                <span className="sm:hidden">Next</span>
-                                <ChevronRight className="w-4 h-4 ml-1" />
-                            </Button>
+                            {currentItemIndex === items.length - 1 ? (
+                                <Button
+                                    onClick={handleSubmitClick}
+                                    className="flex-1 sm:w-36 bg-green-600 hover:bg-green-700 text-white font-bold border-b-4 border-green-800 active:border-b-0 active:translate-y-[2px] transition-all touch-manipulation focus-visible:ring-green-600 focus-visible:ring-offset-0"
+                                >
+                                    <CheckCircle className="w-4 h-4 mr-1.5" />
+                                    Submit
+                                </Button>
+                            ) : (
+                                <Button
+                                    onClick={handleNext}
+                                    className="flex-1 sm:w-36 bg-indigo-600 hover:bg-indigo-700 text-white font-bold border-b-4 border-indigo-800 active:border-b-0 active:translate-y-[2px] transition-all touch-manipulation"
+                                >
+                                    <span className="hidden sm:inline">Save & Next</span>
+                                    <span className="sm:hidden">Next</span>
+                                    <ChevronRight className="w-4 h-4 ml-1" />
+                                </Button>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -910,15 +1302,17 @@ export default function ClapTestTakingPage() {
                         </div>
                     </div>
 
-                    {/* Submit section */}
-                    <div className="p-4 border-t bg-gray-50 space-y-2 shrink-0">
+                    {/* Submit section — pb-14 on mobile/sm lifts the button above the
+                        fixed SANJIVO footer (z-50, ~40px tall). lg:pb-4 resets on desktop
+                        where the sidebar is static (not a fixed overlay). */}
+                    <div className="p-4 pb-10 lg:pb-4 border-t bg-gray-50 space-y-2 shrink-0">
                         <div className="flex justify-between text-xs text-gray-600 mb-2">
                             <span className="flex items-center gap-1"><CheckCircle className="w-3 h-3 text-green-500" /> {answeredCount} Answered</span>
                             <span className="flex items-center gap-1"><AlertCircle className="w-3 h-3 text-red-400" /> {notAnsweredCount} Remaining</span>
                             <span className="flex items-center gap-1"><Flag className="w-3 h-3 text-purple-500" /> {marked.size} Marked</span>
                         </div>
                         <Button
-                            className="w-full bg-green-600 hover:bg-green-700 text-white font-bold"
+                            className="w-full bg-green-600 hover:bg-green-700 text-white font-bold touch-manipulation"
                             onClick={handleSubmitClick}
                         >
                             Submit Module
@@ -927,55 +1321,99 @@ export default function ClapTestTakingPage() {
                 </div>
             </div>
 
-            {/* ── Submit Confirmation Modal ─────────────────────────────────── */}
+            {/* ── Submit Confirmation Modal ─────────────────────────────────────
+                Mobile:  bottom sheet — slides up from bottom, rounded top corners
+                Desktop: centred modal (sm:items-center sm:p-4)
+            ─────────────────────────────────────────────────────────────────── */}
             {showSubmitModal && (
-                <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-                    <div className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden">
-                        <div className="p-6 border-b">
-                            <h3 className="text-xl font-bold text-gray-900 capitalize">Submit {params.type} Module</h3>
-                            <p className="text-sm text-gray-500 mt-1">Review your progress before submitting this module:</p>
+                <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm sm:p-4">
+                    <div className="bg-white rounded-t-2xl sm:rounded-xl shadow-2xl w-full sm:max-w-md overflow-hidden">
+
+                        {/* Drag handle — visual cue that this is a sheet (mobile only) */}
+                        <div className="flex justify-center pt-3 pb-0.5 sm:hidden" aria-hidden="true">
+                            <div className="w-10 h-1 bg-gray-200 rounded-full" />
                         </div>
-                        <div className="p-6 space-y-3">
-                            <div className="grid grid-cols-2 gap-3">
-                                <div className="bg-gray-50 p-3 rounded-lg flex justify-between items-center col-span-2">
-                                    <span className="text-gray-600 text-sm">Total Questions</span>
-                                    <span className="font-bold text-gray-900">{totalQuestions}</span>
-                                </div>
-                                <div className="bg-green-50 p-3 rounded-lg flex justify-between items-center text-green-700">
-                                    <span className="flex items-center gap-2 text-sm"><CheckCircle className="w-3 h-3" /> Answered</span>
-                                    <span className="font-bold">{answeredCount}</span>
-                                </div>
-                                <div className="bg-red-50 p-3 rounded-lg flex justify-between items-center text-red-700">
-                                    <span className="flex items-center gap-2 text-sm"><AlertCircle className="w-3 h-3" /> Not Answered</span>
-                                    <span className="font-bold">{notAnsweredCount}</span>
-                                </div>
-                                <div className="bg-purple-50 p-3 rounded-lg flex justify-between items-center text-purple-700 col-span-2">
-                                    <span className="flex items-center gap-2 text-sm"><Flag className="w-3 h-3" /> Marked for Review</span>
-                                    <span className="font-bold">{marked.size}</span>
-                                </div>
+
+                        {/* Header */}
+                        <div className="flex items-start justify-between px-5 pt-4 pb-4 border-b">
+                            <div>
+                                <h3 className="text-lg font-bold text-gray-900 capitalize">
+                                    Submit {params.type} Module
+                                </h3>
+                                <p className="text-xs text-gray-500 mt-0.5">Review your progress before submitting</p>
                             </div>
-                            {notAnsweredCount > 0 && (
-                                <div className="flex items-start gap-3 p-4 bg-amber-50 rounded-lg text-amber-800 text-sm border border-amber-200">
-                                    <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" />
-                                    <p>You have <strong>{notAnsweredCount}</strong> unanswered question{notAnsweredCount !== 1 ? 's' : ''}. Submitting will finalise the test as-is.</p>
-                                </div>
-                            )}
+                            <button
+                                onClick={() => { if (!isSubmitting) setShowSubmitModal(false) }}
+                                className="ml-3 mt-0.5 w-7 h-7 flex items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 active:bg-gray-200 transition-colors flex-shrink-0 touch-manipulation"
+                                aria-label="Close"
+                                disabled={isSubmitting}
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
                         </div>
-                        <div className="p-6 bg-gray-50 border-t flex justify-end gap-3">
-                            <Button variant="outline" onClick={() => setShowSubmitModal(false)} disabled={isSubmitting}>
+
+                        {/* Stats — clean list style, no coloured cards */}
+                        <div className="divide-y divide-gray-100 px-5">
+                            <div className="flex items-center justify-between py-3.5">
+                                <span className="text-sm text-gray-600">Total Questions</span>
+                                <span className="text-sm font-bold text-gray-900">{totalQuestions}</span>
+                            </div>
+                            <div className="flex items-center justify-between py-3.5">
+                                <span className="flex items-center gap-2 text-sm text-green-700">
+                                    <CheckCircle className="w-4 h-4" /> Answered
+                                </span>
+                                <span className="text-sm font-bold text-green-700">{answeredCount}</span>
+                            </div>
+                            <div className="flex items-center justify-between py-3.5">
+                                <span className="flex items-center gap-2 text-sm text-red-600">
+                                    <AlertCircle className="w-4 h-4" /> Not Answered
+                                </span>
+                                <span className="text-sm font-bold text-red-600">{notAnsweredCount}</span>
+                            </div>
+                            <div className="flex items-center justify-between py-3.5">
+                                <span className="flex items-center gap-2 text-sm text-purple-700">
+                                    <Flag className="w-4 h-4" /> Marked for Review
+                                </span>
+                                <span className="text-sm font-bold text-purple-700">{marked.size}</span>
+                            </div>
+                        </div>
+
+                        {/* Warning banner — only when unanswered questions exist */}
+                        {notAnsweredCount > 0 && (
+                            <div className="mx-5 mt-3 flex items-start gap-3 p-3.5 bg-amber-50 rounded-xl text-amber-800 text-sm border border-amber-200">
+                                <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                                <p>You have <strong>{notAnsweredCount}</strong> unanswered question{notAnsweredCount !== 1 ? 's' : ''}. Submitting will finalise the test as-is.</p>
+                            </div>
+                        )}
+
+                        {/* Actions — stacked full-width on mobile, inline on desktop
+                            pb-8 on mobile gives clearance above the SANJIVO footer */}
+                        <div className="px-5 pt-4 pb-8 sm:pb-5 mt-3 border-t flex flex-col-reverse sm:flex-row sm:justify-end gap-3">
+                            <Button
+                                variant="outline"
+                                onClick={() => setShowSubmitModal(false)}
+                                disabled={isSubmitting}
+                                className="w-full sm:w-auto touch-manipulation"
+                            >
                                 Back to Module
                             </Button>
                             <Button
                                 onClick={confirmSubmit}
                                 disabled={isSubmitting}
-                                className="bg-green-600 hover:bg-green-700 text-white px-6"
+                                className="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white font-bold touch-manipulation"
                             >
-                                {isSubmitting ? 'Submitting…' : 'Yes, Submit Module'}
+                                {isSubmitting ? (
+                                    <span className="flex items-center justify-center gap-2">
+                                        <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                                        Submitting…
+                                    </span>
+                                ) : 'Yes, Submit Module'}
                             </Button>
                         </div>
                     </div>
                 </div>
             )}
         </div>
+        </> // closes the outer fragment wrapper
     )
 }

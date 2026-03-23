@@ -35,6 +35,7 @@ import {
 import { toast } from 'sonner'
 import { getApiUrl, apiFetch, getAuthHeaders } from '@/lib/api-config'
 import { getGradeInfo, formatDuration } from '@/lib/grade-utils'
+import { CubeLoader } from '@/components/ui/CubeLoader'
 
 interface IntegrityFlags {
   tab_switches: number
@@ -105,6 +106,9 @@ export default function ClapTestResultsPage() {
   const [previewRow, setPreviewRow]       = useState<ResultRow | null>(null)
   const [previewData, setPreviewData]     = useState<any>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
+
+  // Report download — tracks which student_ids are currently fetching the presigned URL
+  const [reportLoadingIds, setReportLoadingIds] = useState<Set<string>>(new Set())
 
   // Filters & sort
   const [searchInput, setSearchInput] = useState('')
@@ -179,7 +183,7 @@ export default function ClapTestResultsPage() {
       )
       if (res.ok) setPreviewData(await res.json())
       else setPreviewData({ error: 'Failed to load answers' })
-    } catch {
+    } catch (_e) {
       setPreviewData({ error: 'Network error' })
     } finally {
       setPreviewLoading(false)
@@ -246,7 +250,7 @@ export default function ClapTestResultsPage() {
       const headers = [
         'Student ID', 'Set', 'Status',
         'Start Time', 'End Time', 'Duration',
-        'Listening', 'Speaking', 'Writing', 'Reading', 'Vocabulary & Grammar',
+        'Listening', 'Speaking', 'Writing', 'Reading', 'Verbal Ability',
         'Total Marks', 'Grade',
       ]
       const rows = allResults.map(r => [
@@ -287,67 +291,40 @@ export default function ClapTestResultsPage() {
     }
   }
 
-  // Per-student report card
-  const handleDownloadReport = (student: ResultRow) => {
-    const gradeInfo = getGradeInfo(student.grade)
-    const printWindow = window.open('', '_blank')
-    if (!printWindow) {
-      toast.error('Please allow pop-ups to download report cards')
+  // Per-student report — fetches presigned S3 URL and opens the actual PDF
+  const handleDownloadReport = async (student: ResultRow) => {
+    if (!student.submission_id) {
+      toast.error('No submission found for this student')
       return
     }
+    if (reportLoadingIds.has(student.student_id)) return  // prevent double-click
 
-    printWindow.document.write(`<!DOCTYPE html>
-<html><head><title>CLAP Report - ${student.student_id}</title>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: 'Segoe UI', Arial, sans-serif; padding: 40px; color: #1f2937; line-height: 1.6; }
-  .header { text-align: center; margin-bottom: 32px; padding-bottom: 20px; border-bottom: 3px solid #4f46e5; }
-  .header h1 { font-size: 28px; color: #4f46e5; margin-bottom: 4px; }
-  .header p { font-size: 13px; color: #6b7280; }
-  .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 28px; padding: 20px; background: #f9fafb; border-radius: 8px; }
-  .info-grid p { font-size: 14px; }
-  .info-grid strong { color: #374151; }
-  .scores-table { width: 100%; border-collapse: collapse; margin-bottom: 28px; }
-  .scores-table th, .scores-table td { border: 1px solid #e5e7eb; padding: 10px 14px; text-align: left; font-size: 14px; }
-  .scores-table th { background: #f3f4f6; font-weight: 600; color: #374151; }
-  .scores-table .total-row { background: #eef2ff; font-weight: 700; }
-  .grade-box { text-align: center; padding: 24px; background: #f0fdf4; border-radius: 8px; border: 2px solid #86efac; }
-  .grade-box .grade { font-size: 48px; font-weight: 800; color: #16a34a; }
-  .grade-box .label { font-size: 14px; color: #6b7280; margin-top: 4px; }
-  .footer { text-align: center; margin-top: 32px; padding-top: 16px; border-top: 1px solid #e5e7eb; font-size: 11px; color: #9ca3af; }
-  @media print { body { padding: 20px; } }
-</style></head><body>
-  <div class="header">
-    <h1>CLAP TEST REPORT CARD</h1>
-    <p>${testInfo?.test_name || 'CLAP Test'} &bull; ID: ${testInfo?.test_id || ''} &bull; Generated: ${new Date().toLocaleDateString()}</p>
-  </div>
-  <div class="info-grid">
-    <p><strong>Student ID:</strong> ${student.student_id}</p>
-    <p><strong>Set:</strong> ${student.assigned_set_label || 'N/A'}</p>
-    <p><strong>Status:</strong> ${formatStatus(student.status)}</p>
-    <p><strong>Duration:</strong> ${formatDuration(student.duration_minutes)}</p>
-    <p><strong>Start Time:</strong> ${student.started_at ? new Date(student.started_at).toLocaleString() : 'N/A'}</p>
-    <p><strong>Completed:</strong> ${student.completed_at ? new Date(student.completed_at).toLocaleString() : 'N/A'}</p>
-  </div>
-  <table class="scores-table">
-    <thead><tr><th>Component</th><th>Marks Obtained</th><th>Maximum Marks</th></tr></thead>
-    <tbody>
-      <tr><td>Listening</td><td>${student.listening_marks != null ? student.listening_marks : '-'}</td><td>${student.component_max?.listening || 10}</td></tr>
-      <tr><td>Speaking</td><td>${student.speaking_marks != null ? student.speaking_marks : '-'}</td><td>${student.component_max?.speaking || 10}</td></tr>
-      <tr><td>Reading</td><td>${student.reading_marks != null ? student.reading_marks : '-'}</td><td>${student.component_max?.reading || 10}</td></tr>
-      <tr><td>Writing</td><td>${student.writing_marks != null ? student.writing_marks : '-'}</td><td>${student.component_max?.writing || 10}</td></tr>
-      <tr><td>Vocabulary &amp; Grammar</td><td>${student.vocabulary_marks != null ? student.vocabulary_marks : '-'}</td><td>${student.component_max?.vocabulary || 10}</td></tr>
-      <tr class="total-row"><td>Total</td><td>${student.total_score != null ? student.total_score : '-'}</td><td>${student.max_possible_score}</td></tr>
-    </tbody>
-  </table>
-  <div class="grade-box">
-    <div class="grade">${student.grade || 'N/A'}</div>
-    <div class="label">${gradeInfo ? gradeInfo.label : 'Not Graded'}</div>
-  </div>
-  <div class="footer">CLAP Assessment System &bull; This is a computer-generated report</div>
-</body></html>`)
-    printWindow.document.close()
-    setTimeout(() => printWindow.print(), 250)
+    setReportLoadingIds(prev => new Set(prev).add(student.student_id))
+    try {
+      const res = await apiFetch(
+        getApiUrl(`admin/reports/submissions/${student.submission_id}`),
+        { headers: getAuthHeaders() }
+      )
+      if (!res.ok) {
+        toast.error('Failed to fetch report. Please try again.')
+        return
+      }
+      const data = await res.json()
+      const url: string | null = data.report_download_url || null
+      if (!url) {
+        toast.error('Report PDF is not available yet. Please wait for the pipeline to complete.')
+        return
+      }
+      window.open(url, '_blank', 'noopener,noreferrer')
+    } catch {
+      toast.error('Failed to open report. Please try again.')
+    } finally {
+      setReportLoadingIds(prev => {
+        const next = new Set(prev)
+        next.delete(student.student_id)
+        return next
+      })
+    }
   }
 
   return (
@@ -403,11 +380,7 @@ export default function ClapTestResultsPage() {
         )}
 
         {/* Loading State (initial) */}
-        {loading && !testInfo && (
-          <div className="flex items-center justify-center py-24">
-            <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
-          </div>
-        )}
+        {loading && !testInfo && <CubeLoader fullScreen={false} />}
 
         {/* Main Content */}
         {testInfo && !error && (
@@ -638,9 +611,13 @@ export default function ClapTestResultsPage() {
                                       size="sm"
                                       className="h-8 w-8 p-0"
                                       onClick={() => handleDownloadReport(r)}
-                                      title="Download Report Card"
+                                      disabled={reportLoadingIds.has(r.student_id)}
+                                      title="Open PDF Report"
                                     >
-                                      <Printer className="w-4 h-4 text-gray-500 hover:text-gray-700" />
+                                      {reportLoadingIds.has(r.student_id)
+                                        ? <Loader2 className="w-4 h-4 animate-spin text-indigo-500" />
+                                        : <Printer className="w-4 h-4 text-gray-500 hover:text-gray-700" />
+                                      }
                                     </Button>
                                   ) : r.submission_status && r.submission_status !== 'COMPLETE' ? (
                                     <span className="text-[10px] text-amber-500 font-medium whitespace-nowrap" title={`Pipeline: ${r.submission_status}`}>
@@ -755,7 +732,7 @@ export default function ClapTestResultsPage() {
                   {(previewData.components || []).map((comp: any, ci: number) => {
                     const typeLabel: Record<string, string> = {
                       listening: 'Listening', reading: 'Reading',
-                      vocabulary: 'Vocabulary & Grammar',
+                      vocabulary: 'Verbal Ability',
                       writing: 'Writing', speaking: 'Speaking',
                     }
                     const typeColor: Record<string, string> = {
@@ -772,7 +749,7 @@ export default function ClapTestResultsPage() {
                             {typeLabel[comp.test_type] || comp.test_type} — {comp.title}
                           </span>
                           <div className="flex items-center gap-3 text-white/90 text-xs">
-                            {comp.llm_score != null && (
+                            {comp.llm_score != null && (comp.test_type === 'writing' || comp.test_type === 'speaking') && (
                               <span className="bg-white/20 px-2 py-0.5 rounded">
                                 LLM: {comp.llm_score}/10
                               </span>
@@ -781,8 +758,8 @@ export default function ClapTestResultsPage() {
                           </div>
                         </div>
 
-                        {/* LLM feedback (writing/speaking) */}
-                        {comp.llm_feedback && (
+                        {/* LLM feedback (writing/speaking only) */}
+                        {comp.llm_feedback && (comp.test_type === 'writing' || comp.test_type === 'speaking') && (
                           <div className="px-4 py-3 bg-amber-50 border-b text-xs text-amber-800">
                             <p className="font-medium mb-1">LLM Feedback</p>
                             <pre className="whitespace-pre-wrap font-sans">
@@ -800,6 +777,11 @@ export default function ClapTestResultsPage() {
                             const correctIdx: number | null = item.correct_option_index
                             const selectedIdx: number | null = item.selected_option_index
                             const isCorrect: boolean | null = item.is_correct
+                            // has_response === false means NO StudentClapResponse row exists
+                            // (student genuinely skipped this question).
+                            // Strict equality avoids false positives when the backend
+                            // returns an older response without the has_response field.
+                            const notAnswered = item.has_response === false
 
                             return (
                               <div key={ii} className="px-4 py-3">
@@ -810,7 +792,14 @@ export default function ClapTestResultsPage() {
                                   <p className="text-sm text-gray-800 flex-1">
                                     {item.content?.question || item.content?.prompt || '—'}
                                   </p>
-                                  {item.marks_awarded != null && (
+                                  {/* "Not answered" badge — only for MCQ items that have options */}
+                                  {item.item_type === 'mcq' && options.length > 0 && notAnswered && (
+                                    <span className="text-[10px] font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 shrink-0 whitespace-nowrap">
+                                      Not answered
+                                    </span>
+                                  )}
+                                  {/* Marks — suppress for unanswered MCQ to avoid a misleading red 0/N */}
+                                  {item.marks_awarded != null && !notAnswered && (
                                     <span className={`text-xs font-bold shrink-0 ${
                                       isCorrect ? 'text-green-600' : 'text-red-500'
                                     }`}>
@@ -819,17 +808,25 @@ export default function ClapTestResultsPage() {
                                   )}
                                 </div>
 
-                                {/* MCQ options */}
-                                {isMCQ && options.length > 0 && (
+                                {/* MCQ options — item-level check so text_block / audio_block items are excluded */}
+                                {item.item_type === 'mcq' && options.length > 0 && (
                                   <div className="ml-8 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                                     {options.map((opt: string, oi: number) => {
                                       const isCorrectOpt = oi === correctIdx
                                       const isSelectedOpt = oi === selectedIdx
                                       const isWrong = isSelectedOpt && !isCorrectOpt
 
+                                      // Three visual states:
+                                      //   green  — student selected this AND it is correct
+                                      //   amber  — correct answer, student didn't answer at all
+                                      //   green  — correct answer, student answered wrong (show correct)
+                                      //   red    — student selected this but it is wrong
+                                      //   gray   — neutral (not relevant to this question)
                                       let bg = 'bg-gray-50 border-gray-200 text-gray-700'
                                       if (isCorrectOpt && isSelectedOpt)
                                         bg = 'bg-green-50 border-green-400 text-green-800'
+                                      else if (isCorrectOpt && notAnswered)
+                                        bg = 'bg-amber-50 border-amber-300 text-amber-800'
                                       else if (isCorrectOpt)
                                         bg = 'bg-green-50 border-green-300 text-green-700'
                                       else if (isWrong)
@@ -845,7 +842,7 @@ export default function ClapTestResultsPage() {
                                           </span>
                                           <span className="flex-1">{opt}</span>
                                           {isCorrectOpt && (
-                                            <CheckCircle2 className="w-3.5 h-3.5 text-green-600 shrink-0" />
+                                            <CheckCircle2 className={`w-3.5 h-3.5 shrink-0 ${notAnswered ? 'text-amber-500' : 'text-green-600'}`} />
                                           )}
                                           {isWrong && (
                                             <XCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />
@@ -857,14 +854,14 @@ export default function ClapTestResultsPage() {
                                 )}
 
                                 {/* Writing / Speaking text response */}
-                                {!isMCQ && item.response_text && (
+                                {item.item_type !== 'mcq' && item.response_text && (
                                   <div className="ml-8 mt-1.5 text-xs bg-gray-50 rounded p-2.5 text-gray-700 border border-gray-200 whitespace-pre-wrap">
                                     {item.response_text}
                                   </div>
                                 )}
 
-                                {/* No response */}
-                                {!isMCQ && !item.response_text && (
+                                {/* No response (writing / speaking only) */}
+                                {item.item_type !== 'mcq' && !item.response_text && (
                                   <div className="ml-8 mt-1.5 text-xs text-gray-400 italic">
                                     No response submitted
                                   </div>
@@ -972,6 +969,11 @@ function formatStatus(status: string): string {
 }
 
 function IntegrityBadge({ row }: { row: ResultRow }) {
+  // No test activity means no integrity data to show
+  if (row.status === 'assigned') {
+    return <span className="text-gray-300">-</span>
+  }
+
   const count = row.malpractice_count ?? 0
   const flags = row.integrity_flags ?? { tab_switches: 0, fullscreen_exits: 0, paste_attempts: 0, similarity_flags: 0 }
 

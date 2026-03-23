@@ -7,7 +7,7 @@ import os
 import json
 from datetime import datetime
 from django.conf import settings
-from django.http import JsonResponse, FileResponse, Http404
+from django.http import JsonResponse, FileResponse, StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from api.models import ClapTestItem, AdminAudioFile, StudentClapAssignment, StudentClapResponse
@@ -73,30 +73,31 @@ def retrieve_audio_file(request, item_id):
 
     # Serve file — route based on storage backend
     if admin_audio.file_path.startswith('s3://'):
-        # A1/A2: S3-backed audio — generate a short-lived presigned URL and
-        # redirect.  The browser/audio element follows the 302 automatically,
-        # and bytes never pass through Django (no memory pressure, no FD leak).
+        # Stream through Django instead of redirecting to S3.
+        # A browser fetch() follows the 302 redirect to S3, but S3 presigned
+        # URLs are cross-origin and blocked by CORS unless the bucket has an
+        # explicit AllowedOrigins CORS rule for every frontend domain.
+        # Streaming through Django sidesteps S3 CORS entirely — the browser
+        # only ever talks to the Django origin it already trusts.
+        # Auth checks (assignment ownership, play-limit) already ran above.
         from api.utils.storage import get_s3_client
-        from django.http import HttpResponseRedirect
         client = get_s3_client()
         if not client:
             return JsonResponse({'error': 'S3 client not configured'}, status=503)
         try:
             without_scheme = admin_audio.file_path[len('s3://'):]
             bucket, _, key = without_scheme.partition('/')
-            presigned_url = client.generate_presigned_url(
-                ClientMethod='get_object',
-                Params={'Bucket': bucket, 'Key': key},
-                ExpiresIn=900,  # 15 minutes — covers one test session
+            s3_obj = client.get_object(Bucket=bucket, Key=key)
+            content_type = admin_audio.mime_type or s3_obj.get('ContentType', 'audio/mpeg')
+            response = StreamingHttpResponse(
+                s3_obj['Body'].iter_chunks(chunk_size=65536),
+                content_type=content_type,
             )
-            # Phase 2.2: do NOT cache this redirect — each request passes through
-            # auth checks (assignment ownership, play-limit enforcement) and
-            # generates a fresh presigned URL.  Caching would bypass those checks.
-            redirect = HttpResponseRedirect(presigned_url)
-            redirect['Cache-Control'] = 'no-store'
-            return redirect
+            response['Content-Disposition'] = 'inline'
+            response['Cache-Control'] = 'no-store'
+            return response
         except Exception as exc:
-            return JsonResponse({'error': f'Failed to generate audio URL: {exc}'}, status=500)
+            return JsonResponse({'error': f'Failed to fetch audio: {exc}'}, status=500)
 
     # Local filesystem audio — shared listening asset, safe to cache publicly.
     # A2: explicit file handle management — close on exception to prevent FD leak.

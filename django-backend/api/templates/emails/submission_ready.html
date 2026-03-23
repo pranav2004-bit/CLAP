@@ -1,28 +1,130 @@
 <!doctype html>
 <html>
-  <body style="font-family: Arial, sans-serif; color: #222;">
-    <h2>Your CLAP Assessment Results Are Ready</h2>
-    <p>Hello {{ student_name|escape }},</p>
-    <p>Your assessment report has been generated successfully.</p>
-    <table style="border-collapse: collapse; width: 100%; max-width: 520px;">
-      <thead>
-        <tr>
-          <th style="border:1px solid #ccc;padding:8px;text-align:left;">Domain</th>
-          <th style="border:1px solid #ccc;padding:8px;text-align:left;">Score</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for s in scores %}
-        <tr>
-          <td style="border:1px solid #ccc;padding:8px;">{{ s.domain }}</td>
-          <td style="border:1px solid #ccc;padding:8px;">{{ s.score }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
+  <body style="font-family: Arial, sans-serif; color: #222; margin: 0; padding: 20px; background: #f4f6fb;">
+
+    <table style="max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 8px; overflow: hidden; border: 1px solid #dde3ef;">
+
+      <!-- ── Header banner ── -->
+      <tr>
+        <td style="background: #1a3c6e; padding: 20px 28px;">
+          <table style="width:100%;border:none;border-collapse:collapse;margin:0;">
+            <tr>
+              {% if logo_data_uri %}
+              <td style="border:none;padding:0;vertical-align:middle;width:56px;">
+                <img src="{{ logo_data_uri }}" alt="CLAP Logo"
+                     style="height:44px;width:auto;display:block;border-radius:4px;" />
+              </td>
+              <td style="border:none;padding:0 0 0 14px;vertical-align:middle;">
+              {% else %}
+              <td style="border:none;padding:0;vertical-align:middle;">
+              {% endif %}
+                <h1 style="margin:0;font-size:18px;color:#ffffff;font-weight:700;">Score Report Ready</h1>
+                <p style="margin:3px 0 0;font-size:12px;color:#b8cce4;letter-spacing:0.03em;">Comprehensive Language Assessment Program</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+
+      <!-- ── Greeting ── -->
+      <tr>
+        <td style="padding: 24px 28px 8px;">
+          <p style="margin: 0; font-size: 15px;">Hello <strong>{{ student_name|escape }}</strong>,</p>
+          <p style="margin: 10px 0 0; font-size: 14px; color: #444;">
+            Your CLAP assessment has been evaluated and your report is now ready.
+            A summary of your scores is shown below.
+          </p>
+        </td>
+      </tr>
+
+      <!-- ── Per-domain scores table ── -->
+      <tr>
+        <td style="padding: 16px 28px 8px;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+            <thead>
+              <tr>
+                <th style="border: 1px solid #ccc; padding: 8px 12px; text-align: left; background: #1a3c6e; color: #fff;">Domain</th>
+                <th style="border: 1px solid #ccc; padding: 8px 12px; text-align: left; background: #1a3c6e; color: #fff;">Score&nbsp;/ 10</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for s in scores %}
+              <tr style="{% if s.domain == 'writing' or s.domain == 'speaking' %}background: #fff8e1;{% elif forloop.counter|divisibleby:2 %}background: #f5f7fa;{% endif %}">
+                <td style="border: 1px solid #ccc; padding: 8px 12px; text-transform: capitalize;">{{ s.domain }}</td>
+                <td style="border: 1px solid #ccc; padding: 8px 12px; font-weight: bold; color: #1a3c6e;">{{ s.score }}</td>
+              </tr>
+              {% endfor %}
+
+              <!-- ── Total score row ── -->
+              {% if total_score is not None %}
+              <tr style="background: #dce8f8; border-top: 2px solid #1a3c6e;">
+                <td style="border: 1px solid #ccc; padding: 10px 12px; font-weight: bold; font-size: 15px;">Total Score</td>
+                <td style="border: 1px solid #ccc; padding: 10px 12px; font-weight: bold; font-size: 15px; color: #1a3c6e;">{{ total_score }} / {{ max_total }}</td>
+              </tr>
+
+              <!-- ── Grade row ── -->
+              <tr style="background: #1a3c6e;">
+                <td style="border: 1px solid #1a3c6e; padding: 10px 12px; font-weight: bold; font-size: 15px; color: #ffffff;">Grade</td>
+                <td style="border: 1px solid #1a3c6e; padding: 10px 12px;">
+                  <span style="display: inline-block; background: #ffffff; color: #1a3c6e; border: 2px solid #b8cce4; border-radius: 4px; padding: 2px 14px; font-size: 16px; font-weight: bold; letter-spacing: 1px;">{{ grade }}</span>
+                </td>
+              </tr>
+              {% endif %}
+            </tbody>
+          </table>
+
+          <!-- Grade scale legend -->
+          {% if grade %}
+          <p style="margin: 8px 0 0; font-size: 11px; color: #888;">
+            Grade scale:
+            <span style="margin-right: 10px;">O &ge;90%</span>
+            <span style="margin-right: 10px;">A+ &ge;80%</span>
+            <span style="margin-right: 10px;">A &ge;70%</span>
+            <span style="margin-right: 10px;">B+ &ge;60%</span>
+            <span>B &lt;60%</span>
+          </p>
+          {% endif %}
+        </td>
+      </tr>
+
+      <!-- ── Download CTA ── -->
+      <tr>
+        <td style="padding: 20px 28px 8px;">
+          <p style="margin: 0; font-size: 14px; color: #444;">
+            Your detailed report (PDF) includes per-criterion breakdowns for Writing and Speaking.
+            The download link below is valid for <strong>7 days</strong>.
+          </p>
+          <p style="margin: 14px 0 0;">
+            <a href="{{ report_url }}"
+               style="display: inline-block; background: #1a3c6e; color: #ffffff; text-decoration: none; padding: 10px 22px; border-radius: 5px; font-size: 14px; font-weight: bold;">
+              Download My Report
+            </a>
+          </p>
+          <p style="margin: 8px 0 0; font-size: 12px; color: #888; word-break: break-all;">
+            {{ report_url }}
+          </p>
+        </td>
+      </tr>
+
+      <!-- ── Dashboard link ── -->
+      <tr>
+        <td style="padding: 12px 28px 24px;">
+          <p style="margin: 0; font-size: 13px; color: #555;">
+            You can also view your results and history in the
+            <a href="#" style="color: #1a3c6e;">CLAP student dashboard</a>.
+          </p>
+        </td>
+      </tr>
+
+      <!-- ── Footer ── -->
+      <tr>
+        <td style="background: #f0f4fb; padding: 14px 28px; border-top: 1px solid #dde3ef;">
+          <p style="margin: 0; font-size: 11px; color: #999;">
+            This is an automated message from the CLAP platform. Please do not reply to this email.
+          </p>
+        </td>
+      </tr>
+
     </table>
-    <p style="margin-top: 16px;">
-      Download your report: <a href="{{ report_url }}">{{ report_url }}</a>
-    </p>
-    <p>You can also view results in your CLAP dashboard.</p>
   </body>
 </html>

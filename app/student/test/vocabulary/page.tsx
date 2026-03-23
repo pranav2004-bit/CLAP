@@ -174,7 +174,7 @@ export default function VocabularyTestPage() {
               <BookA className="w-5 h-5" />
             </div>
             <div>
-              <h1 className="text-xl font-bold">Vocabulary & Grammar Test</h1>
+              <h1 className="text-xl font-bold">Verbal Ability Test</h1>
               <p className="text-indigo-100 text-sm">Question {currentQuestion + 1} of {vocabularyQuestions.length}</p>
             </div>
           </div>

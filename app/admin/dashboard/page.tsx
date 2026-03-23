@@ -16,7 +16,8 @@ import {
   Zap,
   ChevronDown,
 } from 'lucide-react'
-import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders, isNetworkError, markBackendOffline } from '@/lib/api-config'
+import { CubeLoader } from '@/components/ui/CubeLoader'
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -235,6 +236,7 @@ export default function AdminDashboardPage() {
       })
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') return
+      if (isNetworkError(err)) { markBackendOffline(); return }
       console.error('[Dashboard] Tests list fetch error:', err)
     } finally {
       if (!ctrl.signal.aborted) setTestsLoading(false)
@@ -414,11 +416,9 @@ export default function AdminDashboardPage() {
         </div>
       )}
 
-      {/* KPI cards — skeleton on first load */}
+      {/* KPI cards — cube loader on first load */}
       {!stats && loading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-          {Array.from({ length: 5 }).map((_, i) => <SkeletonCard key={i} />)}
-        </div>
+        <CubeLoader fullScreen={false} />
       ) : stats ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
 

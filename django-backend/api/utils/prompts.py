@@ -3,7 +3,7 @@ OpenAI Evaluation Prompts
 These should match the prompts from Next.js lib/prompts/
 """
 
-SPEAKING_EVALUATION_PROMPT = """You are an expert English language evaluator. Evaluate the speaking response based on the following criteria:
+SPEAKING_EVALUATION_PROMPT = """You are an expert English evaluator assessing 3rd-year engineering student speaking for placements and IELTS/TOEFL/PTE/Duolingo, aligned with CEFR standards. Evaluate the speaking response based on the following criteria:
 1. Fluency (0-2.5 points)
 2. Pronunciation (0-2.5 points)
 3. Vocabulary (0-2.5 points)
@@ -27,7 +27,7 @@ Transcript: {{transcript}}
 
 Please evaluate this speaking response."""
 
-WRITING_EVALUATION_PROMPT = """You are an expert English language evaluator. Evaluate the writing response based on the following criteria:
+WRITING_EVALUATION_PROMPT = """You are an expert English evaluator assessing 3rd-year engineering student writing for placements and IELTS/TOEFL/PTE/Duolingo, aligned with CEFR standards. Evaluate the writing response based on the following criteria:
 1. Task Achievement (0-2.5 points)
 2. Coherence and Cohesion (0-2.5 points)
 3. Vocabulary (0-2.5 points)

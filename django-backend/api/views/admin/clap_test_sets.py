@@ -21,7 +21,7 @@ import logging
 
 from api.models import (
     ClapTest, ClapTestSet, ClapSetComponent, ClapSetItem,
-    ClapTestComponent, ClapTestItem,
+    ClapTestComponent, ClapTestItem, AdminAudioFile,
     StudentClapAssignment, User
 )
 from api.utils import error_response
@@ -69,6 +69,33 @@ def _item_to_dict(i: ClapSetItem) -> dict:
     content = i.content.copy() if i.content else {}
     # Never expose correct answer to non-admin — strip only for student view;
     # here (admin) we keep full content.
+
+    # ── Audio resolution for audio_block items ────────────────────────────────
+    # Priority 1: the set item has its own audio file (different audio per set).
+    # Priority 2: fall back to the base test item at the same order_index/type
+    #             (all sets share one audio clip — the common case for listening).
+    # The frontend uses `audio_endpoint` + `base_item_id` to call the right API.
+    if i.item_type == 'audio_block':
+        if AdminAudioFile.objects.filter(set_item=i).exists():
+            content['has_audio_file'] = True
+            content['audio_endpoint'] = 'set-items'
+        else:
+            try:
+                base_item = ClapTestItem.objects.filter(
+                    component__clap_test=i.set_component.set.clap_test,
+                    component__test_type=i.set_component.test_type,
+                    order_index=i.order_index,
+                ).first()
+                if base_item and AdminAudioFile.objects.filter(item=base_item).exists():
+                    content['has_audio_file'] = True
+                    content['audio_endpoint'] = 'clap-items'
+                    content['base_item_id'] = str(base_item.id)
+                else:
+                    content['has_audio_file'] = False
+            except Exception:
+                # Defensive: leave content['has_audio_file'] as-is if lookup fails
+                pass
+
     return {
         'id': str(i.id),
         'item_type': i.item_type,

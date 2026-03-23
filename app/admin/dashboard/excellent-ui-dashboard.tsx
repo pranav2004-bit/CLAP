@@ -269,7 +269,7 @@ export default function AdminDashboard() {
                       { name: 'Speaking Test', avgScore: 6.8, icon: 'Mic' },
                       { name: 'Reading Test', avgScore: 8.1, icon: 'BookOpen' },
                       { name: 'Writing Test', avgScore: 7.9, icon: 'PenTool' },
-                      { name: 'Vocabulary Test', avgScore: 8.3, icon: 'Brain' }
+                      { name: 'Verbal Ability Test', avgScore: 8.3, icon: 'Brain' }
                     ].map((test) => {
                       const TestIcon = getTestIconComponent(test.icon);
                       return (
@@ -428,7 +428,7 @@ export default function AdminDashboard() {
                   { name: 'Speaking Test', type: 'speaking', avgScore: 6.8, completionRate: 72, icon: 'Mic' },
                   { name: 'Reading Test', type: 'reading', avgScore: 8.1, completionRate: 92, icon: 'BookOpen' },
                   { name: 'Writing Test', type: 'writing', avgScore: 7.9, completionRate: 88, icon: 'PenTool' },
-                  { name: 'Vocabulary Test', type: 'vocabulary', avgScore: 8.3, completionRate: 95, icon: 'Brain' }
+                  { name: 'Verbal Ability Test', type: 'vocabulary', avgScore: 8.3, completionRate: 95, icon: 'Brain' }
                 ].map((test) => {
                   const TestIcon = getTestIconComponent(test.icon);
                   return (

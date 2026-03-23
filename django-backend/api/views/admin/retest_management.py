@@ -85,7 +85,25 @@ def grant_retest(request, assignment_id):
         with transaction.atomic():
             # --- Step 1: Wipe all responses for this assignment (both MCQ/subjective and audio) ---
             responses_deleted, _ = StudentClapResponse.objects.filter(assignment=assignment).delete()
-            audio_deleted, _ = StudentAudioResponse.objects.filter(assignment=assignment).delete()
+
+            # Delete audio DB rows AND their physical files from S3 / local storage.
+            # QuerySet.delete() is a bulk operation that bypasses per-instance delete()
+            # methods — so we must call delete_file() on each instance first, then
+            # bulk-delete the rows.  We iterate in batches to avoid loading all rows
+            # into memory at once.
+            audio_qs = StudentAudioResponse.objects.filter(assignment=assignment)
+            audio_deleted = 0
+            for audio in audio_qs.iterator(chunk_size=50):
+                try:
+                    audio.delete_file()
+                except Exception as e:
+                    logger.warning(
+                        'Could not delete audio file for response %s (path=%s): %s — '
+                        'DB row will still be deleted; file may be orphaned in storage.',
+                        audio.id, audio.file_path, e,
+                    )
+                audio.delete()
+                audio_deleted += 1
 
             # --- Step 2: Invalidate all existing AssessmentSubmissions for this student + test ---
             # We do NOT hard-delete submissions (audit trail) but we mark them superseded.

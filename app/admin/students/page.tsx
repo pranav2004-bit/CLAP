@@ -29,7 +29,7 @@ export default function AdminStudentsPage() {
           const data = await res.json()
           setBatches(data.batches || [])
         }
-      } catch {
+      } catch (_e) {
         // Non-fatal: bulk import modal will show empty batch list, single-add modal still works
         console.error('Failed to prefetch batches')
       }

@@ -1,6 +1,6 @@
 """
 Django Models for CLAP Application
-Maps to existing Supabase PostgreSQL database schema
+Maps to the application's PostgreSQL database schema
 DO NOT run migrations - these models point to existing tables
 """
 
@@ -10,7 +10,7 @@ from django.utils import timezone
 
 
 class User(models.Model):
-    """Maps to 'users' table in Supabase"""
+    """Maps to corresponding table in the application database"""
     
     ROLE_CHOICES = [
         ('student', 'Student'),
@@ -18,7 +18,7 @@ class User(models.Model):
     ]
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    email = models.EmailField(unique=True, max_length=255, null=True, blank=True)
+    email = models.EmailField(max_length=255, null=True, blank=True)
     role = models.CharField(max_length=20, choices=ROLE_CHOICES)
     full_name = models.CharField(max_length=255, null=True, blank=True)
     username = models.CharField(max_length=100, null=True, blank=True)
@@ -38,7 +38,7 @@ class User(models.Model):
 
 
 class Batch(models.Model):
-    """Maps to 'batches' table in Supabase"""
+    """Maps to corresponding table in the application database"""
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     batch_name = models.CharField(max_length=50, unique=True)
@@ -57,14 +57,14 @@ class Batch(models.Model):
 
 
 class Test(models.Model):
-    """Maps to 'tests' table in Supabase"""
+    """Maps to corresponding table in the application database"""
     
     TEST_TYPE_CHOICES = [
         ('listening', 'Listening'),
         ('speaking', 'Speaking'),
         ('reading', 'Reading'),
         ('writing', 'Writing'),
-        ('vocabulary', 'Vocabulary'),
+        ('vocabulary', 'Verbal Ability'),
     ]
     
     STATUS_CHOICES = [
@@ -91,7 +91,7 @@ class Test(models.Model):
 
 
 class Question(models.Model):
-    """Maps to 'questions' table in Supabase"""
+    """Maps to corresponding table in the application database"""
     
     QUESTION_TYPE_CHOICES = [
         ('mcq', 'Multiple Choice'),
@@ -122,7 +122,7 @@ class Question(models.Model):
 
 
 class TestAttempt(models.Model):
-    """Maps to 'test_attempts' table in Supabase"""
+    """Maps to corresponding table in the application database"""
     
     STATUS_CHOICES = [
         ('in_progress', 'In Progress'),
@@ -150,7 +150,7 @@ class TestAttempt(models.Model):
 
 
 class ClapTest(models.Model):
-    """Maps to 'clap_tests' table in Supabase"""
+    """Maps to corresponding table in the application database"""
     
     STATUS_CHOICES = [
         ('draft', 'Draft'),
@@ -226,7 +226,7 @@ class ClapSetComponent(models.Model):
         ('speaking', 'Speaking'),
         ('reading', 'Reading'),
         ('writing', 'Writing'),
-        ('vocabulary', 'Vocabulary'),
+        ('vocabulary', 'Verbal Ability'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -299,14 +299,14 @@ class ClapTestIdCounter(models.Model):
 
 
 class ClapTestComponent(models.Model):
-    """Maps to 'clap_test_components' table in Supabase"""
+    """Maps to corresponding table in the application database"""
     
     TEST_TYPE_CHOICES = [
         ('listening', 'Listening'),
         ('speaking', 'Speaking'),
         ('reading', 'Reading'),
         ('writing', 'Writing'),
-        ('vocabulary', 'Vocabulary'),
+        ('vocabulary', 'Verbal Ability'),
     ]
     
     STATUS_CHOICES = [
@@ -336,7 +336,7 @@ class ClapTestComponent(models.Model):
 
 
 class StudentClapAssignment(models.Model):
-    """Maps to 'student_clap_assignments' table in Supabase"""
+    """Maps to corresponding table in the application database"""
     
     STATUS_CHOICES = [
         ('assigned', 'Assigned'),
@@ -443,7 +443,7 @@ class ComponentAttempt(models.Model):
 
 
 class ClapTestItem(models.Model):
-    """Maps to 'clap_test_items' table in Supabase"""
+    """Maps to corresponding table in the application database"""
     
     ITEM_TYPE_CHOICES = [
         ('mcq', 'Multiple Choice'),
@@ -473,7 +473,7 @@ class ClapTestItem(models.Model):
 
 
 class StudentClapResponse(models.Model):
-    """Maps to 'student_clap_responses' table in Supabase"""
+    """Maps to corresponding table in the application database"""
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     assignment = models.ForeignKey(StudentClapAssignment, on_delete=models.CASCADE, db_column='assignment_id', related_name='responses')
@@ -647,6 +647,11 @@ class AssessmentSubmission(models.Model):
     report_url = models.TextField(null=True, blank=True)
     correlation_id = models.CharField(max_length=64, null=True, blank=True)
     email_sent_at = models.DateTimeField(null=True, blank=True)
+    # Tracks which LLM domains (writing, speaking) permanently failed after all
+    # retries were exhausted. Populated by _record_llm_domain_failure() in tasks.py.
+    # Example: ["writing"] or ["writing", "speaking"]
+    # Used by: generate_report guard, send_email_report guard, admin results view.
+    llm_failed_domains = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -668,7 +673,7 @@ class SubmissionScore(models.Model):
     DOMAIN_CHOICES = [
         ('listening', 'Listening'),
         ('reading', 'Reading'),
-        ('vocab', 'Vocabulary & Grammar'),
+        ('vocab', 'Verbal Ability'),
         ('writing', 'Writing'),
         ('speaking', 'Speaking'),
     ]

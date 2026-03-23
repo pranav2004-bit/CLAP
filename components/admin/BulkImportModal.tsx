@@ -111,7 +111,7 @@ export function BulkImportModal({ isOpen, onClose, onSuccess, batches }: Props) 
             a.download = 'clap_student_import_template.csv'
             a.click()
             URL.revokeObjectURL(url)
-        } catch {
+        } catch (_e) {
             toast.error('Could not download the template. Please try again.')
         }
     }

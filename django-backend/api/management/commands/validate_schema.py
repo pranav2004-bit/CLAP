@@ -12,7 +12,7 @@ Usage:
 Checks performed:
   1. All expected tables exist in the database
   2. All managed-table FK indexes exist (auto-created by Django)
-  3. Recommended Supabase indexes exist (from supabase-indexes.sql)
+  3. Recommended indexes exist on unmanaged tables
   4. Pending Django migrations exist (integration with migrate --check)
 
 Exit codes (with --exit-code):
@@ -25,7 +25,7 @@ from django.db import connection
 
 
 EXPECTED_TABLES = [
-    # managed=False (Supabase-owned)
+    # managed=False (app DB schema — not controlled by Django migrations)
     'users',
     'batches',
     'tests',
@@ -49,8 +49,8 @@ EXPECTED_TABLES = [
     'django_content_type',
 ]
 
-# Indexes from supabase-indexes.sql that should exist on unmanaged tables
-EXPECTED_SUPABASE_INDEXES = [
+# Indexes that should exist on unmanaged (app-schema) tables
+EXPECTED_UNMANAGED_INDEXES = [
     ('users',                      'idx_users_batch_id'),
     ('users',                      'idx_users_role'),
     ('clap_tests',                 'idx_clap_tests_batch_id'),
@@ -115,8 +115,8 @@ class Command(BaseCommand):
                     self.stdout.write(self.style.ERROR(f'  [MISS]  {table}'))
                     failures.append(f'Missing table: {table}')
 
-            # ── 2. Check Supabase (unmanaged) indexes ─────────────
-            self.stdout.write('\n=== Supabase indexes (from supabase-indexes.sql) ===')
+            # ── 2. Check unmanaged table indexes ──────────────────
+            self.stdout.write('\n=== Unmanaged table indexes ===')
             cursor.execute("""
                 SELECT tablename, indexname
                 FROM pg_indexes
@@ -124,12 +124,12 @@ class Command(BaseCommand):
             """)
             existing_indexes = {(row[0], row[1]) for row in cursor.fetchall()}
 
-            for table, index in EXPECTED_SUPABASE_INDEXES:
+            for table, index in EXPECTED_UNMANAGED_INDEXES:
                 if (table, index) in existing_indexes:
                     self.stdout.write(self.style.SUCCESS(f'  [OK]    {table}.{index}'))
                 else:
                     self.stdout.write(self.style.WARNING(f'  [MISS]  {table}.{index}'))
-                    warnings.append(f'Missing Supabase index: {table}.{index}')
+                    warnings.append(f'Missing index: {table}.{index}')
 
             # ── 3. Check managed table indexes ────────────────────
             self.stdout.write('\n=== Managed table indexes (Django migrations) ===')
@@ -160,14 +160,14 @@ class Command(BaseCommand):
                 for f in failures:
                     self.stdout.write(self.style.ERROR(f'  - {f}'))
             if warnings:
-                self.stdout.write(self.style.WARNING(f'{len(warnings)} WARNING(S) (Supabase indexes — run supabase-indexes.sql):'))
+                self.stdout.write(self.style.WARNING(f'{len(warnings)} WARNING(S) (missing indexes — run CREATE INDEX statements manually):'))
                 for w in warnings:
                     self.stdout.write(self.style.WARNING(f'  - {w}'))
 
         if options['fix'] and warnings:
-            self.stdout.write('\n=== Remediation SQL (run in Supabase SQL Editor) ===')
-            self.stdout.write('-- Copy and paste into Supabase Dashboard → SQL Editor\n')
-            for table, index in EXPECTED_SUPABASE_INDEXES:
+            self.stdout.write('\n=== Remediation SQL ===')
+            self.stdout.write('-- Run in your PostgreSQL client (psql / AWS RDS Query Editor)\n')
+            for table, index in EXPECTED_UNMANAGED_INDEXES:
                 if (table, index) not in existing_indexes:
                     col = index.replace(f'idx_{table}_', '')
                     self.stdout.write(

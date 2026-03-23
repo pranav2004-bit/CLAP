@@ -78,12 +78,15 @@ ENV PYTHONUNBUFFERED=1 \
 EXPOSE 8000
 
 # ── Startup ───────────────────────────────────────────────────────
-# collectstatic   — compresses assets for WhiteNoise
-# migrate         — retries up to 10 × 10 s to survive cold Supabase/WSL2
-# rescore_stale_mcq — idempotent: corrects any MCQ SubmissionScore rows that
-#                     were written by an older scoring version; no-op when all
-#                     scores are already accurate
-# gunicorn        — reads config from gunicorn.conf.py (workers, threads, timeouts)
+# collectstatic — compresses assets for WhiteNoise
+# migrate       — retries up to 10 × 10 s to survive cold Supabase/WSL2
+# gunicorn      — reads config from gunicorn.conf.py (workers, threads, timeouts)
+#
+# NOTE: rescore_stale_mcq is intentionally NOT run on startup.
+# At production scale (thousands of users) it would block the server for
+# 10-20+ minutes on every restart. Run it manually via the admin rescore
+# endpoint (POST /api/admin/clap-tests/<test_id>/rescore-mcq) only when
+# an answer key actually changes.
 CMD ["sh", "-c", \
      "python manage.py collectstatic --noinput && \
       if [ \"${RUN_MIGRATIONS:-true}\" = \"true\" ]; then \
@@ -97,5 +100,4 @@ CMD ["sh", "-c", \
       else \
         echo \"Skipping migrations (RUN_MIGRATIONS=${RUN_MIGRATIONS})\"; \
       fi && \
-      python manage.py rescore_stale_mcq && \
       gunicorn clap_backend.wsgi:application --config gunicorn.conf.py"]

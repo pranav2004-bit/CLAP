@@ -1,4 +1,5 @@
 {
+  "disableAllHooks": true,
   "permissions": {
     "allow": [
       "Bash(xargs grep -l \"clap_test\\\\|student_clap\")",

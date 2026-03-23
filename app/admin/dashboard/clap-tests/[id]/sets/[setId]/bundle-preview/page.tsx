@@ -63,7 +63,7 @@ export default function SetBundlePreviewPage() {
                 const storageKey = `admin_set_preview_${params.setId}`
                 const saved = localStorage.getItem(storageKey)
                 if (saved) {
-                    try { setSubmittedComponents(JSON.parse(saved)) } catch { }
+                    try { setSubmittedComponents(JSON.parse(saved)) } catch (_e) { }
                 }
             } catch (error) {
                 console.error(error)
@@ -141,7 +141,7 @@ export default function SetBundlePreviewPage() {
             } else {
                 toast.error('Failed to load preview items')
             }
-        } catch {
+        } catch (_e) {
             toast.dismiss(loadingToast)
             toast.error('Network error')
         }

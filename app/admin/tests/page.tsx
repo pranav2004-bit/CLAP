@@ -34,6 +34,8 @@ import {
   CheckCircle2,
   XCircle,
   ChevronRight,
+  Download,
+  Search,
 } from 'lucide-react'
 import { getApiUrl, getAuthHeaders, apiFetch } from '@/lib/api-config'
 import { feedback } from '@/lib/user-feedback'
@@ -57,6 +59,7 @@ export default function AdminTestsPage() {
   const liveTimerPollRef  = useRef<ReturnType<typeof setInterval> | null>(null)
   const liveClockOffsetRef = useRef(0)   // ms: server_time - client_time
   const [clapTests, setClapTests] = useState<any[]>([])
+  const [isLoadingTests, setIsLoadingTests] = useState(true)
   const [batches, setBatches] = useState<any[]>([])
 
   // Preview State
@@ -102,30 +105,46 @@ export default function AdminTestsPage() {
   const [importing, setImporting] = useState(false)
   const [importDryRunLoading, setImportDryRunLoading] = useState(false)
 
-  // --- Retest Pagination ---
+  // --- Retest Pagination (server-side) ---
   const [retestPage, setRetestPage] = useState(1)
-  const retestPageSize = 10
+  const [retestSearch, setRetestSearch] = useState('')
+  const [retestTotalCount, setRetestTotalCount] = useState(0)
+  const [retestTotalPages, setRetestTotalPages] = useState(1)
+  const RETEST_PAGE_SIZE = 50
+  const retestSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // --- Sets Dist Pagination ---
   const [setsDistPage, setSetsDistPage] = useState(1)
   const setsDistPageSize = 10
 
-  const fetchRetestCandidates = async (testId: string) => {
+  const fetchRetestCandidates = async (testId: string, page = 1, search = '') => {
     setRetestLoading(true)
     try {
-      const res = await apiFetch(getApiUrl(`admin/clap-tests/${testId}/retest-candidates`), {
-        headers: getAuthHeaders(),
-        cache: 'no-store'
-      })
+      const params = new URLSearchParams({ page: String(page), page_size: String(RETEST_PAGE_SIZE) })
+      if (search.trim()) params.set('search', search.trim())
+      const res = await apiFetch(
+        getApiUrl(`admin/clap-tests/${testId}/retest-candidates?${params}`),
+        { headers: getAuthHeaders(), cache: 'no-store' }
+      )
       if (!res.ok) { toast.error('Failed to load retest candidates'); return }
       const data = await res.json()
       setRetestCandidates(data.candidates || [])
-      setRetestPage(1)
-    } catch {
+      setRetestTotalCount(data.pagination?.total_count ?? 0)
+      setRetestTotalPages(data.pagination?.total_pages ?? 1)
+      setRetestPage(page)
+    } catch (_e) {
       toast.error('Network error loading retest candidates')
     } finally {
       setRetestLoading(false)
     }
+  }
+
+  const handleRetestSearchChange = (value: string) => {
+    setRetestSearch(value)
+    if (retestSearchTimerRef.current) clearTimeout(retestSearchTimerRef.current)
+    retestSearchTimerRef.current = setTimeout(() => {
+      if (selectedClapTest) fetchRetestCandidates(selectedClapTest.id, 1, value)
+    }, 400)
   }
 
   const handleGrantRetest = async () => {
@@ -146,11 +165,11 @@ export default function AdminTestsPage() {
         toast.success(`Retest granted to ${retestModalAssignment.student_name}! Their previous data has been cleared.`)
         setRetestModalAssignment(null)
         setRetestReason('')
-        if (selectedClapTest) fetchRetestCandidates(selectedClapTest.id)
+        if (selectedClapTest) fetchRetestCandidates(selectedClapTest.id, retestPage, retestSearch)
       } else {
         toast.error(data.error || 'Failed to grant retest.')
       }
-    } catch {
+    } catch (_e) {
       toast.error('Network error. Retest was NOT granted.')
     } finally {
       setRetestGranting(null)
@@ -178,13 +197,10 @@ export default function AdminTestsPage() {
 
   const fetchClapTests = async () => {
     try {
-      const loadingToast = feedback.loadingData('CLAP tests')
       const response = await apiFetch(getApiUrl('admin/clap-tests'), {
         headers: getAuthHeaders(),
         cache: 'no-store'
       });
-
-      toast.dismiss(loadingToast)
 
       if (!response.ok) {
         console.error('Failed to fetch CLAP tests:', response.status);
@@ -207,6 +223,8 @@ export default function AdminTestsPage() {
       feedback.error('Failed to load CLAP tests', {
         description: 'Please refresh the page'
       });
+    } finally {
+      setIsLoadingTests(false)
     }
   };
 
@@ -258,7 +276,7 @@ export default function AdminTestsPage() {
       const data = await res.json()
       setSets(data.sets || [])
       setSetsCanDistribute(data.can_distribute || false)
-    } catch {
+    } catch (_e) {
       toast.error('Network error loading sets')
     } finally {
       setSetsLoading(false)
@@ -275,7 +293,7 @@ export default function AdminTestsPage() {
       const data = await res.json()
       setDistributionStatus(data)
       setSetsDistPage(1)
-    } catch {
+    } catch (_e) {
       toast.error('Network error loading distribution status')
     } finally {
       setDistributionStatusLoading(false)
@@ -301,7 +319,7 @@ export default function AdminTestsPage() {
       } else {
         toast.error(data.error || 'Failed to create set')
       }
-    } catch {
+    } catch (_e) {
       toast.error('Network error creating set')
     } finally {
       setCreatingSet(false)
@@ -326,7 +344,7 @@ export default function AdminTestsPage() {
       } else {
         toast.error(data.error || 'Failed to delete set')
       }
-    } catch {
+    } catch (_e) {
       toast.error('Network error deleting set')
     }
   }
@@ -344,7 +362,7 @@ export default function AdminTestsPage() {
       } else {
         toast.warning(`Validation found ${data.issues.length} issue(s). Check the validation panel.`)
       }
-    } catch {
+    } catch (_e) {
       toast.error('Network error validating sets')
     }
   }
@@ -390,7 +408,7 @@ export default function AdminTestsPage() {
         fetchSets(selectedClapTest.id)
         fetchDistributionStatus(selectedClapTest.id)
       }
-    } catch {
+    } catch (_e) {
       toast.error('Network error during import. No data was written.')
     } finally {
       setImportDryRunLoading(false)
@@ -423,7 +441,7 @@ export default function AdminTestsPage() {
       } else {
         toast.error(data.error || 'Distribution failed')
       }
-    } catch {
+    } catch (_e) {
       toast.error('Network error during distribution')
     } finally {
       setDistributing(false)
@@ -445,7 +463,7 @@ export default function AdminTestsPage() {
       } else {
         toast.error(data.error || 'Failed to clear distribution')
       }
-    } catch {
+    } catch (_e) {
       toast.error('Network error clearing distribution')
     }
   }
@@ -487,7 +505,7 @@ export default function AdminTestsPage() {
       if (data.remaining_seconds !== null) {
         setLiveTimerTimeLeft(data.remaining_seconds)
       }
-    } catch {
+    } catch (_e) {
       toast.error('Network error fetching timer status')
     } finally {
       setLiveTimerLoading(false)
@@ -511,7 +529,7 @@ export default function AdminTestsPage() {
         toast.success(`Live timer started! Ends at ${new Date(data.deadline_utc).toLocaleTimeString()}`)
       }
       fetchLiveTimerStatus(selectedClapTest.id)
-    } catch {
+    } catch (_e) {
       toast.error('Network error starting timer')
     } finally {
       setStartLoading(false)
@@ -532,7 +550,7 @@ export default function AdminTestsPage() {
       toast.success(`Timer extended by ${extendMinutes} min! New deadline: ${new Date(data.new_deadline_utc).toLocaleTimeString()}`)
       setExtendReason('')
       fetchLiveTimerStatus(selectedClapTest.id)
-    } catch {
+    } catch (_e) {
       toast.error('Network error extending timer')
     } finally {
       setExtendLoading(false)
@@ -981,7 +999,7 @@ export default function AdminTestsPage() {
               </button>
               <button
                 className={`py-2 px-6 font-medium text-sm transition-colors flex items-center gap-1.5 ${activeDetailTab === 'retest' ? 'border-b-2 border-amber-500 text-amber-600' : 'text-gray-500 hover:text-gray-700'}`}
-                onClick={() => { setActiveDetailTab('retest'); if (selectedClapTest) fetchRetestCandidates(selectedClapTest.id) }}
+                onClick={() => { setActiveDetailTab('retest'); setRetestSearch(''); setRetestPage(1); if (selectedClapTest) fetchRetestCandidates(selectedClapTest.id, 1, '') }}
               >
                 <RotateCcw className="w-3.5 h-3.5" /> Retest
               </button>
@@ -1007,7 +1025,7 @@ export default function AdminTestsPage() {
                   { name: 'Speaking', type: 'speaking', icon: Mic, color: 'purple' },
                   { name: 'Reading', type: 'reading', icon: BookOpen, color: 'green' },
                   { name: 'Writing', type: 'writing', icon: PenTool, color: 'orange' },
-                  { name: 'Vocabulary', type: 'vocabulary', icon: Brain, color: 'indigo' },
+                  { name: 'Verbal Ability', type: 'vocabulary', icon: Brain, color: 'indigo' },
                 ];
                 const testMap: Record<string, any> = {};
                 for (const t of (selectedClapTest.tests || [])) testMap[t.type] = t;
@@ -1196,6 +1214,18 @@ export default function AdminTestsPage() {
                             <TrendingUp className="w-4 h-4 mr-1.5" /> Validate Sets
                           </Button>
                           <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleImportFromComponents(true)}
+                            disabled={importDryRunLoading || importing || sets.length >= 26}
+                            className="border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+                          >
+                            {importDryRunLoading
+                              ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                              : <Download className="w-4 h-4 mr-1.5" />}
+                            Import Set
+                          </Button>
+                          <Button
                             size="sm"
                             onClick={() => handleCreateSet()}
                             disabled={creatingSet || sets.length >= 26}
@@ -1205,6 +1235,40 @@ export default function AdminTestsPage() {
                           </Button>
                         </div>
                       </div>
+
+                      {/* ── Import preview confirmation banner ───────────── */}
+                      {importPreview && (
+                        <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 flex items-start justify-between gap-4">
+                          <div className="flex gap-3">
+                            <Download className="w-5 h-5 text-indigo-600 shrink-0 mt-0.5" />
+                            <div className="text-sm">
+                              <p className="font-semibold text-indigo-900">Ready to import as a new set</p>
+                              <p className="mt-0.5 text-indigo-700">
+                                {importPreview.components} component{importPreview.components !== 1 ? 's' : ''},{' '}
+                                {importPreview.total_items} question{importPreview.total_items !== 1 ? 's' : ''} will be copied from the master question bank.
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex gap-2 shrink-0">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setImportPreview(null)}
+                              className="text-gray-600 border-gray-300 hover:bg-gray-50"
+                            >
+                              Cancel
+                            </Button>
+                            <Button
+                              size="sm"
+                              onClick={() => handleImportFromComponents(false)}
+                              disabled={importing}
+                              className="bg-indigo-600 hover:bg-indigo-700 text-white"
+                            >
+                              {importing ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" />Importing...</> : 'Confirm Import'}
+                            </Button>
+                          </div>
+                        </div>
+                      )}
 
                       {/* ── Minimum 2 sets info banner ───────────────────── */}
                       {sets.length > 0 && sets.length < 2 && (
@@ -1305,7 +1369,7 @@ export default function AdminTestsPage() {
                                       className="flex justify-between items-center hover:bg-blue-50 p-1.5 rounded transition-colors cursor-pointer group"
                                       onClick={() => router.push(`/admin/dashboard/clap-tests/${selectedClapTest?.id}/sets/${s.id}/${type}`)}
                                     >
-                                      <span className="text-xs font-medium text-gray-700 capitalize">{type}</span>
+                                      <span className="text-xs font-medium text-gray-700">{type === 'vocabulary' ? 'Verbal Ability' : type.charAt(0).toUpperCase() + type.slice(1)}</span>
                                       <span className="text-[10px] text-blue-600 font-medium px-1.5 group-hover:underline">Edit →</span>
                                     </div>
                                   ))
@@ -1637,7 +1701,7 @@ export default function AdminTestsPage() {
                                 </div>
                                 <div>
                                   <p className="font-semibold text-gray-900">{comp.name}</p>
-                                  <p className="text-xs text-gray-500 uppercase">{comp.type}</p>
+                                  <p className="text-xs text-gray-500 uppercase">{comp.type === 'vocabulary' ? 'VERBAL ABILITY' : comp.type}</p>
                                 </div>
                               </div>
 
@@ -1784,6 +1848,25 @@ export default function AdminTestsPage() {
                     </div>
                   </div>
 
+                  {/* Search + count bar */}
+                  <div className="flex items-center gap-3">
+                    <div className="relative flex-1 max-w-sm">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                      <input
+                        type="text"
+                        placeholder="Search by name or student ID…"
+                        value={retestSearch}
+                        onChange={e => handleRetestSearchChange(e.target.value)}
+                        className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-300 bg-white"
+                      />
+                    </div>
+                    {retestTotalCount > 0 && (
+                      <span className="text-sm text-gray-500 whitespace-nowrap">
+                        {retestTotalCount} student{retestTotalCount !== 1 ? 's' : ''}
+                      </span>
+                    )}
+                  </div>
+
                   {retestLoading ? (
                     <div className="flex items-center justify-center py-12 text-gray-400">
                       <Loader2 className="w-6 h-6 animate-spin mr-2" /> Loading candidates...
@@ -1791,7 +1874,17 @@ export default function AdminTestsPage() {
                   ) : retestCandidates.length === 0 ? (
                     <div className="text-center py-12 text-gray-400">
                       <RotateCcw className="w-10 h-10 mx-auto mb-3 opacity-40" />
-                      <p className="font-medium">No students found for this test.</p>
+                      <p className="font-medium">
+                        {retestSearch.trim() ? 'No students match your search.' : 'No students found for this test.'}
+                      </p>
+                      {retestSearch.trim() && (
+                        <button
+                          onClick={() => handleRetestSearchChange('')}
+                          className="mt-2 text-sm text-amber-600 hover:underline"
+                        >
+                          Clear search
+                        </button>
+                      )}
                     </div>
                   ) : (
                     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -1806,7 +1899,7 @@ export default function AdminTestsPage() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
-                          {retestCandidates.slice((retestPage - 1) * retestPageSize, retestPage * retestPageSize).map((c: any) => (
+                          {retestCandidates.map((c: any) => (
                             <tr key={c.assignment_id} className="hover:bg-gray-50 transition-colors">
                               <td className="px-4 py-3">
                                 <p className="font-medium text-gray-900">{c.student_name}</p>
@@ -1861,25 +1954,33 @@ export default function AdminTestsPage() {
                     </div>
                   )}
 
-                  {retestCandidates.length > retestPageSize && (
+                  {retestTotalCount > 0 && (
                     <div className="flex items-center justify-between bg-white px-4 py-3 border border-gray-200 rounded-xl mt-3">
                       <div className="text-sm text-gray-500">
-                        Showing <span className="font-medium">{(retestPage - 1) * retestPageSize + 1}</span> to <span className="font-medium">{Math.min(retestPage * retestPageSize, retestCandidates.length)}</span> of <span className="font-medium">{retestCandidates.length}</span> students
+                        Showing{' '}
+                        <span className="font-medium">{(retestPage - 1) * RETEST_PAGE_SIZE + 1}</span>
+                        {' '}–{' '}
+                        <span className="font-medium">{Math.min(retestPage * RETEST_PAGE_SIZE, retestTotalCount)}</span>
+                        {' '}of{' '}
+                        <span className="font-medium">{retestTotalCount}</span> student{retestTotalCount !== 1 ? 's' : ''}
                       </div>
-                      <div className="flex gap-2">
+                      <div className="flex items-center gap-2">
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => setRetestPage(p => Math.max(1, p - 1))}
-                          disabled={retestPage === 1}
+                          onClick={() => selectedClapTest && fetchRetestCandidates(selectedClapTest.id, retestPage - 1, retestSearch)}
+                          disabled={retestPage === 1 || retestLoading}
                         >
                           Previous
                         </Button>
+                        <span className="text-sm text-gray-500 px-1">
+                          Page {retestPage} of {retestTotalPages}
+                        </span>
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => setRetestPage(p => Math.min(Math.ceil(retestCandidates.length / retestPageSize), p + 1))}
-                          disabled={retestPage === Math.ceil(retestCandidates.length / retestPageSize)}
+                          onClick={() => selectedClapTest && fetchRetestCandidates(selectedClapTest.id, retestPage + 1, retestSearch)}
+                          disabled={retestPage === retestTotalPages || retestLoading}
                         >
                           Next
                         </Button>
@@ -2288,6 +2389,11 @@ export default function AdminTestsPage() {
               </div>
             )}
           </div>
+        ) : isLoadingTests ? (
+          <div className="flex flex-col items-center justify-center py-24 gap-4">
+            <Loader2 className="w-10 h-10 animate-spin text-indigo-500" />
+            <p className="text-sm text-gray-500">Loading CLAP tests…</p>
+          </div>
         ) : clapTests.length === 0 ? (
           <div className="text-center py-12">
             <div className="w-24 h-24 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
@@ -2431,7 +2537,7 @@ export default function AdminTestsPage() {
                     <li>• Speaking Test (10 marks)</li>
                     <li>• Reading Test (10 marks)</li>
                     <li>• Writing Test (10 marks)</li>
-                    <li>• Vocabulary & Grammar Test (10 marks)</li>
+                    <li>• Verbal Ability Test (10 marks)</li>
                   </ul>
                   <p className="text-sm text-blue-700 mt-2 font-medium">Total: 50 marks</p>
                 </div>

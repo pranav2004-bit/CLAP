@@ -126,7 +126,7 @@ export function useAdminDashboard({
             color: 'writing'
           },
           {
-            name: 'Vocabulary & Grammar Test',
+            name: 'Verbal Ability Test',
             type: 'vocabulary',
             avgScore: 8.3,
             completionRate: 95,
@@ -139,7 +139,7 @@ export function useAdminDashboard({
           {
             type: 'completed',
             studentName: 'John Smith',
-            testName: 'Vocabulary Test',
+            testName: 'Verbal Ability Test',
             timestamp: new Date().toISOString(),
             timeAgo: '2 minutes ago'
           },
@@ -403,7 +403,7 @@ export function useAdminDashboard({
           color: 'writing'
         },
         {
-          name: 'Vocabulary & Grammar Test',
+          name: 'Verbal Ability Test',
           type: 'vocabulary',
           avgScore: 8.3,
           completionRate: 95,
@@ -416,7 +416,7 @@ export function useAdminDashboard({
         {
           type: 'completed',
           studentName: 'John Smith',
-          testName: 'Vocabulary Test',
+          testName: 'Verbal Ability Test',
           timestamp: new Date().toISOString(),
           timeAgo: '2 minutes ago'
         },

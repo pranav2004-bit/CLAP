@@ -136,7 +136,7 @@ const sampleTests: Test[] = [
   },
   {
     id: '5',
-    name: 'Vocabulary & Grammar Test',
+    name: 'Verbal Ability Test',
     type: 'vocabulary',
     duration_minutes: 25,
     total_questions: 15,

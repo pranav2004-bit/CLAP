@@ -20,7 +20,7 @@ import {
   CheckCircle2,
   AlertCircle
 } from 'lucide-react'
-import { signIn } from '@/lib/supabase'
+import { signIn } from '@/lib/auth'
 import { authStorage } from '@/lib/auth-storage'
 
 type UserRole = 'student' | 'admin'
@@ -29,6 +29,7 @@ function LoginContent() {
   const router = useRouter()
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [isBackLoading, setIsBackLoading] = useState(false)
   const [formData, setFormData] = useState({
     identifier: '',
     password: ''
@@ -92,7 +93,7 @@ function LoginContent() {
   return (
     <div className="min-h-dvh bg-background flex">
       {/* Left Panel - Decorative */}
-      <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-primary via-primary/90 to-speaking relative overflow-hidden">
+      <div className="hidden lg:flex lg:w-1/2 bg-primary relative overflow-hidden">
         <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmYiIGZpbGwtb3BhY2l0eT0iMC4wNSI+PHBhdGggZD0iTTM2IDM0djItSDI0di0yaDEyek0zNiAyNHYySDI0di0yaDF6Ii8+PC9nPjwvZz48L3N2Zz4=')] opacity-50" />
 
         <div className="relative z-10 flex flex-col justify-center px-12 py-16">
@@ -115,7 +116,7 @@ function LoginContent() {
               </div>
               <div>
                 <h3 className="font-medium text-primary-foreground">5 Core Skills Assessment</h3>
-                <p className="text-sm text-primary-foreground/70">Listening, Speaking, Reading, Writing, Vocabulary & Grammar</p>
+                <p className="text-sm text-primary-foreground/70">Listening, Speaking, Reading, Writing, Verbal Ability</p>
               </div>
             </div>
             <div className="flex items-start gap-3">
@@ -150,10 +151,16 @@ function LoginContent() {
             </Link>
           </div>
 
-          <Link href="/" className="inline-flex items-center text-sm font-medium text-muted-foreground hover:text-foreground mb-8 transition-colors">
-            <ArrowLeft className="w-4 h-4 mr-2" />
+          <button
+            onClick={() => { if (isBackLoading) return; setIsBackLoading(true); router.push('/') }}
+            disabled={isBackLoading}
+            className="inline-flex items-center text-sm font-medium text-muted-foreground hover:text-foreground mb-8 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {isBackLoading
+              ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              : <ArrowLeft className="w-4 h-4 mr-2" />}
             Back to Home
-          </Link>
+          </button>
 
           <div className="flex gap-2 mb-8 p-1 bg-secondary rounded-lg">
             <div
@@ -226,8 +233,8 @@ function LoginContent() {
 
                 <Button
                   type="submit"
-                  className="w-full h-12 md:h-14 mt-6 text-base font-medium shadow-md shadow-primary/20 hover:shadow-primary/30 transition-all duration-300"
-                  variant="hero"
+                  className="w-full h-12 md:h-14 mt-6 text-base font-medium bg-primary hover:bg-primary/90 shadow-sm transition-all duration-200"
+                  variant="default"
                   disabled={isLoading}
                 >
                   {isLoading ? (

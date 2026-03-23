@@ -30,7 +30,7 @@ import {
   CheckCircle2,
   ChevronDown,
 } from 'lucide-react'
-import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders, isNetworkError, markBackendOffline } from '@/lib/api-config'
 import { toast } from 'sonner'
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -236,6 +236,7 @@ export default function AnalyticsDashboard() {
       })
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') return
+      if (isNetworkError(err)) { markBackendOffline(); return }
       console.error('[Analytics] Tests list fetch error:', err)
     } finally {
       if (!ctrl.signal.aborted) setTestsLoading(false)
@@ -381,6 +382,7 @@ export default function AnalyticsDashboard() {
       if (err instanceof DOMException && err.name === 'AbortError') {
         toast.error('Export timed out — please try again')
       } else {
+        if (isNetworkError(err)) markBackendOffline()
         toast.error('Network error during export')
       }
     } finally {

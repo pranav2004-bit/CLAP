@@ -178,44 +178,76 @@ def clap_test_results_handler(request, test_id):
             sub_data = submission_score_map.get(uid, {})
 
             # ── Component marks ───────────────────────────────────────────────
-            # L/R/V (MCQ domains): computed directly by summing ALL StudentClapResponse
-            #   marks_awarded for MCQ items in each component.
-            #   - marks_awarded is written per-response by submit_response (real-time)
-            #     and corrected by _reevaluate_mcq_responses (Celery + startup rescore).
-            #   - This is IDENTICAL to the source used by the answers preview, so the
-            #     results table and preview are always 100% consistent.
-            #   - Does NOT depend on SubmissionScore or AssessmentSubmission existing —
-            #     works for every completed assignment regardless of pipeline state.
-            #
-            # W/S (LLM domains): sourced exclusively from SubmissionScore because these
-            #   are produced by the LLM evaluation pipeline and cannot be recomputed here.
-            _MCQ_TYPES = frozenset(('listening', 'reading', 'vocabulary'))
-            component_marks = {
-                'listening':  None,
-                'speaking':   sub_data.get('speaking'),
-                'reading':    None,
-                'writing':    sub_data.get('writing'),
-                'vocabulary': None,
-            }
+            # Students who haven't started have no responses and no submission
+            # score. Initialising their marks to 0.0 (the fallback default)
+            # would produce a spurious 0/50 total and a 'B' grade — skip
+            # scoring entirely and leave everything as None for display.
+            _null_marks = {k: None for k in ['listening', 'speaking', 'reading', 'writing', 'vocabulary']}
 
-            for resp in assignment.responses.all():
-                if resp.item.item_type != 'mcq':
-                    continue
-                test_type = resp.item.component.test_type
-                if test_type not in _MCQ_TYPES:
-                    continue
-                # First MCQ response seen for this component: initialise accumulator to 0
-                if component_marks[test_type] is None:
-                    component_marks[test_type] = 0.0
-                if resp.marks_awarded is not None:
-                    component_marks[test_type] = round(
-                        component_marks[test_type] + float(resp.marks_awarded), 2
+            if assignment.status == 'assigned':
+                component_marks = _null_marks
+                computed_total  = None
+                grade           = None
+            else:
+                # Priority 1: SubmissionScore (pipeline-authoritative for all 5 domains).
+                # Set by score_rule_based (L/R/V) and LLM tasks (W/S).
+                component_marks = {
+                    'listening':  sub_data.get('listening'),
+                    'speaking':   sub_data.get('speaking'),
+                    'reading':    sub_data.get('reading'),
+                    'writing':    sub_data.get('writing'),
+                    'vocabulary': sub_data.get('vocab'),   # SubmissionScore domain key is 'vocab'
+                }
+
+                # Priority 2 (per-component fallback): live MCQ marks from StudentClapResponse.
+                # Applied independently per component when its SubmissionScore is still None
+                # (e.g. pipeline is PENDING for that specific domain, or submission not yet
+                # created).  This makes scores immediately visible after submission without
+                # waiting for the full pipeline, while never overwriting an authoritative
+                # SubmissionScore.
+                #
+                # BUG FIX: the old code used `if component_marks[test_type] is None` inside
+                # the loop, which short-circuits after the first response (as soon as the
+                # first response sets the value to 0.0, subsequent responses are skipped).
+                # The fix collects the set of components that need fallback BEFORE the loop,
+                # then accumulates ALL responses for those components regardless of
+                # intermediate values.
+                pending_fallback = {t for t, v in component_marks.items() if v is None}
+                for t in pending_fallback:
+                    component_marks[t] = 0.0   # initialise so += works inside the loop
+
+                for resp in assignment.responses.all():
+                    test_type = resp.item.component.test_type
+                    if test_type in pending_fallback:
+                        awarded = float(resp.marks_awarded) if resp.marks_awarded is not None else 0.0
+                        component_marks[test_type] = round(component_marks[test_type] + awarded, 2)
+
+                # ── Total & Grade ─────────────────────────────────────────────
+                # Total and grade are ONLY computed when ALL 5 domains have a score.
+                # If any domain is None — either still pending (LLM in-flight) or
+                # permanently failed (LLM exhausted all retries → DLQ) — we must NOT
+                # compute a partial total that would misrepresent the student's result.
+                #
+                # Edge cases handled:
+                #   - LLM API error (403/406/500) → domain = None → total = None
+                #   - LLM invalid JSON / out-of-range score → domain = None → total = None
+                #   - LLM all retries exhausted → domain = None → total = None
+                #   - Pipeline still processing → domain = None → total = None (shows pending)
+                #   - All 5 domains present → total = sum, grade computed normally
+                all_mark_values = list(component_marks.values())
+                if all(v is not None for v in all_mark_values):
+                    computed_total = round(sum(all_mark_values), 2)
+                    # Grade is only meaningful once the test is fully submitted.
+                    # Mid-test ('started') students show partial marks but no grade.
+                    grade = (
+                        calculate_grade(computed_total, max_possible)
+                        if assignment.status == 'completed'
+                        else None
                     )
-
-            # ── Total & Grade ─────────────────────────────────────────────────
-            scored_values = [v for v in component_marks.values() if v is not None]
-            computed_total = round(sum(scored_values), 2) if scored_values else None
-            grade = calculate_grade(computed_total, max_possible)
+                else:
+                    # One or more domains are missing — partial data, no grade/total.
+                    computed_total = None
+                    grade          = None
 
             # ── Duration ─────────────────────────────────────────────────────
             duration_minutes = None

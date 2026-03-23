@@ -1,8 +1,9 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import { Inter } from 'next/font/google'
 import { Toaster } from 'sonner'
 import './globals.css'
 import { AuthProvider } from '@/contexts/AuthContext'
+import { BackendStatusBanner } from '@/components/ui/BackendStatusBanner'
 
 const inter = Inter({
   subsets: ['latin'],
@@ -10,9 +11,20 @@ const inter = Inter({
   variable: '--font-inter',
 })
 
+// Explicit viewport — prevents mobile browsers from applying a desktop-width default,
+// which causes the zoomed-out "enlarged" appearance on phones.
+// maximumScale: 5 preserves accessibility zoom; the viewport width is still constrained.
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  minimumScale: 1,
+  maximumScale: 5,
+  viewportFit: 'cover',   // safe-area support for notched / island phones
+}
+
 export const metadata: Metadata = {
   title: 'CLAP - Continuing Language Assessment Program',
-  description: 'Comprehensive English language assessment platform evaluating Listening, Speaking, Reading, Writing, and Vocabulary & Grammar skills with AI-powered scoring.',
+  description: 'Comprehensive English language assessment platform evaluating Listening, Speaking, Reading, Writing, and Verbal Ability skills with AI-powered scoring.',
   keywords: ['English assessment', 'language test', 'CLAP', 'proficiency test', 'AI scoring'],
   authors: [{ name: 'CLAP Team' }],
   openGraph: {
@@ -38,6 +50,7 @@ export default function RootLayout({
         <AuthProvider>
           {children}
           <Toaster richColors position="top-right" />
+          <BackendStatusBanner />
         </AuthProvider>
 
         {/* Company Footer Branding */}

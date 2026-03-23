@@ -5,11 +5,13 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Headphones, Mic, BookOpen, PenTool, Brain, CheckCircle, PlayCircle, Loader2, Clock, AlertTriangle, LogOut, WifiOff, ArrowLeft } from 'lucide-react'
+import { Headphones, Mic, BookOpen, PenTool, Brain, CheckCircle, PlayCircle, Loader2, Clock, AlertTriangle, LogOut, WifiOff, ArrowLeft, ChevronRight } from 'lucide-react'
+import { CubeLoader } from '@/components/ui/CubeLoader'
 import { toast } from 'sonner'
 import { getApiUrl, getAuthHeaders, apiFetch, silentFetch } from '@/lib/api-config'
 import { useAntiCheat } from '@/hooks/useAntiCheat'
 import { useNetworkStatus } from '@/hooks/useNetworkStatus'
+import { AutoSubmitOverlay, type AutoSubmitReason, type AutoSubmitStatus } from '@/components/AutoSubmitOverlay'
 
 const STATUS_STEPS = [
   'PENDING',
@@ -46,14 +48,21 @@ export default function StudentClapTestDetailPage() {
   const [isTestLocked, setIsTestLocked]         = useState(false)
   const [timerSyncError, setTimerSyncError]     = useState(false)   // true = poll failed
   const [timerExtended, setTimerExtended]       = useState(false)   // brief flash on extension
+  // true once the first non-429 timer poll returns — distinguishes "loading" (show --:--)
+  // from "no deadline configured" (hide the pill entirely).
+  const [timerLoaded, setTimerLoaded]           = useState(false)
 
   // Stable refs — safe inside callbacks without stale closures
   const deadlineRef         = useRef<Date | null>(null)   // server deadline (UTC)
   const clockOffsetRef      = useRef(0)                   // ms: server_time - client_time
   const extensionCountRef   = useRef(-1)                  // -1 = not yet polled
   const pollingTimerRef     = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // epoch ms — hard gate that prevents ALL polls (including visibilitychange re-triggers)
+  // until the 429 backoff expires. Checked at the TOP of pollGlobalTimer so no path bypasses it.
+  const rateLimitUntilRef   = useRef(0)
   const isAutoSubmitRef     = useRef(false)               // prevents double auto-submit
   const assignmentReadyRef  = useRef(false)               // true once assignment is loaded
+  const redirectTargetRef   = useRef('/student/clap-tests') // updated by IIFE when submission_id arrives
 
   // Completed Components State
   const [submittedComponents, setSubmittedComponents] = useState<string[]>([])
@@ -61,11 +70,18 @@ export default function StudentClapTestDetailPage() {
   // Button loading states
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [loadingComponent, setLoadingComponent] = useState<string | null>(null)
+  const [isBackLoading, setIsBackLoading] = useState(false)
 
   // Anti-cheat / exit modal state
   const [exitStep, setExitStep] = useState<0 | 1 | 2>(0)
   const [exitConfirmText, setExitConfirmText] = useState('')
   const [tabWarnings, setTabWarnings] = useState(0)
+
+  // ── Auto-submit overlay state ────────────────────────────────────────────
+  const [autoSubmitActive, setAutoSubmitActive]   = useState(false)
+  const [autoSubmitReason, setAutoSubmitReason]   = useState<AutoSubmitReason>('timer')
+  const [autoSubmitStatus, setAutoSubmitStatus]   = useState<AutoSubmitStatus>('saving')
+  const [redirectCountdown, setRedirectCountdown] = useState(10)
 
   const submissionId = searchParams.get('submission_id')
 
@@ -87,14 +103,13 @@ export default function StudentClapTestDetailPage() {
     }).catch(() => { /* network error — silent, integrity log only */ })
   }, [params.assignment_id])
 
-  const { requestFullscreen, exitFullscreen } = useAntiCheat({
+  const { requestFullscreen, exitFullscreen, allowNavigation } = useAntiCheat({
     enabled: testIsActive,
     onTabSwitch: (count) => {
       setTabWarnings(count)
       reportMalpractice('tab_switch', { strike: count })
       if (count >= 2 && !isAutoSubmitRef.current) {
-        toast.error('Tab switch limit reached — auto-submitting your assessment.')
-        handleFinalSubmit(true)
+        handleAutoSubmit('tab_switch')
       } else if (count === 1) {
         toast.warning('⚠ Tab switch detected (1/2). One more will auto-submit your test.')
       }
@@ -106,15 +121,8 @@ export default function StudentClapTestDetailPage() {
       reportMalpractice('fullscreen_exit', { count: newCount, auto_reentry: false })
 
       if (newCount >= 3) {
-        // 3rd strike — skip the modal, immediately auto grand submit
-        toast.error(
-          'You have reached the limit of exiting fullscreen — all 5 tests are auto grand submitted.',
-          { duration: 8000 }
-        )
-        if (!isAutoSubmitRef.current) {
-          isAutoSubmitRef.current = true
-          handleFinalSubmit(true)
-        }
+        // 3rd strike — skip the modal, immediately show blocking overlay
+        handleAutoSubmit('client_malpractice')
       } else {
         // 1st or 2nd exit — show blocking modal with 20-second countdown
         if (newCount === 1) {
@@ -148,9 +156,27 @@ export default function StudentClapTestDetailPage() {
 
             // --- Retest: if admin has granted a retest and test is back to 'assigned',
             // clear ALL localStorage progress so the student starts completely fresh.
+            // IMPORTANT: also clear React state here — the synchronous localStorage
+            // read below this async fetch may have loaded stale data from the
+            // previous attempt, causing the "Final Submit" button to appear before
+            // the student has taken the retest.  Clearing state here (after the
+            // fetch resolves) overwrites that stale value and prevents an accidental
+            // grand-submission with no responses.
             if (found.retest_granted && found.status === 'assigned') {
+              // Retest: wipe stale localStorage AND React state so "Final Submit" never
+              // appears before the student re-takes all 5 components.
               localStorage.removeItem(`submitted_components_${params.assignment_id}`)
+              setSubmittedComponents([])
               toast.info('🔄 A retest has been granted. Your previous progress has been cleared. You may begin again.')
+            } else {
+              // Not a retest — safe to restore persisted component progress.
+              // Done here (inside the async callback) so it never races against the
+              // retest-wipe above: by the time we reach this else-branch we already
+              // know there is no retest, so loading localStorage is safe.
+              const saved = localStorage.getItem(`submitted_components_${params.assignment_id}`)
+              if (saved) {
+                try { setSubmittedComponents(JSON.parse(saved)) } catch (_e) { /* corrupt data — ignore */ }
+              }
             }
 
             // If not yet submitted, call /start to get a server-anchored start time
@@ -185,16 +211,9 @@ export default function StudentClapTestDetailPage() {
     }
 
     if (params.assignment_id) {
+      // localStorage restore is now done INSIDE fetchAssignment (after retest check)
+      // so it never races with the retest-wipe path.
       fetchAssignment()
-      // Load saved states (only if not cleared above — fetchAssignment runs async, but this runs sync)
-      const saved = localStorage.getItem(`submitted_components_${params.assignment_id}`)
-      if (saved) {
-        try {
-          setSubmittedComponents(JSON.parse(saved))
-        } catch (e) {
-          console.error(e)
-        }
-      }
     }
 
     return () => controller.abort()  // H1: cleanup on unmount
@@ -205,31 +224,131 @@ export default function StudentClapTestDetailPage() {
     if (!autoSubmit && !confirm('Are you sure you want to submit the ENTIRE assessment? You will not be able to make changes.')) return;
     setIsSubmitting(true)
     try {
-      const idempotencyKey = crypto.randomUUID();
-      const submitResp = await apiFetch(getApiUrl('submissions'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...getAuthHeaders()
-        },
-        body: JSON.stringify({
-          assignment_id: params.assignment_id,
-          idempotency_key: idempotencyKey,
-          correlation_id: idempotencyKey
+      let newSubmissionId: string
+
+      if (autoSubmit) {
+        // Timer expiry / malpractice: use the unified auto-submit endpoint.
+        // Idempotent — handles all component finalization server-side.
+        // Falls back to legacy /submissions path if endpoint is unreachable.
+        const autoRes = await apiFetch(
+          getApiUrl(`student/clap-assignments/${params.assignment_id}/auto-submit`),
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+            body: JSON.stringify({ reason: 'client_timer' }),
+          }
+        )
+        if (!autoRes.ok) {
+          // Legacy fallback
+          const idempotencyKey = crypto.randomUUID()
+          const fallbackResp = await apiFetch(getApiUrl('submissions'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+            body: JSON.stringify({
+              assignment_id: params.assignment_id,
+              idempotency_key: idempotencyKey,
+              correlation_id: idempotencyKey,
+            }),
+          })
+          if (!fallbackResp.ok) throw new Error('Submission failed')
+          const fallbackData = await fallbackResp.json()
+          newSubmissionId = fallbackData.submission_id
+        } else {
+          const autoData = await autoRes.json()
+          newSubmissionId = autoData.submission_id
+        }
+      } else {
+        // Manual "Final Submit" button: standard /submissions flow
+        const idempotencyKey = crypto.randomUUID()
+        const submitResp = await apiFetch(getApiUrl('submissions'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          body: JSON.stringify({
+            assignment_id: params.assignment_id,
+            idempotency_key: idempotencyKey,
+            correlation_id: idempotencyKey,
+          }),
         })
-      });
-      if (!submitResp.ok) throw new Error('Submission failed');
-      const submissionData  = await submitResp.json();
-      const newSubmissionId = submissionData.submission_id;
-      toast.success('Test Submitted Successfully!');
-      router.push(`/student/clap-tests/${params.assignment_id}?submission_id=${newSubmissionId}`);
+        if (!submitResp.ok) throw new Error('Submission failed')
+        const submissionData = await submitResp.json()
+        newSubmissionId = submissionData.submission_id
+      }
+
+      toast.success('Test Submitted Successfully!')
+      router.push(`/student/clap-tests/${params.assignment_id}?submission_id=${newSubmissionId}`)
     } catch (e) {
-      toast.error('Failed to submit test completely.');
-      console.error(e);
-      isAutoSubmitRef.current = false;   // allow retry on error
-      setIsSubmitting(false)             // re-enable button on error
+      toast.error('Failed to submit test completely.')
+      console.error(e)
+      isAutoSubmitRef.current = false   // allow retry on error
+      setIsSubmitting(false)            // re-enable button on error
     }
   }, [params.assignment_id, router])
+
+  // ── handleAutoSubmit ─────────────────────────────────────────────────────
+  // Immediately paints the blocking overlay (synchronous state flush), then
+  // fires the backend call in a fire-and-forget IIFE — fully parallel to the
+  // 10-second redirect countdown. Redirect fires at t=0 regardless of backend.
+  const handleAutoSubmit = useCallback(async (reason: string) => {
+    if (isAutoSubmitRef.current) return
+    isAutoSubmitRef.current = true
+
+    const overlayReason: AutoSubmitReason =
+      reason === 'client_timer'       ? 'timer'       :
+      reason === 'tab_switch'         ? 'tab_switch'  :
+      reason === 'client_malpractice' ? 'malpractice' : 'fullscreen'
+
+    // SYNCHRONOUS — all setState batched by React 18 → overlay paints in one flush
+    setAutoSubmitActive(true)
+    setAutoSubmitReason(overlayReason)
+    setAutoSubmitStatus('saving')
+    setRedirectCountdown(10)
+    setShowFullscreenExitWarning(false)
+    setIsTestLocked(true)
+
+    // Backend IIFE — concurrent with countdown, does NOT block redirect
+    ;(async () => {
+      try {
+        const res = await apiFetch(
+          getApiUrl(`student/clap-assignments/${params.assignment_id}/auto-submit`),
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+            body: JSON.stringify({ reason }),
+          }
+        )
+        if (res.ok) {
+          const data = await res.json()
+          if (data.submission_id) {
+            redirectTargetRef.current =
+              `/student/clap-tests/${params.assignment_id}?submission_id=${data.submission_id}`
+          }
+          setAutoSubmitStatus('done')
+        } else {
+          // Legacy fallback: POST /submissions
+          const key = crypto.randomUUID()
+          const fb = await apiFetch(getApiUrl('submissions'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+            body: JSON.stringify({
+              assignment_id: params.assignment_id,
+              idempotency_key: key,
+              correlation_id: key,
+            }),
+          })
+          if (fb.ok) {
+            const d = await fb.json()
+            if (d.submission_id) {
+              redirectTargetRef.current =
+                `/student/clap-tests/${params.assignment_id}?submission_id=${d.submission_id}`
+            }
+          }
+          setAutoSubmitStatus('done')
+        }
+      } catch (_e) {
+        setAutoSubmitStatus('error')
+      }
+    })()
+  }, [params.assignment_id])
 
   const formatTime = (seconds: number) => {
     const hrs  = Math.floor(seconds / 3600);
@@ -256,6 +375,16 @@ export default function StudentClapTestDetailPage() {
   const pollGlobalTimer = useCallback(async () => {
     if (!params.assignment_id || !assignmentReadyRef.current) return
     if (isAutoSubmitRef.current) return  // already submitting — stop polling
+
+    // ── 429 rate-limit gate ────────────────────────────────────────────────
+    // MUST be checked at the very top so visibilitychange re-triggers that
+    // cancel the backoff timer cannot bypass it.
+    const msLeft = rateLimitUntilRef.current - Date.now()
+    if (msLeft > 0) {
+      pollingTimerRef.current = setTimeout(pollGlobalTimer, msLeft + 100)
+      return
+    }
+
     // H2: Pause polling when offline — resume automatically when online event fires
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       pollingTimerRef.current = setTimeout(pollGlobalTimer, 3000)
@@ -274,11 +403,23 @@ export default function StudentClapTestDetailPage() {
       }
 
       if (!res.ok) {
+        if (res.status === 429) {
+          // Set the hard gate so even visibilitychange can't bypass the backoff
+          const retryAfter = parseInt(res.headers.get('Retry-After') || '0', 10)
+          const backoffMs  = retryAfter > 0 ? retryAfter * 1000 : 60000
+          rateLimitUntilRef.current = Date.now() + backoffMs
+          pollingTimerRef.current   = setTimeout(pollGlobalTimer, backoffMs)
+          return  // timerLoaded stays false — keep showing --:-- skeleton
+        }
+        setTimerLoaded(true)
         setTimerSyncError(true)
         pollingTimerRef.current = setTimeout(pollGlobalTimer, 5000)
         return
       }
 
+      // Successful response — clear any residual rate-limit gate
+      rateLimitUntilRef.current = 0
+      setTimerLoaded(true)
       setTimerSyncError(false)
       const data = await res.json()
 
@@ -307,11 +448,8 @@ export default function StudentClapTestDetailPage() {
 
       // Server says it's already expired — trigger auto-submit immediately
       if (data.is_expired && !isAutoSubmitRef.current) {
-        isAutoSubmitRef.current = true
-        setIsTestLocked(true)
         setGlobalTimeLeft(0)
-        toast.error('⏱ Time has expired — auto-submitting your assessment…', { duration: 8000 })
-        handleFinalSubmit(true)
+        handleAutoSubmit('client_timer')
         return
       }
 
@@ -321,11 +459,12 @@ export default function StudentClapTestDetailPage() {
         ? getNextPollMs(data.remaining_seconds ?? 9999)
         : 5000
       pollingTimerRef.current = setTimeout(pollGlobalTimer, nextMs)
-    } catch {
+    } catch (_e) {
+      setTimerLoaded(true)
       setTimerSyncError(true)
       pollingTimerRef.current = setTimeout(pollGlobalTimer, 5000)
     }
-  }, [params.assignment_id, handleFinalSubmit])
+  }, [params.assignment_id, handleAutoSubmit])
 
   // ── Start polling + show fullscreen prompt when assignment is loaded ────────
   useEffect(() => {
@@ -368,17 +507,45 @@ export default function StudentClapTestDetailPage() {
   // ── Auto-submit when the 20 s countdown expires ────────────────────────────
   useEffect(() => {
     if (!showFullscreenExitWarning || fsExitCountdown !== 0) return
-    setShowFullscreenExitWarning(false)
-    if (!isAutoSubmitRef.current) {
-      isAutoSubmitRef.current = true
-      handleFinalSubmit(true)
+    handleAutoSubmit('client_malpractice')
+  }, [showFullscreenExitWarning, fsExitCountdown, handleAutoSubmit])
+
+  // ── Overlay redirect countdown (1 s tick → navigate at 0) ──────────────
+  // IMPORTANT: use window.location.replace (hard nav) instead of router.push.
+  // router.push is a no-op when the target URL resolves to the same Next.js
+  // route component (hub → hub with ?submission_id param), causing the overlay
+  // to be stuck at "0 seconds" forever. Hard nav guarantees the page reloads.
+  useEffect(() => {
+    if (!autoSubmitActive) return
+    if (redirectCountdown <= 0) {
+      allowNavigation()   // disable beforeunload guard so hard-nav is silent
+      window.location.replace(redirectTargetRef.current)
+      return
     }
-  }, [showFullscreenExitWarning, fsExitCountdown, handleFinalSubmit])
+    const id = setTimeout(() => setRedirectCountdown(p => Math.max(0, p - 1)), 1000)
+    return () => clearTimeout(id)
+  }, [autoSubmitActive, redirectCountdown, allowNavigation])
+
+  // ── Overlay scroll lock (blocks rubber-band scroll on iOS) ───────────────
+  useEffect(() => {
+    if (!autoSubmitActive) return
+    const origBody = document.body.style.overflow
+    const origHtml = document.documentElement.style.overflow
+    document.body.style.overflow = 'hidden'
+    document.documentElement.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = origBody
+      document.documentElement.style.overflow = origHtml
+    }
+  }, [autoSubmitActive])
 
   // ── Page Visibility — re-poll immediately when tab re-focuses ────────────
   useEffect(() => {
     const onVisible = () => {
       if (!document.hidden && assignmentReadyRef.current && !isAutoSubmitRef.current) {
+        // Do NOT cancel the backoff timer when we're rate-limited — the 429 gate
+        // inside pollGlobalTimer will reschedule at the correct time anyway.
+        if (Date.now() < rateLimitUntilRef.current) return
         if (pollingTimerRef.current) clearTimeout(pollingTimerRef.current)
         pollGlobalTimer()
       }
@@ -386,6 +553,26 @@ export default function StudentClapTestDetailPage() {
     document.addEventListener('visibilitychange', onVisible)
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [pollGlobalTimer])
+
+  // ── Page-unload beacon (keepalive fetch, fire-and-forget) ─────────────────
+  // Fires when the student closes the browser or navigates away mid-test.
+  // Uses fetch keepalive (not sendBeacon) so auth headers can be included.
+  // The server Beat task is the backstop if this request doesn't reach the server.
+  useEffect(() => {
+    if (!params.assignment_id) return
+    const handleUnload = () => {
+      if (isAutoSubmitRef.current || !assignmentReadyRef.current) return
+      fetch(getApiUrl(`student/clap-assignments/${params.assignment_id}/auto-submit`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({ reason: 'client_unload' }),
+        keepalive: true,
+      }).catch(() => {})
+    }
+    window.addEventListener('pagehide', handleUnload)
+    return () => window.removeEventListener('pagehide', handleUnload)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.assignment_id])
 
   // ── Local countdown (smooth 1-s tick; reads deadlineRef so no stale state) ─
   // This is purely cosmetic — the deadline is always fetched fresh on each poll.
@@ -411,10 +598,7 @@ export default function StudentClapTestDetailPage() {
       setGlobalTimeLeft(remaining)
 
       if (remaining === 0 && !isAutoSubmitRef.current) {
-        isAutoSubmitRef.current = true
-        setIsTestLocked(true)
-        toast.error('⏱ Time has expired — auto-submitting your assessment…', { duration: 8000 })
-        handleFinalSubmit(true)
+        handleAutoSubmit('client_timer')
       }
     }
 
@@ -422,7 +606,7 @@ export default function StudentClapTestDetailPage() {
     const id = setInterval(tick, 1000)
     return () => clearInterval(id)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assignment?.started_at, assignment?.status, globalTotalDuration, isTestLocked, submissionId, handleFinalSubmit])
+  }, [assignment?.started_at, assignment?.status, globalTotalDuration, isTestLocked, submissionId, handleAutoSubmit])
 
   useEffect(() => {
     if (!submissionId) return
@@ -480,30 +664,34 @@ export default function StudentClapTestDetailPage() {
     }
   }
 
-  // M1: Skeleton loading state
-  if (isLoading) return (
-    <div className="min-h-dvh bg-background px-4 py-4 sm:px-6 max-w-4xl mx-auto animate-pulse">
-      {/* Header skeleton */}
-      <div className="flex items-center justify-between mb-6 mt-2">
-        <div className="h-8 w-28 bg-gray-200 rounded" />
-        <div className="h-8 w-24 bg-gray-200 rounded" />
-      </div>
-      {/* Hero banner skeleton */}
-      <div className="h-28 sm:h-40 bg-indigo-100 rounded-2xl mb-6 sm:mb-8" />
-      {/* Submission progress skeleton */}
-      <div className="h-20 bg-gray-100 rounded-xl mb-4" />
-      {/* Component tiles */}
-      <div className="grid grid-cols-1 gap-4">
-        {[1,2,3,4,5].map(i => (
-          <div key={i} className="h-20 bg-gray-100 rounded-xl border" />
-        ))}
-      </div>
-    </div>
-  )
+  // Abbreviate labels that are too long for mobile cards
+  const getDisplayTitle = (type: string, title: string): string => {
+    switch (type) {
+      case 'vocabulary': return 'Verbal Ability'
+      default: return title
+    }
+  }
+
+  // M1: Loading state
+  if (isLoading) return <CubeLoader />
   if (!assignment) return null
 
   return (
-    <div className="min-h-dvh bg-background">
+    <>
+      {/* Blocking overlay — rendered OUTSIDE the inert wrapper so it remains interactive */}
+      <AutoSubmitOverlay
+        active={autoSubmitActive}
+        reason={autoSubmitReason}
+        status={autoSubmitStatus}
+        countdown={redirectCountdown}
+      />
+
+      {/* Main content — made inert while overlay is active (blocks all keyboard + pointer events) */}
+      <div
+        className="min-h-dvh bg-background overflow-x-hidden"
+        {...(autoSubmitActive ? { inert: '' as unknown as boolean } : {})}
+        style={autoSubmitActive ? { pointerEvents: 'none', userSelect: 'none' } : undefined}
+      >
       {/* H2: Offline banner — fixed at top when no internet */}
       {!isOnline && (
         <div className="fixed top-0 left-0 right-0 z-50 bg-red-600 text-white text-sm font-medium
@@ -640,13 +828,7 @@ export default function StudentClapTestDetailPage() {
               {/* Destructive: grand submit immediately */}
               <button
                 className="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-3 rounded-xl transition-colors"
-                onClick={() => {
-                  setShowFullscreenExitWarning(false)
-                  if (!isAutoSubmitRef.current) {
-                    isAutoSubmitRef.current = true
-                    handleFinalSubmit(true)
-                  }
-                }}
+                onClick={() => handleAutoSubmit('client_malpractice')}
               >
                 Submit Full Exam &amp; Exit
               </button>
@@ -685,27 +867,38 @@ export default function StudentClapTestDetailPage() {
         </div>
       )}
 
-    <div className={`px-4 py-4 sm:px-6 max-w-4xl mx-auto ${!isOnline ? 'pt-10 sm:pt-12' : ''}`}>
-      {/* Header row */}
-      <div className="flex items-center justify-end mb-6">
+    <div className={`px-4 py-4 pb-16 sm:px-6 sm:pb-8 max-w-4xl mx-auto ${!isOnline ? 'pt-10 sm:pt-12' : ''}`}>
+      {/* Header row — context label on left, action on right */}
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-widest">Assessment</span>
         {testIsActive ? (
-          <Button variant="ghost" size="sm" onClick={() => setExitStep(1)}
-                  className="text-red-600 hover:text-red-700 hover:bg-red-50 min-h-[40px]">
-            <LogOut className="w-4 h-4 mr-1.5" />
-            <span className="hidden sm:inline">Exit Test</span>
-          </Button>
+          <button
+            onClick={() => setExitStep(1)}
+            className="flex items-center gap-1.5 text-red-500 hover:bg-red-50 active:bg-red-100 rounded-lg px-2.5 py-1.5 transition-colors text-xs font-semibold touch-manipulation select-none"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            Exit Test
+          </button>
         ) : (
-          <Button variant="ghost" size="sm"
-                  onClick={() => router.push('/student/clap-tests')}
-                  className="text-gray-600 hover:text-gray-900 hover:bg-gray-100 min-h-[40px]">
-            <ArrowLeft className="w-4 h-4 mr-1.5" />
-            Back to Dashboard
-          </Button>
+          <button
+            disabled={isBackLoading}
+            onClick={() => {
+              if (isBackLoading) return
+              setIsBackLoading(true)
+              router.push('/student/clap-tests')
+            }}
+            className="flex items-center gap-1.5 text-gray-500 hover:bg-gray-100 active:bg-gray-200 rounded-lg px-2.5 py-1.5 transition-colors text-xs font-semibold touch-manipulation select-none disabled:opacity-50"
+          >
+            {isBackLoading
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : <ArrowLeft className="w-3.5 h-3.5" />}
+            Back
+          </button>
         )}
       </div>
 
-      <div className="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-2xl p-4 sm:p-8 text-white mb-6 sm:mb-8 shadow-xl">
-        <h1 className="text-xl sm:text-3xl font-bold mb-1 sm:mb-2">{assignment.test_name}</h1>
+      <div className="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-2xl p-4 sm:p-8 text-white mb-4 sm:mb-6 shadow-xl overflow-hidden">
+        <h1 className="text-xl sm:text-3xl font-bold mb-1 sm:mb-2 break-words">{assignment.test_name}</h1>
         <p className="text-sm sm:text-base text-indigo-100">
           Complete all {assignment.components?.length ?? 0} modules to finish the assessment.
         </p>
@@ -722,26 +915,37 @@ export default function StudentClapTestDetailPage() {
             </span>
           </div>
 
-          {/* Right: timer pill */}
-          {globalTimeLeft !== null && !submissionId && (
+          {/* Right: timer pill
+              3 states:
+              • !timerLoaded              → --:-- skeleton (first poll pending / 429 backoff)
+              • timerLoaded & time > 0    → live countdown with colour coding
+              • timerLoaded & time == null → hidden (no deadline configured for this test) */}
+          {(!timerLoaded || globalTimeLeft !== null) && !submissionId && (
             <div className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-mono text-lg font-bold border transition-all duration-500 shrink-0 ${
-              timerExtended
-                ? 'bg-green-500/30 border-green-300/60 scale-105'
-                : globalTimeLeft < 120
-                  ? 'bg-red-500/30 border-red-300/60 animate-pulse'
-                  : globalTimeLeft < 300
-                    ? 'bg-orange-400/25 border-orange-300/50'
-                    : 'bg-white/10 border-white/20'
+              !timerLoaded
+                ? 'bg-white/10 border-white/20 opacity-60'
+                : timerExtended
+                  ? 'bg-green-500/30 border-green-300/60 scale-105'
+                  : globalTimeLeft! < 120
+                    ? 'bg-red-500/30 border-red-300/60 animate-pulse'
+                    : globalTimeLeft! < 300
+                      ? 'bg-orange-400/25 border-orange-300/50'
+                      : 'bg-white/10 border-white/20'
             }`}>
-              <Clock className={`w-4 h-4 ${timerExtended ? 'text-green-300' : globalTimeLeft < 120 ? 'text-red-300' : ''}`} />
+              <Clock className={`w-4 h-4 ${
+                !timerLoaded ? 'opacity-40' :
+                timerExtended ? 'text-green-300' :
+                globalTimeLeft! < 120 ? 'text-red-300' : ''
+              }`} />
               <span className={
+                !timerLoaded ? 'text-white/50' :
                 timerExtended ? 'text-green-200' :
-                globalTimeLeft < 120 ? 'text-red-200' :
-                globalTimeLeft < 300 ? 'text-orange-200' : ''
+                globalTimeLeft! < 120 ? 'text-red-200' :
+                globalTimeLeft! < 300 ? 'text-orange-200' : ''
               }>
-                {formatTime(globalTimeLeft)} left
+                {timerLoaded ? `${formatTime(globalTimeLeft!)} left` : '--:--'}
               </span>
-              {timerSyncError && (
+              {timerLoaded && timerSyncError && (
                 <span className="text-xs text-yellow-300 font-normal ml-1" title="Timer sync failed — retrying">⚠</span>
               )}
             </div>
@@ -749,26 +953,6 @@ export default function StudentClapTestDetailPage() {
         </div>
       </div>
 
-      {submissionId && (
-        <Card className="mb-6 border-indigo-200">
-          <CardContent className="p-5 space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-500">Assessment Submitted</p>
-                <p className="font-semibold">
-                  {submission?.status === 'COMPLETE'
-                    ? 'Your assessment has been evaluated successfully.'
-                    : 'Your assessment is being evaluated. You will be notified once results are ready.'}
-                </p>
-              </div>
-              {polling && <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />}
-            </div>
-            <div className="w-full bg-gray-200 h-2 rounded-full">
-              <div className="bg-indigo-600 h-2 rounded-full transition-all duration-300" style={{ width: `${statusProgress}%` }} />
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       {/* Tab-switch warning banner */}
       {tabWarnings === 1 && (
@@ -781,65 +965,71 @@ export default function StudentClapTestDetailPage() {
         </div>
       )}
 
-      <div className="grid gap-3 sm:gap-4">
+      {/* ── Component list — clean, compact, Apple-style rows ──────────────── */}
+      <div className="space-y-2">
         {assignment.components?.map((comp: any) => {
           const Icon = getIcon(comp.type)
-          const isSubmitted = submittedComponents.includes(comp.type);
-          const isDisabled = isTestLocked || !!submissionId || isSubmitted;
-
+          const isSubmitted = submittedComponents.includes(comp.type)
+          const isDisabled  = isTestLocked || !!submissionId || isSubmitted
           const isNavigating = loadingComponent === comp.type
 
           return (
-            <Card
+            <div
               key={comp.id}
-              className={`transition-all border-l-4 touch-manipulation
-                ${isSubmitted ? 'border-l-green-500 bg-green-50/10' : 'border-l-indigo-500 cursor-pointer hover:shadow-md'}
-                ${isDisabled && !isSubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
               onClick={() => {
                 if (!isDisabled && !loadingComponent) {
                   setLoadingComponent(comp.type)
                   router.push(`/student/clap-tests/${params.assignment_id}/${comp.type}`)
                 }
               }}
+              className={`
+                bg-white rounded-2xl border overflow-hidden touch-manipulation
+                transition-all duration-150
+                ${isSubmitted
+                  ? 'border-green-100 bg-green-50/40'
+                  : isDisabled
+                    ? 'border-gray-100 opacity-50 cursor-not-allowed'
+                    : 'border-gray-100 cursor-pointer active:scale-[0.985] active:shadow-inner hover:border-indigo-100 hover:shadow-md'}
+              `}
             >
-              <CardContent className="p-3 sm:p-5 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className={`w-9 h-9 sm:w-11 sm:h-11 rounded-full flex items-center justify-center flex-shrink-0
-                    ${isSubmitted ? 'bg-green-100 text-green-600' : 'bg-indigo-50 text-indigo-600'}`}>
-                    {isNavigating
-                      ? <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" />
-                      : <Icon className="w-4 h-4 sm:w-5 sm:h-5" />
-                    }
-                  </div>
-                  <div className="min-w-0">
-                    <h3 className={`font-semibold text-sm sm:text-base capitalize truncate
-                      ${isSubmitted ? 'text-green-800' : 'text-gray-900'}`}>{comp.title}</h3>
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      {comp.timer_enabled !== false ? `${comp.duration || 10} min` : 'No timer'}
-                    </p>
-                  </div>
+              <div className="flex items-center gap-3 px-4 py-3.5">
+
+                {/* Icon badge */}
+                <div className={`w-10 h-10 rounded-xl flex-shrink-0 flex items-center justify-center
+                  ${isSubmitted ? 'bg-green-100 text-green-600' : 'bg-indigo-50 text-indigo-600'}`}>
+                  {isNavigating
+                    ? <Loader2 className="w-5 h-5 animate-spin" />
+                    : <Icon className="w-5 h-5" />}
                 </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  {isSubmitted ? (
-                    <Badge className="bg-green-100 text-green-700 hover:bg-green-200 border-green-200 whitespace-nowrap">
-                      <CheckCircle className="w-3 h-3 mr-1" /> Submitted
-                    </Badge>
-                  ) : (
-                    <Button size="sm" className="rounded-full px-4 sm:px-6 min-h-[40px] whitespace-nowrap"
-                            disabled={isDisabled || isNavigating}>
-                      {isNavigating ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <>
-                          {assignment.started_at ? 'Resume' : 'Start'}
-                          <PlayCircle className="w-4 h-4 ml-1.5" />
-                        </>
-                      )}
-                    </Button>
-                  )}
+
+                {/* Title */}
+                <div className="flex-1 min-w-0">
+                  <p className={`text-sm font-semibold leading-snug truncate
+                    ${isSubmitted ? 'text-green-800' : 'text-gray-900'}`}>{getDisplayTitle(comp.type, comp.title)}</p>
                 </div>
-              </CardContent>
-            </Card>
+
+                {/* Status / action chip */}
+                {isSubmitted ? (
+                  <div className="flex items-center gap-1.5 flex-shrink-0 text-green-600">
+                    <CheckCircle className="w-4 h-4" />
+                    <span className="text-xs font-bold">Done</span>
+                  </div>
+                ) : (
+                  <div className={`flex items-center gap-0.5 rounded-full px-3 py-1.5 text-[11px] font-bold flex-shrink-0 whitespace-nowrap
+                    ${isDisabled ? 'bg-gray-100 text-gray-400' : 'bg-indigo-600 text-white'}`}>
+                    {isNavigating ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <>
+                        {assignment.started_at ? 'Resume' : 'Start'}
+                        <ChevronRight className="w-3 h-3 ml-0.5" />
+                      </>
+                    )}
+                  </div>
+                )}
+
+              </div>
+            </div>
           )
         })}
       </div>
@@ -849,11 +1039,17 @@ export default function StudentClapTestDetailPage() {
         <div className="mt-6 sm:mt-8 flex justify-center">
           <Button
             size="lg"
-            onClick={() => router.push('/student/clap-tests')}
-            className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-10 py-4 rounded-xl"
+            disabled={isBackLoading}
+            onClick={() => {
+              if (isBackLoading) return
+              setIsBackLoading(true)
+              router.push('/student/clap-tests')
+            }}
+            className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-10 py-4 rounded-xl disabled:opacity-70"
           >
-            <ArrowLeft className="w-5 h-5 mr-2" />
-            Exit to Dashboard
+            {isBackLoading
+              ? <><Loader2 className="w-5 h-5 mr-2 animate-spin" />Loading…</>
+              : <><ArrowLeft className="w-5 h-5 mr-2" />Exit to Dashboard</>}
           </Button>
         </div>
       )}
@@ -878,6 +1074,7 @@ export default function StudentClapTestDetailPage() {
         </div>
       )}
     </div>
-    </div>
+      </div>
+    </>
   )
 }

@@ -11,6 +11,7 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
+from django.db import IntegrityError
 import json
 import logging
 import bcrypt
@@ -71,25 +72,21 @@ def update_student_profile(request):
         username = body.get('username')
         email = body.get('email')
 
-        # Check if username is already taken by another user
-        if username:
-            existing_user = User.objects.filter(
-                username=username
-            ).exclude(id=user.id).first()
-
-            if existing_user:
-                return error_response('Username already taken', status=400)
-
         # Reject placeholder emails (safety guard — should never come from legitimate UI)
         if email and email.endswith('@clap-student.local'):
             return error_response('Invalid email address', status=400)
 
+        # Both username and email are required (cannot be null/empty)
+        if not username or not username.strip():
+            return error_response('Username is required', status=400)
+        if not email or not email.strip():
+            return error_response('Email address is required', status=400)
+
         # Prepare update data
-        update_data = {}
-        if username:
-            update_data['username'] = username
-        if email:
-            update_data['email'] = email
+        update_data = {
+            'username': username.strip(),
+            'email': email.strip(),
+        }
 
         # Mark profile as completed if username and email are provided
         if username and email:
@@ -112,6 +109,10 @@ def update_student_profile(request):
         }
 
         return JsonResponse({'profile': profile_data})
+
+    except IntegrityError as error:
+        logger.error(f'IntegrityError updating profile: {error}', exc_info=True)
+        return error_response('Profile update failed due to a conflict', status=409)
 
     except Exception as error:
         logger.error(f'Error updating profile: {error}', exc_info=True)

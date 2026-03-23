@@ -124,7 +124,7 @@ export function StudentReportGenerator({ studentId, onClose }: StudentReportGene
           },
           {
             id: '3',
-            testName: 'Vocabulary Test',
+            testName: 'Verbal Ability Test',
             testType: 'vocabulary',
             score: 10,
             maxScore: 10,

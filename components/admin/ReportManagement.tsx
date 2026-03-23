@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
-import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders, isNetworkError, markBackendOffline } from '@/lib/api-config'
 import {
   FileText,
   RefreshCw,
@@ -26,8 +26,9 @@ import { toast } from 'sonner'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const REFRESH_MS       = 60_000   // auto-refresh reports every 60 s
-const TESTS_REFRESH_MS = 60_000   // refresh test-scope dropdown every 60 s
+const REFRESH_MS        = 60_000  // auto-refresh reports every 60 s
+const FAST_REFRESH_MS   =  5_000  // fast-poll when any record is regenerating
+const TESTS_REFRESH_MS  = 60_000  // refresh test-scope dropdown every 60 s
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -47,6 +48,7 @@ interface ReportRow {
   report_url:          string | null
   report_download_url: string | null
   status:              string
+  pipeline_status:     string | null   // e.g. 'REPORT_GENERATING' while Celery is running
   generated_at:        string | null
 }
 
@@ -55,13 +57,6 @@ interface Pagination {
   page_size:   number
   total_count: number
   total_pages: number
-}
-
-interface TemplateConfig {
-  institution_name:     string
-  institution_tagline:  string
-  show_logo:            boolean
-  layout:               'default' | 'compact'
 }
 
 // ── TestScopeSelector ─────────────────────────────────────────────────────
@@ -118,10 +113,6 @@ export function ReportManagement() {
 
   // Template modal
   const [showTemplateModal, setShowTemplateModal]   = useState(false)
-  const [templateConfig, setTemplateConfig]         = useState<TemplateConfig | null>(null)
-  const [templateDraft, setTemplateDraft]           = useState<TemplateConfig | null>(null)
-  const [templateLoading, setTemplateLoading]       = useState(false)
-  const [templateSaving, setTemplateSaving]         = useState(false)
   const [previewHtml, setPreviewHtml]               = useState<string | null>(null)
   const [previewLoading, setPreviewLoading]         = useState(false)
 
@@ -163,7 +154,10 @@ export function ReportManagement() {
         return incoming
       })
     } catch (err: any) {
-      if (err?.name !== 'AbortError') console.error('[ReportManagement] test-list fetch failed:', err)
+      if (err?.name !== 'AbortError') {
+        if (isNetworkError(err)) { markBackendOffline(); return }
+        console.error('[ReportManagement] test-list fetch failed:', err)
+      }
     }
   }, [])
 
@@ -202,7 +196,7 @@ export function ReportManagement() {
       setReports(data.reports ?? [])
       if (data.pagination) setPagination(data.pagination)
     } catch (err: any) {
-      if (err?.name !== 'AbortError') toast.error('Network error loading reports')
+      if (err?.name !== 'AbortError') markBackendOffline()
     } finally {
       if (!ctrl.signal.aborted) setLoading(false)
     }
@@ -220,6 +214,16 @@ export function ReportManagement() {
     }
   }, [fetchReports])
 
+  // Fast-poll every 5 s while any visible record is actively regenerating
+  const hasRegeneratingRows = reports.some(
+    (r) => r.pipeline_status === 'REPORT_GENERATING',
+  )
+  useEffect(() => {
+    if (!hasRegeneratingRows) return
+    const id = setInterval(fetchReports, FAST_REFRESH_MS)
+    return () => clearInterval(id)
+  }, [hasRegeneratingRows, fetchReports])
+
   // Reset to page 1 when scope or search changes
   const handleTestChange = (id: string) => {
     setPage(1)
@@ -230,20 +234,49 @@ export function ReportManagement() {
 
   const regenerateReport = async (submissionId: string) => {
     setRegeneratingId(submissionId)
+    // Optimistically mark row as regenerating so the badge appears immediately
+    setReports((prev) =>
+      prev.map((r) =>
+        r.submission_id === submissionId
+          ? { ...r, pipeline_status: 'REPORT_GENERATING' }
+          : r,
+      ),
+    )
     try {
       const res = await fetch(
         getApiUrl(`admin/reports/submissions/${submissionId}/regenerate`),
         { method: 'POST', headers: getAuthHeaders() }
       )
       if (res.ok) {
-        toast.success('Report regeneration triggered')
+        toast.success('Report regeneration started — the page will auto-update when complete')
+        // Kick an immediate re-fetch so we get fresh server state
+        fetchReports()
+      } else if (res.status === 409) {
+        toast.info('This report is already being regenerated')
         fetchReports()
       } else {
         const err = await res.json().catch(() => ({}))
         toast.error(err.error || 'Failed to regenerate report')
+        // Revert optimistic update on error
+        setReports((prev) =>
+          prev.map((r) =>
+            r.submission_id === submissionId
+              ? { ...r, pipeline_status: null }
+              : r,
+          ),
+        )
       }
-    } catch {
-      toast.error('Network error regenerating report')
+    } catch (err) {
+      if (isNetworkError(err)) markBackendOffline()
+      else toast.error('Network error regenerating report')
+      // Revert optimistic update
+      setReports((prev) =>
+        prev.map((r) =>
+          r.submission_id === submissionId
+            ? { ...r, pipeline_status: null }
+            : r,
+        ),
+      )
     } finally {
       setRegeneratingId(null)
     }
@@ -251,58 +284,13 @@ export function ReportManagement() {
 
   // ── Template config ──────────────────────────────────────────────────────
 
-  const fetchTemplateConfig = async () => {
-    setTemplateLoading(true)
-    setPreviewHtml(null)
-    try {
-      const res = await fetch(getApiUrl('admin/reports/template-config'), { headers: getAuthHeaders() })
-      if (res.ok) {
-        const data = await res.json()
-        const cfg: TemplateConfig = data.config ?? data
-        setTemplateConfig(cfg)
-        setTemplateDraft({ ...cfg })
-      } else {
-        toast.error('Failed to load template config')
-      }
-    } catch {
-      toast.error('Network error loading template config')
-    } finally {
-      setTemplateLoading(false)
-    }
-  }
-
-  const saveTemplateConfig = async () => {
-    if (!templateDraft) return
-    setTemplateSaving(true)
-    try {
-      const res = await fetch(getApiUrl('admin/reports/template-config'), {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-        body: JSON.stringify(templateDraft),
-      })
-      if (res.ok) {
-        const data = await res.json()
-        const cfg: TemplateConfig = data.config ?? data
-        setTemplateConfig(cfg)
-        setTemplateDraft({ ...cfg })
-        toast.success('Template configuration saved')
-      } else {
-        toast.error('Failed to save template config')
-      }
-    } catch {
-      toast.error('Network error saving template config')
-    } finally {
-      setTemplateSaving(false)
-    }
-  }
-
   const fetchTemplatePreview = async () => {
     setPreviewLoading(true)
     try {
       const res = await fetch(getApiUrl('admin/reports/template-preview'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-        body: JSON.stringify({ config: templateDraft ?? {} }),
+        body: JSON.stringify({ config: {} }),
       })
       if (res.ok) {
         const data = await res.json()
@@ -310,7 +298,8 @@ export function ReportManagement() {
       } else {
         toast.error('Failed to load preview')
       }
-    } catch {
+    } catch (err) {
+      if (isNetworkError(err)) markBackendOffline()
       toast.error('Network error loading preview')
     } finally {
       setPreviewLoading(false)
@@ -319,7 +308,8 @@ export function ReportManagement() {
 
   const openTemplateModal = () => {
     setShowTemplateModal(true)
-    fetchTemplateConfig()
+    setPreviewHtml(null)
+    fetchTemplatePreview()
   }
 
   // ── Scope label ──────────────────────────────────────────────────────────
@@ -349,8 +339,8 @@ export function ReportManagement() {
             onChange={handleTestChange}
           />
           <Button variant="outline" size="sm" onClick={openTemplateModal}>
-            <Settings className="w-4 h-4 mr-2" />
-            Template
+            <Eye className="w-4 h-4 mr-2" />
+            Preview Report
           </Button>
           <Button variant="outline" size="sm" onClick={fetchReports} disabled={loading}>
             <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
@@ -415,36 +405,47 @@ export function ReportManagement() {
             </p>
           ) : (
             <div className="divide-y divide-gray-100">
-              {reports.map((report) => (
+              {reports.map((report) => {
+                const isActivelyRegenerating =
+                  report.pipeline_status === 'REPORT_GENERATING' ||
+                  regeneratingId === report.submission_id
+
+                return (
                 <div
                   key={report.submission_id}
                   className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors"
                 >
                   <div className="flex-1 min-w-0 mr-3">
-                    {/* Row 1: submission ID + status */}
+                    {/* Row 1: status badges */}
                     <div className="flex items-center gap-2 flex-wrap">
-                      <code className="text-xs text-gray-400 font-mono">
-                        {report.submission_id.slice(0, 8)}…
-                      </code>
-                      <Badge
-                        className={
-                          report.report_url
-                            ? 'bg-green-100 text-green-800 text-xs'
-                            : 'bg-amber-100 text-amber-800 text-xs'
-                        }
-                      >
-                        {report.report_url ? 'Generated' : 'Pending'}
-                      </Badge>
+                      {isActivelyRegenerating ? (
+                        <Badge className="bg-indigo-100 text-indigo-700 text-xs flex items-center gap-1">
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          Regenerating…
+                        </Badge>
+                      ) : (
+                        <Badge
+                          className={
+                            report.report_url
+                              ? 'bg-green-100 text-green-800 text-xs'
+                              : 'bg-amber-100 text-amber-800 text-xs'
+                          }
+                        >
+                          {report.report_url ? 'Generated' : 'Pending'}
+                        </Badge>
+                      )}
                     </div>
-                    {/* Row 2: student name */}
+                    {/* Row 2: student name (or email if no name set) */}
                     <p className="text-sm text-gray-800 mt-0.5 truncate font-medium">
-                      {report.student_name || report.student_email || 'Unknown'}
+                      {report.student_name || 'Unknown'}
                     </p>
-                    {/* Row 3: email + student ID */}
+                    {/* Row 3: email (only when distinct from name) · full student UUID */}
                     <p className="text-xs text-gray-500 truncate">
-                      {report.student_email ?? ''}
+                      {report.student_name && report.student_name !== report.student_email
+                        ? <>{report.student_email} &middot; </>
+                        : null}
                       {report.student_id && (
-                        <> &middot; <code className="font-mono text-gray-400">{report.student_id.slice(0, 8)}…</code></>
+                        <code className="font-mono text-gray-400">{report.student_id}</code>
                       )}
                     </p>
                     {/* Row 4: assessment + generated_at */}
@@ -456,20 +457,8 @@ export function ReportManagement() {
                     </p>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
-                    {/* Preview — opens report in browser tab */}
-                    {report.report_download_url && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => window.open(report.report_download_url!, '_blank', 'noopener,noreferrer')}
-                        className="h-8 w-8 p-0"
-                        title="Preview Report"
-                      >
-                        <Eye className="w-4 h-4 text-gray-500" />
-                      </Button>
-                    )}
-                    {/* Download */}
-                    {report.report_download_url && (
+                    {/* Download — hidden while regenerating (URL will change) */}
+                    {report.report_download_url && !isActivelyRegenerating && (
                       <Button
                         size="sm"
                         variant="ghost"
@@ -489,23 +478,24 @@ export function ReportManagement() {
                         <Download className="w-4 h-4 text-gray-500" />
                       </Button>
                     )}
-                    {/* Regenerate */}
+                    {/* Regenerate — disabled while already regenerating */}
                     <Button
                       size="sm"
                       variant="ghost"
                       onClick={() => regenerateReport(report.submission_id)}
-                      disabled={regeneratingId === report.submission_id}
+                      disabled={isActivelyRegenerating}
                       className="h-8 w-8 p-0"
-                      title="Regenerate Report"
+                      title={isActivelyRegenerating ? 'Regeneration in progress…' : 'Regenerate Report'}
                     >
-                      {regeneratingId === report.submission_id
-                        ? <Loader2 className="w-4 h-4 animate-spin text-indigo-500" />
+                      {isActivelyRegenerating
+                        ? <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
                         : <RotateCw className="w-4 h-4 text-gray-500" />
                       }
                     </Button>
                   </div>
                 </div>
-              ))}
+                )
+              })}
             </div>
           )}
 
@@ -561,99 +551,28 @@ export function ReportManagement() {
                   <CardTitle>Report Template Configuration</CardTitle>
                   <CardDescription>Manage report template settings</CardDescription>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={fetchTemplatePreview}
-                    disabled={previewLoading || templateLoading}
-                  >
-                    {previewLoading
-                      ? <Loader2 className="w-4 h-4 animate-spin mr-1" />
-                      : <Eye className="w-4 h-4 mr-1" />}
-                    Preview
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => setShowTemplateModal(false)}>
-                    <X className="w-4 h-4" />
-                  </Button>
-                </div>
+                <Button variant="ghost" size="sm" onClick={() => setShowTemplateModal(false)}>
+                  <X className="w-4 h-4" />
+                </Button>
               </div>
             </CardHeader>
 
-            <CardContent className="p-6 space-y-5">
-              {templateLoading ? (
-                <div className="flex items-center justify-center py-10 gap-3 text-gray-500">
-                  <Loader2 className="w-5 h-5 animate-spin text-indigo-500" />
-                  <span className="text-sm">Loading configuration…</span>
-                </div>
-              ) : templateDraft ? (
-                <>
-                  <div className="grid grid-cols-1 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Institution Name</label>
-                      <Input
-                        value={templateDraft.institution_name}
-                        onChange={(e) => setTemplateDraft(d => d ? { ...d, institution_name: e.target.value } : d)}
-                        placeholder="e.g. CLAP Assessment Centre"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Tagline</label>
-                      <Input
-                        value={templateDraft.institution_tagline}
-                        onChange={(e) => setTemplateDraft(d => d ? { ...d, institution_tagline: e.target.value } : d)}
-                        placeholder="e.g. Comprehensive Language Assessment Platform"
-                      />
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <label className="text-sm font-medium text-gray-700">Show Logo</label>
-                      <button
-                        type="button"
-                        onClick={() => setTemplateDraft(d => d ? { ...d, show_logo: !d.show_logo } : d)}
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${templateDraft.show_logo ? 'bg-indigo-600' : 'bg-gray-300'}`}
-                      >
-                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${templateDraft.show_logo ? 'translate-x-6' : 'translate-x-1'}`} />
-                      </button>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Layout</label>
-                      <select
-                        value={templateDraft.layout}
-                        onChange={(e) => setTemplateDraft(d => d ? { ...d, layout: e.target.value as 'default' | 'compact' } : d)}
-                        className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                      >
-                        <option value="default">Default</option>
-                        <option value="compact">Compact</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="flex justify-end">
-                    <Button onClick={saveTemplateConfig} disabled={templateSaving}>
-                      {templateSaving
-                        ? <><Loader2 className="w-4 h-4 animate-spin mr-2" />Saving…</>
-                        : <><Save className="w-4 h-4 mr-2" />Save Configuration</>
-                      }
-                    </Button>
-                  </div>
-                </>
-              ) : (
-                <p className="text-sm text-gray-500 text-center py-6">
-                  Failed to load template configuration.{' '}
-                  <button className="text-indigo-600 underline" onClick={fetchTemplateConfig}>Retry</button>
-                </p>
-              )}
-
-              {/* Preview pane */}
-              {previewHtml && (
+            <CardContent className="p-6">
+              {previewHtml ? (
                 <div className="border rounded-lg overflow-hidden">
-                  <div className="bg-gray-50 border-b px-3 py-2 text-xs font-medium text-gray-600">Template Preview</div>
+                  <div className="bg-gray-50 border-b px-3 py-2 text-xs font-medium text-gray-600">Report Preview</div>
                   <iframe
                     srcDoc={previewHtml}
                     sandbox=""
-                    className="w-full h-96 bg-white"
+                    className="w-full bg-white"
+                    style={{ height: '720px' }}
                     title="Report Template Preview"
                   />
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-16 text-gray-400 gap-3">
+                  <Eye className="w-8 h-8 opacity-30" />
+                  <p className="text-sm">Click <strong>Preview</strong> to render the report template.</p>
                 </div>
               )}
             </CardContent>

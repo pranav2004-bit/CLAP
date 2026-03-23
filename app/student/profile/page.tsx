@@ -17,7 +17,7 @@ import {
   CheckCircle,
   ArrowLeft,
   WifiOff,
-  Trophy,
+  Loader2,
 } from 'lucide-react'
 import { getApiUrl, getAuthHeaders, apiFetch } from '@/lib/api-config'
 import { authStorage } from '@/lib/auth-storage'
@@ -39,7 +39,15 @@ export default function StudentProfilePage() {
   const [profile, setProfile] = useState<StudentProfile | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [redirecting, setRedirecting] = useState(false)
   const [passwordSaving, setPasswordSaving] = useState(false)  // H4: double-submit guard
+  // Navigation loading guard
+  const [navLoadingId, setNavLoadingId] = useState<string | null>(null)
+  const handleNav = (id: string, path: string) => {
+    if (navLoadingId) return
+    setNavLoadingId(id)
+    router.push(path)
+  }
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
@@ -149,11 +157,12 @@ export default function StudentProfilePage() {
         setProfile(data.profile)
         setSuccess('Profile updated successfully!')
 
-        // If profile was just completed, redirect to dashboard
+        // If profile was just completed, show spinner overlay then redirect
         if (data.profile.profile_completed && !profile?.profile_completed) {
+          setRedirecting(true)
           setTimeout(() => {
             router.push('/student/dashboard')
-          }, 1500)
+          }, 2000)
         }
       } else {
         setError(data.error || 'Failed to update profile')
@@ -276,6 +285,23 @@ export default function StudentProfilePage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-8">
+
+      {/* ── Redirect overlay — shown while navigating to dashboard after first profile setup ── */}
+      {redirecting && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-white/95 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-6">
+            <div className="relative w-16 h-16">
+              <div className="absolute inset-0 rounded-full border-4 border-gray-100" />
+              <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-indigo-600 animate-spin" />
+            </div>
+            <div className="text-center">
+              <p className="text-lg font-semibold text-gray-900">Setting up your dashboard</p>
+              <p className="text-sm text-gray-500 mt-1">Just a moment…</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* H2: Offline banner */}
       {!isOnline && (
         <div className="mb-0 bg-red-600 text-white text-sm font-medium text-center py-2 px-4 flex items-center justify-center gap-2 -mt-8 mb-8">
@@ -289,19 +315,13 @@ export default function StudentProfilePage() {
             <Button
               variant="ghost"
               className="pl-0 hover:bg-transparent hover:text-indigo-600 transition-colors"
-              onClick={() => router.push('/student/dashboard')}
+              disabled={!!navLoadingId}
+              onClick={() => handleNav('dashboard', '/student/dashboard')}
             >
-              <ArrowLeft className="w-4 h-4 mr-2" />
+              {navLoadingId === 'dashboard'
+                ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                : <ArrowLeft className="w-4 h-4 mr-2" />}
               Back to Dashboard
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="flex items-center gap-1.5 h-8 text-green-700 border-green-200 hover:bg-green-50"
-              onClick={() => router.push('/student/results')}
-            >
-              <Trophy className="w-3.5 h-3.5" />
-              My Results
             </Button>
           </div>
         )}
@@ -335,7 +355,7 @@ export default function StudentProfilePage() {
             <div>
               <p className="text-sm font-semibold text-amber-900">Email address required</p>
               <p className="text-xs text-amber-700 mt-0.5">
-                Please add your email address below — your exam report card will be sent to this address after you complete all 5 tests.
+                Please add your email address below — your exam score card will be sent to this address after you complete all 5 tests.
               </p>
             </div>
           </div>
@@ -389,10 +409,9 @@ export default function StudentProfilePage() {
                     value={formData.username}
                     onChange={(e) => setFormData({ ...formData, username: e.target.value })}
                     placeholder="Enter your username"
-                    required
                   />
                   <p className="text-xs text-gray-500">
-                    This will appear on your report cards
+                    This will appear on your score cards
                   </p>
                 </div>
 
@@ -406,20 +425,13 @@ export default function StudentProfilePage() {
                       id="email"
                       type="email"
                       value={formData.email}
-                      onChange={(e) => {
-                        setFormData({ ...formData, email: e.target.value })
-                        if (e.target.value) {
-                          setError('Note: Your test reports will be sent to this email address. Please fill carefully.')
-                          setTimeout(() => setError(''), 5000)
-                        }
-                      }}
+                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                       placeholder="Enter your email address"
                       className="pl-10"
-                      required
                     />
                   </div>
                   <p className="text-xs text-gray-500">
-                    This email will receive your report card soft copy after completing all 5 tests
+                    Your score card soft copy will be sent to this email after completing all 5 tests. Please fill carefully.
                   </p>
                 </div>
 

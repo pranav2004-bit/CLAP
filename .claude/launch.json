@@ -3,9 +3,10 @@
   "configurations": [
     {
       "name": "nextjs-frontend",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
-      "autoPort": true
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["node_modules/.bin/next", "dev", "--port", "3000"],
+      "cwd": "C:\\Users\\pranavnath\\OneDrive\\Desktop\\CLAP",
+      "port": 3000
     },
     {
       "name": "django-docker-stack",

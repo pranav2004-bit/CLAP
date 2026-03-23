@@ -4,42 +4,90 @@
   <meta charset="utf-8" />
   <title>CLAP Assessment Report</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 30px; color: #222; font-size: 14px; }
-    h1 { font-size: 22px; margin: 0 0 4px; color: #1a3c6e; }
-    h2 { font-size: 16px; margin: 24px 0 8px; color: #1a3c6e; border-bottom: 2px solid #1a3c6e; padding-bottom: 4px; }
-    h3 { font-size: 14px; margin: 16px 0 6px; color: #333; }
-    .header { border-bottom: 3px solid #1a3c6e; padding-bottom: 12px; margin-bottom: 18px; }
-    .subtitle { color: #555; font-size: 13px; margin: 0; }
-    .meta { margin-bottom: 20px; background: #f8f9fa; padding: 12px 16px; border-radius: 4px; }
+    /* Page setup — 60px bottom margin reserves space for the fixed footer on every page */
+    @page { margin: 30px 30px 60px 30px; }
+    body { font-family: Arial, sans-serif; margin: 0; padding: 0; color: #1f2937; font-size: 14px; }
+    .content { padding: 30px 30px 20px 30px; }
+    h2 { font-size: 16px; margin: 24px 0 8px; color: #1f2937; border-bottom: 1px solid #d1d5db; padding-bottom: 4px; }
+    h3 { font-size: 14px; margin: 16px 0 6px; color: #374151; }
+    .header { border-bottom: 2px solid #1f2937; padding-bottom: 12px; margin-bottom: 18px; }
+    .meta { margin-bottom: 20px; background: #f9fafb; padding: 12px 16px; border-radius: 4px; border-left: 3px solid #d1d5db; }
     .meta div { margin-bottom: 4px; }
+    /* Horizontal-lines-only table — no vertical cell borders */
     table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-    th, td { border: 1px solid #ccc; padding: 8px 10px; text-align: left; }
-    th { background: #1a3c6e; color: #fff; font-weight: bold; }
-    tr:nth-child(even) { background: #f5f7fa; }
-    .score-badge { font-weight: bold; color: #1a3c6e; }
-    .total-score { font-size: 16px; font-weight: bold; color: #1a3c6e; }
-    .feedback-overall { background: #eef3fb; border-left: 4px solid #1a3c6e; padding: 10px 14px; margin: 10px 0; border-radius: 0 4px 4px 0; font-style: italic; color: #333; }
-    .breakdown-table th { background: #4a6fa5; }
-    .section-box { border: 1px solid #dde3ef; border-radius: 6px; padding: 14px 16px; margin-bottom: 20px; }
+    th, td { border: none; border-bottom: 1px solid #d1d5db; padding: 8px 10px; text-align: left; }
+    th { background: #1f2937; color: #fff; font-weight: bold; border-bottom: none; }
+    tr:nth-child(even) { background: #f9fafb; }
+    .score-badge { font-weight: bold; color: #1f2937; }
+    .total-score { font-size: 16px; font-weight: bold; color: #1f2937; }
+    .feedback-overall { background: #f3f4f6; border-left: 3px solid #6b7280; padding: 10px 14px; margin: 10px 0; border-radius: 0 4px 4px 0; font-style: italic; color: #374151; }
+    .breakdown-table th { background: #374151; }
+    .section-box { border: 1px solid #e5e7eb; border-radius: 6px; padding: 14px 16px; margin-bottom: 20px; }
     .domain-label { text-transform: capitalize; }
-    .summary-row-llm td { background: #fff8e1; }
-    .footer { margin-top: 30px; border-top: 1px solid #ccc; padding-top: 10px; color: #888; font-size: 11px; }
+    .summary-row-llm td { background: #f9fafb; }
+    /* Total & grade rows */
+    .row-total td { background: #f3f4f6; font-weight: bold; font-size: 15px; border-top: 1px solid #9ca3af; border-bottom: none; }
+    .row-grade td { background: #1f2937; color: #fff; font-weight: bold; font-size: 15px; border-bottom: none; }
+    /* Grade badge */
+    .grade-badge {
+      display: inline-block;
+      background: #fff;
+      color: #1f2937;
+      border: 1px solid #1f2937;
+      border-radius: 4px;
+      padding: 2px 10px;
+      font-size: 15px;
+      font-weight: bold;
+      letter-spacing: 1px;
+    }
+    /* Grade scale legend */
+    .grade-legend { margin-top: 10px; font-size: 11px; color: #6b7280; }
+    .grade-legend span { margin-right: 14px; }
+    /* Fixed footer — WeasyPrint renders this at the bottom of EVERY page.
+       In browser preview (iframe) it pins to the bottom of the viewport. */
+    .footer {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 32px;
+      background: #fff;
+      border-top: 1px solid #e5e7eb;
+      padding: 8px 30px 0 30px;
+      box-sizing: border-box;
+    }
+    .footer table { margin: 0; width: 100%; border-collapse: collapse; }
   </style>
 </head>
 <body>
+<div class="content">
 
   <!-- Header -->
   <div class="header">
-    <h1>CLAP Assessment Report</h1>
-    <p class="subtitle">Comprehensive Language Assessment Platform</p>
+    <table style="width:100%;border:none;margin:0;">
+      <tr>
+        <td style="border:none;padding:0;vertical-align:middle;width:auto;">
+          {% if logo_data_uri %}
+          <img src="{{ logo_data_uri }}" alt="CLAP Logo"
+               style="height:52px;width:auto;display:block;" />
+          {% endif %}
+        </td>
+        <td style="border:none;padding:0 0 0 16px;vertical-align:middle;text-align:right;">
+          <div style="font-size:11px;color:#374151;letter-spacing:0.04em;text-transform:uppercase;font-weight:600;">Score Report</div>
+          <div style="font-size:10px;color:#6b7280;margin-top:2px;">Comprehensive Language Assessment Program</div>
+        </td>
+      </tr>
+    </table>
   </div>
 
   <!-- Student & Assessment Info -->
   <div class="meta">
-    <div><strong>Student:</strong> {{ submission.user.full_name|default:submission.user.email }}</div>
+    <div><strong>Student Name:</strong> {{ submission.user.full_name|default:submission.user.username|default:"—" }}</div>
+    <div><strong>Student ID:</strong> {{ submission.user.student_id|default:"—" }}</div>
+    <div><strong>Email ID:</strong> {{ submission.user.email }}</div>
+    {% if set_name %}<div><strong>Set:</strong> {{ set_name }}</div>{% endif %}
     <div><strong>Assessment:</strong> {{ submission.assessment.name }}</div>
     <div><strong>Submission ID:</strong> {{ submission.id }}</div>
-    <div><strong>Generated At:</strong> {{ generated_at }}</div>
   </div>
 
   <!-- ─── DOMAIN SUMMARY TABLE ─── -->
@@ -55,13 +103,41 @@
     <tbody>
       {% for s in scores %}
       <tr {% if s.domain == 'writing' or s.domain == 'speaking' %}class="summary-row-llm"{% endif %}>
-        <td class="domain-label">{{ s.domain }}</td>
+        <td class="domain-label">{% if s.domain == 'vocabulary' %}Verbal Ability{% else %}{{ s.domain }}{% endif %}</td>
         <td class="score-badge">{{ s.score }}</td>
         <td>{% if s.evaluated_by == 'llm' %}AI (LLM){% else %}Rule Engine{% endif %}</td>
       </tr>
       {% endfor %}
+
+      <!-- ─── TOTAL SCORE ROW ─── -->
+      {% if total_score is not None %}
+      <tr class="row-total">
+        <td><strong>Total Score</strong></td>
+        <td><strong>{{ total_score }} / {{ max_total }}</strong></td>
+        <td></td>
+      </tr>
+      <!-- ─── GRADE ROW ─── -->
+      <tr class="row-grade">
+        <td><strong>Grade</strong></td>
+        <td colspan="2">
+          <span class="grade-badge">{{ grade }}</span>
+        </td>
+      </tr>
+      {% endif %}
     </tbody>
   </table>
+
+  <!-- Grade scale legend -->
+  {% if grade %}
+  <div class="grade-legend">
+    <strong>Grade scale:</strong>
+    <span>O &ge;90%</span>
+    <span>A+ &ge;80%</span>
+    <span>A &ge;70%</span>
+    <span>B+ &ge;60%</span>
+    <span>B &lt;60%</span>
+  </div>
+  {% endif %}
 
   <!-- ─── WRITING DETAILED SECTION ─── -->
   {% for s in scores %}{% if s.domain == 'writing' %}
@@ -197,9 +273,24 @@
   </div>
   {% endif %}{% endfor %}
 
-  <div class="footer">
-    Generated by CLAP automated pipeline &mdash; {{ generated_at }}
-  </div>
+</div><!-- /.content -->
+
+<!-- Fixed footer — appears at bottom of every PDF page and browser preview viewport -->
+<div class="footer">
+  <table style="width:100%;border:none;margin:0;">
+    <tr>
+      <td style="border:none;padding:0;font-size:9px;color:#9ca3af;width:33%;white-space:nowrap;">
+        CLAP &middot; {{ generated_at|date:"d M Y" }}
+      </td>
+      <td style="border:none;padding:0;font-size:9.5px;color:#6b7280;text-align:center;width:34%;white-space:nowrap;letter-spacing:0.02em;">
+        A&nbsp;<strong style="color:#111827;letter-spacing:0.08em;font-size:10px;">SANJIVO</strong>&nbsp;Product
+      </td>
+      <td style="border:none;padding:0;font-size:9px;color:#9ca3af;width:33%;text-align:right;white-space:nowrap;">
+        Co-Powered by AuraTech&#8209;Vision
+      </td>
+    </tr>
+  </table>
+</div>
 
 </body>
 </html>

@@ -184,7 +184,7 @@ function SetEditorContent() {
         toast.error(data.error || 'Failed to add item')
         setItems(prev => prev.filter(i => i?.id !== tempId))
       }
-    } catch {
+    } catch (_e) {
       toast.error('Network error — item not saved')
       setItems(prev => prev.filter(i => i?.id !== tempId))
     }
@@ -209,7 +209,7 @@ function SetEditorContent() {
       } else {
         toast.success('Item deleted')
       }
-    } catch {
+    } catch (_e) {
       toast.error('Network error — item restored')
       setItems(snapshot)
     }
@@ -332,7 +332,7 @@ function SetEditorContent() {
       } else {
         toast.error(data.error || 'Upload failed')
       }
-    } catch {
+    } catch (_e) {
       toast.dismiss(t)
       toast.error('Network error during upload')
     }
@@ -354,7 +354,7 @@ function SetEditorContent() {
       } else {
         toast.error(data.error || 'Failed to delete audio')
       }
-    } catch {
+    } catch (_e) {
       toast.error('Network error')
     }
   }, [])

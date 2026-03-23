@@ -5,7 +5,8 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
-import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders, isNetworkError, markBackendOffline } from '@/lib/api-config'
+import { CubeLoader } from '@/components/ui/CubeLoader'
 import {
   RefreshCw,
   Send,
@@ -19,6 +20,8 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Eye,
+  X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -222,6 +225,31 @@ export function EmailManagement() {
   // ── UI state ───────────────────────────────────────────────────────────
   const [resendingId, setResendingId]     = useState<string | null>(null)
   const [bulkResending, setBulkResending] = useState(false)
+
+  // Email preview modal
+  const [showEmailPreview, setShowEmailPreview]     = useState(false)
+  const [emailPreviewHtml, setEmailPreviewHtml]     = useState<string | null>(null)
+  const [emailPreviewLoading, setEmailPreviewLoading] = useState(false)
+
+  const openEmailPreview = async () => {
+    setShowEmailPreview(true)
+    setEmailPreviewHtml(null)
+    setEmailPreviewLoading(true)
+    try {
+      const res = await fetch(getApiUrl('admin/emails/preview'), { headers: getAuthHeaders() })
+      if (res.ok) {
+        const data = await res.json()
+        setEmailPreviewHtml(data.html_preview || '<p>No preview available</p>')
+      } else {
+        toast.error('Failed to load email preview')
+      }
+    } catch (err) {
+      if (isNetworkError(err)) markBackendOffline()
+      toast.error('Network error loading email preview')
+    } finally {
+      setEmailPreviewLoading(false)
+    }
+  }
   const [searchQuery, setSearchQuery]     = useState('')
   const [activeTab, setActiveTab]         = useState<'status' | 'logs'>('status')
 
@@ -294,6 +322,7 @@ export function EmailManagement() {
       })
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') return
+      if (isNetworkError(err)) { markBackendOffline(); return }
       console.error('[Emails] Tests list fetch error:', err)
     } finally {
       if (!ctrl.signal.aborted) setTestsLoading(false)
@@ -443,7 +472,8 @@ export function EmailManagement() {
         const err = await res.json().catch(() => ({}))
         toast.error(err.error || 'Failed to resend email')
       }
-    } catch {
+    } catch (err) {
+      if (isNetworkError(err)) markBackendOffline()
       toast.error('Network error — please try again')
     } finally {
       setResendingId(null)
@@ -452,10 +482,13 @@ export function EmailManagement() {
 
   // ── Bulk resend failed (bounced + complaint on current page) ──────────
   /**
-   * Resends each failed email individually (most reliable — avoids the
-   * batch_id/assessment_id requirement of the bulk-resend endpoint, and
-   * gives per-item success/failure tracking).
+   * Resends each failed email in sequential batches of BULK_RESEND_BATCH_SIZE.
+   * Batching prevents flooding the backend when the email list grows large.
+   * Uses the single-resend endpoint per item for consistent guard behaviour
+   * (UUID validation, idempotency, Celery availability) on every item.
    */
+  const BULK_RESEND_BATCH_SIZE = 5
+
   const handleBulkResend = async () => {
     const failedRows = (statusData?.rows ?? []).filter(
       r => r.delivery_status === 'bounced' || r.delivery_status === 'complaint',
@@ -471,27 +504,38 @@ export function EmailManagement() {
     if (!confirmed) return
 
     setBulkResending(true)
+    let succeeded = 0
+    let failed    = 0
+
     try {
-      const results = await Promise.allSettled(
-        failedRows.map(r =>
-          fetch(getApiUrl(`admin/emails/submissions/${r.submission_id}/resend`), {
-            method:  'POST',
-            headers: getAuthHeaders(),
-          }),
-        ),
-      )
-      const succeeded = results.filter(
-        r => r.status === 'fulfilled' && (r as PromiseFulfilledResult<Response>).value.ok,
-      ).length
-      const failed = failedRows.length - succeeded
+      // Process in batches to avoid overwhelming the backend
+      for (let i = 0; i < failedRows.length; i += BULK_RESEND_BATCH_SIZE) {
+        const batch = failedRows.slice(i, i + BULK_RESEND_BATCH_SIZE)
+        const results = await Promise.allSettled(
+          batch.map(r =>
+            fetch(getApiUrl(`admin/emails/submissions/${r.submission_id}/resend`), {
+              method:  'POST',
+              headers: getAuthHeaders(),
+            }),
+          ),
+        )
+        for (const r of results) {
+          if (r.status === 'fulfilled' && (r as PromiseFulfilledResult<Response>).value.ok) {
+            succeeded++
+          } else {
+            failed++
+          }
+        }
+      }
 
       if (succeeded > 0) toast.success(`Resend triggered for ${succeeded} email(s)`)
       if (failed > 0)    toast.error(`${failed} resend(s) failed — check logs`)
 
       doFetch()
       resetTimer()
-    } catch {
-      toast.error('Network error during bulk resend')
+    } catch (err) {
+      if (isNetworkError(err)) markBackendOffline()
+      else toast.error('Error during bulk resend')
     } finally {
       setBulkResending(false)
     }
@@ -502,11 +546,11 @@ export function EmailManagement() {
     if (!searchQuery.trim()) return true
     const q = searchQuery.toLowerCase()
     return (
-      r.student.email.toLowerCase().includes(q)         ||
-      r.student.name.toLowerCase().includes(q)          ||
-      r.student.id.toLowerCase().includes(q)            ||
-      (r.assessment.name ?? '').toLowerCase().includes(q) ||
-      r.delivery_status.includes(q)
+      (r.student.email       ?? '').toLowerCase().includes(q) ||
+      (r.student.name        ?? '').toLowerCase().includes(q) ||
+      (r.student.id          ?? '').toLowerCase().includes(q) ||
+      (r.assessment.name     ?? '').toLowerCase().includes(q) ||
+      (r.delivery_status     ?? '').toLowerCase().includes(q)
     )
   })
 
@@ -524,12 +568,7 @@ export function EmailManagement() {
 
   // ── Initial loading screen ────────────────────────────────────────────
   if (loading && !statusData) {
-    return (
-      <div className="flex items-center justify-center py-16 gap-3 text-gray-500">
-        <Loader2 className="w-6 h-6 animate-spin text-indigo-500" />
-        <span>Loading email data…</span>
-      </div>
-    )
+    return <CubeLoader fullScreen={false} />
   }
 
   // ── Render ────────────────────────────────────────────────────────────
@@ -569,6 +608,15 @@ export function EmailManagement() {
               ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
               : <Send    className="w-4 h-4 mr-2" />}
             Resend Failed
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={openEmailPreview}
+          >
+            <Eye className="w-4 h-4 mr-2" />
+            Preview Email
           </Button>
 
           <Button
@@ -658,14 +706,16 @@ export function EmailManagement() {
                       {statusIcon(row.delivery_status)}
 
                       <div className="flex-1 min-w-0">
-                        {/* Name */}
+                        {/* Name (email used as name when no full name set) */}
                         <p className="text-sm font-medium text-gray-800 truncate">
                           {row.student.name || row.student.email}
                         </p>
-                        {/* Email · Test name */}
+                        {/* Email (only when distinct from name) · Test name */}
                         <p className="text-xs text-gray-400 truncate">
-                          {row.student.email}
-                          {row.assessment.name && <> &middot; {row.assessment.name}</>}
+                          {row.student.name && row.student.name !== row.student.email
+                            ? <>{row.student.email} &middot; </>
+                            : null}
+                          {row.assessment.name ?? ''}
                         </p>
                         {/* Student ID · Sent timestamp */}
                         <p className="text-xs text-gray-400 mt-0.5 font-mono">
@@ -681,8 +731,8 @@ export function EmailManagement() {
                           {statusLabel(row.delivery_status)}
                         </span>
 
-                        {/* Resend button — only for actionable failure states */}
-                        {(row.delivery_status === 'bounced' || row.delivery_status === 'complaint') && (
+                        {/* Resend button — for pending, failed, bounced, complained */}
+                        {(row.delivery_status === 'pending' || row.delivery_status === 'failed' || row.delivery_status === 'bounced' || row.delivery_status === 'complaint') && (
                           <Button
                             size="sm"
                             variant="ghost"
@@ -779,6 +829,50 @@ export function EmailManagement() {
             )}
           </CardContent>
         </Card>
+      )}
+
+      {/* Email Preview Modal */}
+      {showEmailPreview && (
+        <div
+          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+          onClick={() => setShowEmailPreview(false)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Email Preview</h2>
+                <p className="text-xs text-gray-500 mt-0.5">Student-facing email template</p>
+              </div>
+              <button onClick={() => setShowEmailPreview(false)} className="text-gray-400 hover:text-gray-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-6">
+              {emailPreviewLoading ? (
+                <div className="flex items-center justify-center py-16 gap-3 text-gray-400">
+                  <Loader2 className="w-5 h-5 animate-spin text-indigo-500" />
+                  <span className="text-sm">Loading preview…</span>
+                </div>
+              ) : emailPreviewHtml ? (
+                <div className="border rounded-lg overflow-hidden">
+                  <div className="bg-gray-50 border-b px-3 py-2 text-xs font-medium text-gray-600">Email Preview</div>
+                  <iframe
+                    srcDoc={emailPreviewHtml}
+                    sandbox=""
+                    className="w-full bg-white"
+                    style={{ height: '560px' }}
+                    title="Email Template Preview"
+                  />
+                </div>
+              ) : (
+                <p className="text-sm text-gray-400 text-center py-10">Failed to load preview.</p>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

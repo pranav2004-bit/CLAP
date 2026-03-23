@@ -2,12 +2,14 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
+from django.db import transaction
 from django.db.models import Prefetch
 import json
 import logging
 from api.models import (
     User, ClapTest, ClapTestComponent, StudentClapAssignment,
     ClapTestItem, ClapSetItem, StudentClapResponse, ComponentAttempt, MalpracticeEvent,
+    AssessmentSubmission,
 )
 from api.utils.jwt_utils import get_user_from_request
 
@@ -79,7 +81,11 @@ def list_assigned_tests(request):
                 'retest_granted': assignment.retest_granted,
                 'deadline_utc': global_deadline.isoformat() if global_deadline else None,
                 'timer_state': timer_state,
-                'components': components
+                'components': components,
+                'test_duration_minutes': (
+                    assignment.clap_test.global_duration_minutes
+                    or sum(c['duration'] or 0 for c in components)
+                ),
             })
 
         response = JsonResponse({'assignments': data})
@@ -265,13 +271,17 @@ def submit_response(request, assignment_id):
     if not user or user.role != 'student':
         return JsonResponse({'error': 'Unauthorized'}, status=401)
 
-    # Per-endpoint burst limit: 5 auto-saves per 10-second window per user.
+    # Per-endpoint burst limit: 30 auto-saves per 10-second window per user.
+    # 30/10 s = 3 saves/second — enough for the fastest MCQ-clicking student
+    # (50 questions × avg 1.3 s each = ~6 saves per 10-second bucket at peak).
+    # The old limit of 5/10 s caused legitimate answers to be rate-limited and
+    # silently dropped whenever a student answered faster than 1 every 2 seconds.
     # Fails open if Redis is unavailable (never blocks legitimate traffic).
     _rc = _get_redis()
     if _rc:
         _bucket = int(time.time()) // 10
         _key = f'rl:submit:{user.id}:{_bucket}'
-        _limited, _, _ttl = _rate_limited(_rc, _key, limit=5, window_seconds=10)
+        _limited, _, _ttl = _rate_limited(_rc, _key, limit=30, window_seconds=10)
         if _limited:
             _resp = JsonResponse({'error': 'Too many submissions', 'code': 'RATE_LIMITED'}, status=429)
             _resp['Retry-After'] = str(_ttl)
@@ -314,7 +324,12 @@ def submit_response(request, assignment_id):
                 attempt.status = 'expired'
                 attempt.auto_submitted = True
                 attempt.save(update_fields=['status', 'auto_submitted'])
-                return JsonResponse({'error': 'Component time limit exceeded'}, status=403)
+                # DO NOT return 403 here.  Returning 403 on the first save after
+                # the component timer expires silently drops that answer: the client
+                # retries and succeeds (status='expired' → condition is false on
+                # retry), so every subsequent answer saves fine but the very first
+                # MCQ after timer expiry is permanently lost.  The status transition
+                # above is all that's needed — let the save proceed.
         except ClapTestItem.DoesNotExist:
             return JsonResponse({'error': 'Item not found'}, status=404)
 
@@ -481,16 +496,19 @@ def finish_component(request, assignment_id, component_id):
     all_done = all_component_ids <= done_component_ids
 
     if all_done and assignment.status != 'completed':
-        assignment.status = 'completed'
-        assignment.completed_at = now
-        assignment.save(update_fields=['status', 'completed_at'])
-        logger.info(f"Assignment {assignment_id} marked completed for student {user.id}")
-        # Kick off async post-test text similarity check (fire-and-forget, never blocks student)
+        # All components are done — finalize the assignment and dispatch the full
+        # scoring pipeline (MCQ re-score + writing + speaking + report).
+        # _finalize_and_dispatch is idempotent and handles the completed-at update,
+        # AssessmentSubmission creation, and check_text_similarity internally.
         try:
-            from api.tasks import check_text_similarity
-            check_text_similarity.delay(str(assignment_id))
-        except Exception as task_err:
-            logger.warning(f"Could not enqueue similarity task for {assignment_id}: {task_err}")
+            _finalize_and_dispatch(assignment, 'all_components_done')
+        except Exception as dispatch_err:
+            # Never fail the student response because of a pipeline error.
+            # The Beat task / admin rescore can recover this later.
+            logger.error(
+                'finish_component_dispatch_failed assignment=%s error=%s',
+                assignment_id, dispatch_err, exc_info=True,
+            )
 
     return JsonResponse({
         'message': 'Component finished successfully',
@@ -540,3 +558,223 @@ def log_malpractice_event(request, assignment_id):
         return JsonResponse({'error': 'Failed to log event'}, status=500)
 
 
+# ── Auto-submit helpers ────────────────────────────────────────────────────────
+
+def _finalize_and_dispatch(assignment, reason: str):
+    """
+    Atomic, idempotent finalization helper.  Called by both the client-facing
+    auto_submit_assignment endpoint and the server-side Beat task.
+
+    Steps (inside a single SELECT FOR UPDATE transaction):
+      1. Lock assignment row — prevents concurrent double-dispatch.
+      2. If already completed → return existing AssessmentSubmission (idempotent).
+      3. If never started (status='assigned') → nothing to submit, return None.
+      4. Ensure ComponentAttempt exists for EVERY component in the test:
+            active   → mark expired + auto_submitted=True
+            missing  → create with status='expired', auto_submitted=True
+            completed/expired → leave untouched
+      5. Mark assignment completed (status, completed_at).
+      6. get_or_create AssessmentSubmission keyed on a deterministic
+         idempotency_key scoped to this assignment — concurrent callers collide
+         on the unique constraint and the losing writer gets the winner's row.
+
+    Dispatches the Celery pipeline OUTSIDE the transaction to avoid holding DB
+    locks during broker publish.
+
+    Returns:
+        (AssessmentSubmission | None, created: bool)
+        created=True  → pipeline was dispatched by this call
+        created=False → submission already existed; no double-dispatch
+    """
+    # Lazy import avoids circular dependency at module load time.
+    # By call time both modules are already in sys.modules.
+    from api.views.submissions import _dispatch_pipeline
+
+    with transaction.atomic():
+        # Lock the assignment row for the duration of this transaction.
+        # Concurrent auto-submit calls (client + Beat task arriving simultaneously)
+        # will queue behind the lock and receive the already-completed state
+        # on the second pass — no double pipeline dispatch.
+        try:
+            locked = StudentClapAssignment.objects.select_for_update().get(
+                id=assignment.id
+            )
+        except StudentClapAssignment.DoesNotExist:
+            raise ValueError(f'Assignment {assignment.id} not found')
+
+        # ── Idempotency guard: already completed ──────────────────────────────
+        if locked.status == 'completed':
+            existing_sub = AssessmentSubmission.objects.filter(
+                user=locked.student,
+                assessment=locked.clap_test,
+            ).order_by('-created_at').first()
+            logger.info(
+                'auto_submit_already_completed assignment=%s reason=%s submission=%s',
+                assignment.id, reason,
+                str(existing_sub.id) if existing_sub else 'none',
+            )
+            return existing_sub, False
+
+        # ── Never-started guard ───────────────────────────────────────────────
+        if locked.status == 'assigned':
+            logger.info(
+                'auto_submit_never_started assignment=%s reason=%s — skipping',
+                assignment.id, reason,
+            )
+            return None, False
+
+        now = timezone.now()
+
+        # ── Ensure ComponentAttempt for every component ───────────────────────
+        all_components = list(
+            ClapTestComponent.objects.filter(clap_test=locked.clap_test)
+        )
+        for comp in all_components:
+            attempt, created_attempt = ComponentAttempt.objects.get_or_create(
+                assignment=locked,
+                component=comp,
+                defaults={
+                    'started_at': now,
+                    'deadline': now,
+                    'status': 'expired',
+                    'auto_submitted': True,
+                },
+            )
+            if not created_attempt and attempt.status == 'active':
+                ComponentAttempt.objects.filter(id=attempt.id).update(
+                    status='expired',
+                    auto_submitted=True,
+                )
+
+        # ── Mark assignment completed ─────────────────────────────────────────
+        StudentClapAssignment.objects.filter(id=locked.id).update(
+            status='completed',
+            completed_at=now,
+        )
+
+        # ── get_or_create submission (dedup guard) ────────────────────────────
+        # idempotency_key is deterministic and scoped to this assignment so:
+        #   - Concurrent callers collide on the unique constraint → one wins
+        #   - Retests (new assignment_id) always generate a fresh submission
+        idempotency_key = f'auto:{locked.id}'
+        submission, sub_created = AssessmentSubmission.objects.get_or_create(
+            idempotency_key=idempotency_key,
+            defaults={
+                'user': locked.student,
+                'assessment': locked.clap_test,
+                'status': AssessmentSubmission.STATUS_PENDING,
+                'correlation_id': str(locked.id),
+            },
+        )
+
+    # ── Dispatch pipeline outside the transaction ─────────────────────────────
+    if sub_created:
+        dispatched = _dispatch_pipeline(
+            submission.id, correlation_id=str(assignment.id)
+        )
+        logger.info(
+            'auto_submit_finalized assignment=%s reason=%s submission=%s dispatched=%s',
+            assignment.id, reason, submission.id, dispatched,
+        )
+        # Fire async text-similarity check (fire-and-forget, non-blocking)
+        try:
+            from api.tasks import check_text_similarity
+            check_text_similarity.delay(str(assignment.id))
+        except Exception as sim_err:
+            logger.warning(
+                'auto_submit_similarity_task_error assignment=%s error=%s',
+                assignment.id, sim_err,
+            )
+    else:
+        logger.info(
+            'auto_submit_submission_already_exists assignment=%s reason=%s submission=%s',
+            assignment.id, reason, submission.id,
+        )
+
+    return submission, sub_created
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def auto_submit_assignment(request, assignment_id):
+    """
+    POST /api/student/clap-assignments/{id}/auto-submit
+
+    Unified, idempotent auto-submit endpoint.  Safe to call multiple times.
+
+    Triggered by:
+      - Frontend component-page timer expiry
+      - Frontend hub-page timer expiry
+      - Frontend pagehide/beforeunload keepalive fetch
+      - Malpractice force-submit (tab limit / fullscreen limit)
+      - Server Beat task (auto_submit_expired_assignments) — calls _finalize_and_dispatch directly
+
+    Rate limit: 5 calls per 30-second window per user.
+    Returns: { submission_id, status, already_completed }
+    """
+    import time
+    from api.middleware.rate_limit import _get_redis, _rate_limited
+
+    user = get_user_from_request(request)
+    if not user or user.role != 'student':
+        return JsonResponse({'error': 'Unauthorized'}, status=401)
+
+    # Per-user rate limit: 5 calls per 30-second window.
+    # Tolerates simultaneous client + beacon + timer triggers without blocking
+    # legitimate retries on unstable connections.
+    _rc = _get_redis()
+    if _rc:
+        _bucket = int(time.time()) // 30
+        _key = f'rl:autosubmit:{user.id}:{_bucket}'
+        _limited, _, _ttl = _rate_limited(_rc, _key, limit=5, window_seconds=30)
+        if _limited:
+            _resp = JsonResponse(
+                {'error': 'Too many auto-submit requests', 'code': 'RATE_LIMITED'},
+                status=429,
+            )
+            _resp['Retry-After'] = str(_ttl)
+            return _resp
+
+    try:
+        assignment = StudentClapAssignment.objects.select_related(
+            'clap_test'
+        ).get(id=assignment_id, student=user)
+    except StudentClapAssignment.DoesNotExist:
+        return JsonResponse({'error': 'Assignment not found'}, status=404)
+
+    try:
+        data = json.loads(request.body or '{}')
+    except json.JSONDecodeError:
+        data = {}
+
+    reason = data.get('reason', 'client_unknown')
+    VALID_REASONS = {'client_timer', 'client_malpractice', 'client_unload', 'client_unknown'}
+    if reason not in VALID_REASONS:
+        reason = 'client_unknown'
+
+    try:
+        submission, created = _finalize_and_dispatch(assignment, reason)
+    except Exception as exc:
+        logger.error(
+            'auto_submit_assignment error assignment=%s student=%s reason=%s error=%s',
+            assignment_id, user.id, reason, exc,
+        )
+        return JsonResponse(
+            {'error': 'Auto-submit failed — please retry or contact support'},
+            status=500,
+        )
+
+    if submission is None:
+        # Assignment was never started
+        return JsonResponse({
+            'submission_id': None,
+            'status': assignment.status,
+            'already_completed': False,
+            'message': 'Assignment was not started — nothing to submit',
+        }, status=200)
+
+    return JsonResponse({
+        'submission_id': str(submission.id),
+        'status': submission.status,
+        'already_completed': not created,
+    }, status=200)

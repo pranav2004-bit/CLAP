@@ -9,6 +9,9 @@ interface AntiCheatOptions {
 
 export function useAntiCheat({ onTabSwitch, onFullscreenExit, enabled = true }: AntiCheatOptions) {
   const switchCount = useRef(0)
+  // Set to true by allowNavigation() before a programmatic hard-nav (window.location.replace).
+  // Prevents the beforeunload guard from showing "Leave site?" during auto-submit redirect.
+  const allowLeaveRef = useRef(false)
 
   // ── Initialise from the REAL browser state ─────────────────────────────────
   // Critical: when [type]/page mounts after the overview page already entered
@@ -63,6 +66,7 @@ export function useAntiCheat({ onTabSwitch, onFullscreenExit, enabled = true }: 
       }
     }
     const noLeave = (e: BeforeUnloadEvent) => {
+      if (allowLeaveRef.current) return   // auto-submit redirect — let it through
       e.preventDefault()
       e.returnValue = ''
     }
@@ -87,7 +91,7 @@ export function useAntiCheat({ onTabSwitch, onFullscreenExit, enabled = true }: 
       }
       await document.documentElement.requestFullscreen({ navigationUI: 'hide' })
       isFullscreen.current = true
-    } catch {
+    } catch (_e) {
       // iOS Safari does not support requestFullscreen — caller applies CSS simulation.
       // Sync from actual browser state in case the element is still fullscreen
       // despite the exception (some browsers throw on already-fullscreen calls).
@@ -102,11 +106,14 @@ export function useAntiCheat({ onTabSwitch, onFullscreenExit, enabled = true }: 
       } else {
         await document.exitFullscreen()
       }
-    } catch {
+    } catch (_e) {
       // Ignore if not in fullscreen
     }
     isFullscreen.current = false
   }, [])
 
-  return { requestFullscreen, exitFullscreen, tabSwitchCount: switchCount }
+  // Call before window.location.replace() so the beforeunload guard doesn't show "Leave site?".
+  const allowNavigation = useCallback(() => { allowLeaveRef.current = true }, [])
+
+  return { requestFullscreen, exitFullscreen, tabSwitchCount: switchCount, allowNavigation }
 }

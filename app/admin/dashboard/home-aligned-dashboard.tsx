@@ -62,7 +62,7 @@ export default function AdminDashboard() {
     { name: 'Speaking Test', type: 'speaking', avgScore: 6.8, completionRate: 72, icon: Mic, color: 'speaking', marks: 10, duration: '5 min' },
     { name: 'Reading Test', type: 'reading', avgScore: 8.1, completionRate: 92, icon: BookOpen, color: 'reading', marks: 10, duration: '25 min' },
     { name: 'Writing Test', type: 'writing', avgScore: 7.9, completionRate: 88, icon: PenTool, color: 'writing', marks: 10, duration: '30 min' },
-    { name: 'Vocabulary Test', type: 'vocabulary', avgScore: 8.3, completionRate: 95, icon: Brain, color: 'vocabulary', marks: 10, duration: '15 min' }
+    { name: 'Verbal Ability Test', type: 'vocabulary', avgScore: 8.3, completionRate: 95, icon: Brain, color: 'vocabulary', marks: 10, duration: '15 min' }
   ]
 
   const getStatusVariant = (status: string) => {

@@ -1,4 +1,4 @@
-// Mock data for API routes until Supabase is implemented
+// Mock data for API routes
 
 export interface Test {
   id: string
@@ -78,7 +78,7 @@ export const mockTests: Test[] = [
   },
   {
     id: '5',
-    name: 'Vocabulary & Grammar Test',
+    name: 'Verbal Ability Test',
     type: 'vocabulary',
     duration_minutes: 25,
     total_questions: 8,

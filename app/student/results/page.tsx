@@ -18,8 +18,9 @@ import {
   Clock,
   CheckCircle2,
   RefreshCw,
+  LayoutDashboard,
 } from 'lucide-react'
-import { getApiUrl, apiFetch } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders, apiFetch } from '@/lib/api-config'
 import { authStorage } from '@/lib/auth-storage'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -30,6 +31,7 @@ interface HistoryRow {
   assessment_name: string | null
   status: string
   overall_score: number | null
+  max_score: number | null
   created_at: string | null
   report_download_url: string | null
 }
@@ -53,19 +55,14 @@ interface ResultsDetail {
 
 const STATUS_COMPLETE = 'COMPLETE'
 
-/** Human-readable status label + tailwind colour class */
+/** Human-readable status label + tailwind colour class.
+ *  Non-complete states are intentionally collapsed to a single neutral badge —
+ *  students do not need to see pipeline-internal stages. */
 function statusDisplay(status: string): { label: string; cls: string } {
-  switch (status) {
-    case 'PENDING':            return { label: 'Queued',              cls: 'bg-gray-100 text-gray-600' }
-    case 'RULES_COMPLETE':     return { label: 'Checking Rules',      cls: 'bg-blue-100 text-blue-700' }
-    case 'LLM_PROCESSING':     return { label: 'AI Evaluating',       cls: 'bg-indigo-100 text-indigo-700' }
-    case 'LLM_COMPLETE':       return { label: 'AI Done',             cls: 'bg-violet-100 text-violet-700' }
-    case 'REPORT_GENERATING':  return { label: 'Generating Report',   cls: 'bg-amber-100 text-amber-700' }
-    case 'REPORT_READY':       return { label: 'Report Ready',        cls: 'bg-orange-100 text-orange-700' }
-    case 'EMAIL_SENDING':      return { label: 'Sending Email',       cls: 'bg-sky-100 text-sky-700' }
-    case 'COMPLETE':           return { label: 'Complete',            cls: 'bg-green-100 text-green-700' }
-    default:                   return { label: status,                cls: 'bg-gray-100 text-gray-500' }
+  if (status === 'COMPLETE') {
+    return { label: 'Complete', cls: 'bg-green-100 text-green-700' }
   }
+  return { label: 'In Progress', cls: 'bg-blue-50 text-blue-600' }
 }
 
 /** Friendly domain label */
@@ -73,11 +70,11 @@ function domainLabel(domain: string): string {
   return domain.charAt(0).toUpperCase() + domain.slice(1).toLowerCase()
 }
 
-/** Score → colour class for the progress bar fill */
+/** Score → colour class for the progress bar fill (score is out of 10) */
 function scoreColor(score: number): string {
-  if (score >= 80) return 'bg-green-500'
-  if (score >= 60) return 'bg-blue-500'
-  if (score >= 40) return 'bg-amber-500'
+  if (score >= 8) return 'bg-green-500'
+  if (score >= 6) return 'bg-blue-500'
+  if (score >= 4) return 'bg-amber-500'
   return 'bg-red-500'
 }
 
@@ -98,6 +95,8 @@ export default function StudentResultsPage() {
   const [loading, setLoading]         = useState(true)
   const [error, setError]             = useState<string | null>(null)
   const [rows, setRows]               = useState<HistoryRow[]>([])
+  // Navigation loading guard — tracks which header button was clicked
+  const [navLoadingId, setNavLoadingId] = useState<string | null>(null)
 
   // Which submission is expanded to show domain scores
   const [expandedId, setExpandedId]   = useState<string | null>(null)
@@ -111,7 +110,7 @@ export default function StudentResultsPage() {
     setLoading(true)
     setError(null)
     try {
-      const res = await apiFetch(getApiUrl('submissions/history'))
+      const res = await apiFetch(getApiUrl('submissions/history'), { headers: getAuthHeaders() })
       if (!res.ok) throw new Error(`Server returned ${res.status}`)
       const data = await res.json()
       setRows(data.rows ?? [])
@@ -140,11 +139,11 @@ export default function StudentResultsPage() {
     // Fetch detail
     setDetailLoading(id)
     try {
-      const res = await apiFetch(getApiUrl(`submissions/${id}/results`))
+      const res = await apiFetch(getApiUrl(`submissions/${id}/results`), { headers: getAuthHeaders() })
       if (!res.ok) throw new Error(`${res.status}`)
       const data: ResultsDetail = await res.json()
       setDetailCache(prev => ({ ...prev, [id]: data }))
-    } catch {
+    } catch (_e) {
       // On error, leave expandedId set but no cached detail — card will show a retry message
     } finally {
       setDetailLoading(null)
@@ -164,12 +163,12 @@ export default function StudentResultsPage() {
     const title = `CLAP Assessment Results — ${sub.assessment_name ?? 'Test'}`
     const url   = sub.report_download_url ?? window.location.href
     if (navigator.share) {
-      try { await navigator.share({ title, url }) } catch { /* user cancelled */ }
+      try { await navigator.share({ title, url }) } catch (_e) { /* user cancelled */ }
     } else {
       try {
         await navigator.clipboard.writeText(url)
         alert('Report link copied to clipboard!')
-      } catch {
+      } catch (_e) {
         alert('Could not copy link. Please copy it manually from your browser.')
       }
     }
@@ -180,6 +179,13 @@ export default function StudentResultsPage() {
   const handleLogout = () => {
     authStorage.clear()
     router.push('/login')
+  }
+
+  // ── Nav with loading guard ────────────────────────────────────────────────
+  const handleNav = (id: string, path: string) => {
+    if (navLoadingId) return
+    setNavLoadingId(id)
+    router.push(path)
   }
 
   // ── Render helpers ───────────────────────────────────────────────────────
@@ -193,12 +199,12 @@ export default function StudentResultsPage() {
         <div key={s.domain}>
           <div className="flex justify-between text-sm mb-1">
             <span className="font-medium text-gray-700">{domainLabel(s.domain)}</span>
-            <span className="font-bold text-gray-900">{Math.round(s.score)}<span className="text-gray-400 font-normal">/100</span></span>
+            <span className="font-bold text-gray-900">{Math.round(s.score)}<span className="text-gray-400 font-normal">/10</span></span>
           </div>
           <div className="w-full bg-gray-100 rounded-full h-2.5">
             <div
               className={`h-2.5 rounded-full transition-all duration-700 ${scoreColor(s.score)}`}
-              style={{ width: `${Math.min(100, s.score)}%` }}
+              style={{ width: `${Math.min(100, s.score * 10)}%` }}
             />
           </div>
         </div>
@@ -214,41 +220,65 @@ export default function StudentResultsPage() {
     const loadingDetail   = detailLoading === sub.submission_id
 
     return (
-      <Card key={sub.submission_id} className={`border transition-shadow ${isExpanded ? 'shadow-md' : 'hover:shadow-sm'}`}>
+      <Card key={sub.submission_id} className={`relative border transition-shadow ${isExpanded ? 'shadow-md' : 'hover:shadow-sm'}`}>
         <CardContent className="p-5">
+
+          {/* ── Share button — absolute top-right corner ── */}
+          {isComplete && (
+            <button
+              onClick={(e) => { e.stopPropagation(); handleShare(sub) }}
+              className="absolute top-3 right-3 p-1.5 rounded-full text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+              title="Share score card"
+            >
+              <Share2 className="w-4 h-4" />
+            </button>
+          )}
+
           {/* ── Top row ── */}
-          <div className="flex flex-wrap items-start gap-3">
-            {/* Icon */}
+          {/* pr-8 reserves 32px on the right so the absolute share button never overlaps text */}
+          <div className="flex items-start gap-3 pr-8">
+
+            {/* Icon — fixed 40×40, never shrinks */}
             <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${isComplete ? 'bg-green-100' : 'bg-gray-100'}`}>
               {isComplete
                 ? <Trophy className="w-5 h-5 text-green-600" />
                 : <Clock  className="w-5 h-5 text-gray-400" />}
             </div>
 
-            {/* Title + meta */}
+            {/* Content column — gets all remaining width */}
             <div className="flex-1 min-w-0">
-              <p className="font-semibold text-gray-900 leading-tight">
-                {sub.assessment_name ?? 'CLAP Assessment'}
-              </p>
-              <p className="text-xs text-gray-400 mt-0.5">Submitted {fmtDate(sub.created_at)}</p>
-            </div>
 
-            {/* Status badge + overall score */}
-            <div className="flex flex-col items-end gap-1 shrink-0">
-              <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${cls}`}>{label}</span>
-              {isComplete && sub.overall_score !== null && (
-                <span className="text-lg font-bold text-gray-800">
-                  {Math.round(sub.overall_score)}<span className="text-xs font-normal text-gray-400">/100</span>
+              {/* Row A: title (truncates) + status badge (fixed, right side) */}
+              <div className="flex items-center gap-2">
+                <p className="font-semibold text-gray-900 leading-tight truncate flex-1 min-w-0">
+                  {sub.assessment_name ?? 'CLAP Assessment'}
+                </p>
+                <span className={`text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap shrink-0 ${cls}`}>
+                  {label}
                 </span>
+              </div>
+
+              {/* Row B: date — full column width, wraps naturally, never truncates */}
+              <p className="text-xs text-gray-400 mt-0.5">
+                Submitted {fmtDate(sub.created_at)}
+              </p>
+
+              {/* Row C: total score — only when complete */}
+              {isComplete && sub.overall_score !== null && (
+                <p className="text-xl font-bold text-gray-800 mt-1 leading-tight">
+                  {Math.round(sub.overall_score)}
+                  <span className="text-xs font-normal text-gray-400">/{sub.max_score ?? 50}</span>
+                </p>
               )}
             </div>
+
           </div>
 
           {/* ── In-progress message ── */}
           {!isComplete && (
-            <div className="mt-4 flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5 text-sm text-amber-800">
-              <Loader2 className="w-4 h-4 shrink-0 mt-0.5 animate-spin" />
-              <span>Your report is being prepared — this usually takes a few minutes after the exam ends. Check back soon.</span>
+            <div className="mt-4 flex items-start gap-2 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2.5 text-sm text-blue-800">
+              <Loader2 className="w-4 h-4 shrink-0 mt-0.5 animate-spin text-blue-500" />
+              <span>Very soon you are going to receive your score card. Please check back in a few minutes.</span>
             </div>
           )}
 
@@ -281,16 +311,6 @@ export default function StudentResultsPage() {
                 </Button>
               )}
 
-              {/* Share */}
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => handleShare(sub)}
-                className="flex items-center gap-1.5 h-8 text-xs text-indigo-600 border-indigo-200 hover:bg-indigo-50"
-              >
-                <Share2 className="w-3.5 h-3.5" />
-                Share
-              </Button>
             </div>
           )}
 
@@ -353,25 +373,25 @@ export default function StudentResultsPage() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => router.push('/student/dashboard')}
+                disabled={!!navLoadingId}
+                onClick={() => handleNav('dashboard', '/student/dashboard')}
                 className="flex items-center gap-1.5 h-9"
               >
-                {/* 2×2 grid icon — explicit 3 px gap so squares read clearly at nav size */}
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4 shrink-0">
-                  <rect x="1"   y="1"   width="5.5" height="5.5" rx="1.25" />
-                  <rect x="9.5" y="1"   width="5.5" height="5.5" rx="1.25" />
-                  <rect x="1"   y="9.5" width="5.5" height="5.5" rx="1.25" />
-                  <rect x="9.5" y="9.5" width="5.5" height="5.5" rx="1.25" />
-                </svg>
+                {navLoadingId === 'dashboard'
+                  ? <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                  : <LayoutDashboard className="w-4 h-4 shrink-0" />}
                 <span className="hidden sm:inline">Dashboard</span>
               </Button>
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => router.push('/student/profile')}
+                disabled={!!navLoadingId}
+                onClick={() => handleNav('profile', '/student/profile')}
                 className="flex items-center gap-1.5 h-9"
               >
-                <User className="w-4 h-4" />
+                {navLoadingId === 'profile'
+                  ? <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                  : <User className="w-4 h-4 shrink-0" />}
                 <span className="hidden sm:inline">My Profile</span>
               </Button>
               <Button
@@ -397,7 +417,7 @@ export default function StudentResultsPage() {
             </div>
             <div>
               <h1 className="text-xl sm:text-2xl font-bold leading-tight">My Results</h1>
-              <p className="text-sm text-muted-foreground">Your CLAP assessment report cards</p>
+              <p className="text-sm text-muted-foreground">Your CLAP assessment score cards</p>
             </div>
           </div>
           <Button
@@ -446,10 +466,16 @@ export default function StudentResultsPage() {
             </div>
             <div>
               <p className="text-lg font-semibold text-gray-700">No tests written yet</p>
-              <p className="text-sm text-gray-400 mt-1">Complete your CLAP assessment to see your report card here.</p>
+              <p className="text-sm text-gray-400 mt-1">Complete your assigned exams and your score card will display here.</p>
             </div>
-            <Button onClick={() => router.push('/student/clap-tests')} className="mt-2">
-              Go to Assessment
+            <Button
+              onClick={() => handleNav('assessment', '/student/clap-tests')}
+              disabled={!!navLoadingId}
+              className="mt-2"
+            >
+              {navLoadingId === 'assessment'
+                ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Loading…</>
+                : 'Go to Assessment'}
             </Button>
           </div>
         )}
@@ -461,7 +487,7 @@ export default function StudentResultsPage() {
             {rows.every(r => r.status === STATUS_COMPLETE) && (
               <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-sm text-green-800">
                 <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />
-                <span>All your assessments are complete — your report cards are ready below.</span>
+                <span>All your assessments are complete — your score cards are ready below.</span>
               </div>
             )}
 

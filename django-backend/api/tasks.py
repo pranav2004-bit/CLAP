@@ -2,6 +2,7 @@
 
 from decimal import Decimal
 from typing import Optional
+import base64 as _base64
 import json
 import re
 import os
@@ -217,6 +218,35 @@ _ALL_SCORED_DOMAINS   = frozenset({'listening', 'reading', 'vocab', 'writing', '
 # (also Decimal) is exact — no floating-point rounding surprises.
 _SCORE_MAX_PER_DOMAIN = Decimal('10')
 _SCORE_MAX_TOTAL      = _SCORE_MAX_PER_DOMAIN * len(_ALL_SCORED_DOMAINS)  # == Decimal('50')
+
+def _get_report_logo_uri() -> str:
+    """Return base64 data URI for the CLAP logo, embedded inline so WeasyPrint
+    and browser previews both work without needing an HTTP server or base_url."""
+    logo_path = os.path.join(os.path.dirname(__file__), 'templates', 'reports', 'clap-logo-original.png')
+    try:
+        with open(logo_path, 'rb') as f:
+            return 'data:image/png;base64,' + _base64.b64encode(f.read()).decode()
+    except Exception:
+        return ''
+
+
+def _get_email_logo_src() -> str:
+    """Return logo src for HTML emails.
+
+    Gmail on Android strips base64 data URIs from <img src="data:..."> for
+    security reasons — the image renders as broken.  When a publicly-hosted
+    URL is available (set via CLAP_LOGO_PUBLIC_URL env var, e.g. an S3/CDN
+    URL), that is used instead and works across all email clients.
+
+    Fallback to base64 still works on Outlook, Apple Mail, and web clients
+    that don't strip embedded images.
+
+    Production setup: set CLAP_LOGO_PUBLIC_URL=https://your-cdn.com/clap-logo.png
+    """
+    public_url = os.environ.get('CLAP_LOGO_PUBLIC_URL', '').strip()
+    if public_url:
+        return public_url
+    return _get_report_logo_uri()
 
 
 def _compute_grade(total: Decimal, max_total: Decimal) -> str:
@@ -671,7 +701,7 @@ def _reevaluate_mcq_responses(
 @shared_task(bind=True, max_retries=3, autoretry_for=(Exception,), retry_backoff=False, default_retry_delay=5, acks_late=True, reject_on_worker_lost=True, time_limit=120, soft_time_limit=100)
 def score_rule_based(self, submission_id):
     """
-    Authoritative MCQ scoring task for Listening, Reading, Vocabulary & Grammar.
+    Authoritative MCQ scoring task for Listening, Reading, Verbal Ability.
 
     ALWAYS re-evaluates each MCQ response from scratch against the predefined
     answer key for the student's assigned question-paper set (or the base item
@@ -1188,13 +1218,30 @@ def generate_report(self, submission_id):
         max_total   = _SCORE_MAX_PER_DOMAIN * len(scores)   # Decimal('50')
         grade       = _compute_grade(total_score, max_total)
 
+        # Resolve set name — shown on the report if the student was assigned a set.
+        _set_name = None
+        try:
+            _asgn = (
+                StudentClapAssignment.objects
+                .filter(student=submission.user, clap_test=submission.assessment)
+                .select_related('assigned_set')
+                .only('assigned_set')
+                .first()
+            )
+            if _asgn and _asgn.assigned_set:
+                _set_name = f'Set {_asgn.assigned_set.label}'
+        except Exception:
+            pass  # set_name stays None — template omits the field gracefully
+
         html = render_to_string('reports/submission_report.html', {
-            'submission':  submission,
-            'scores':      scores,
-            'total_score': total_score,   # Decimal — template formats as number
-            'max_total':   max_total,     # Decimal('50')
-            'grade':       grade,         # str: 'O', 'A+', 'A', 'B+', 'B'
-            'generated_at': timezone.now().isoformat(),
+            'submission':    submission,
+            'scores':        scores,
+            'total_score':   total_score,   # Decimal — template formats as number
+            'max_total':     max_total,     # Decimal('50')
+            'grade':         grade,         # str: 'O', 'A+', 'A', 'B+', 'B'
+            'generated_at':  timezone.now(),  # datetime obj — |date filter works correctly
+            'set_name':      _set_name,
+            'logo_data_uri': _get_report_logo_uri(),
         })
 
         timestamp = timezone.now().strftime('%Y%m%d%H%M%S')
@@ -1432,7 +1479,11 @@ def send_email_report(self, submission_id):
         )
 
         scores = list(SubmissionScore.objects.filter(submission=submission).order_by('domain'))
-        student_name = getattr(submission.user, 'full_name', None) or submission.user.email
+        student_name = (
+            (getattr(submission.user, 'full_name', None) or '').strip()
+            or (getattr(submission.user, 'username', None) or '').strip()
+            or submission.user.email
+        )
         report_url = _presigned_report_download_url(submission.report_url or '')
 
         # Compute total score and grade to include in the email body.
@@ -1443,12 +1494,13 @@ def send_email_report(self, submission_id):
         html_body = render_to_string(
             'emails/submission_ready.html',
             {
-                'student_name': student_name,
-                'scores':       scores,
-                'total_score':  total_score,
-                'max_total':    max_total,
-                'grade':        grade,
-                'report_url':   report_url,
+                'student_name':  student_name,
+                'scores':        scores,
+                'total_score':   total_score,
+                'max_total':     max_total,
+                'grade':         grade,
+                'report_url':    report_url,
+                'logo_data_uri': _get_email_logo_src(),
             },
         )
 

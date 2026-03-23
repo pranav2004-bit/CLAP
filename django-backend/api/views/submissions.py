@@ -209,6 +209,30 @@ def create_submission(request):
             log_event('info', 'submission_duplicate_cached', submission_id=cached, user_id=str(user.id))
             return JsonResponse({'submission_id': cached, 'cached': True}, status=202)
 
+    # ── Auto-submit dedup guard ───────────────────────────────────────────────
+    # If the Beat task or client auto-submit endpoint already created a submission
+    # for this assignment via _finalize_and_dispatch(), return it rather than
+    # creating a duplicate pipeline run.
+    # The auto-submit idempotency key is deterministic: f'auto:{assignment_id}'.
+    _assignment_for_dedup = serializer.validated_data.get('assignment')
+    if _assignment_for_dedup:
+        _existing_auto = AssessmentSubmission.objects.filter(
+            idempotency_key=f'auto:{_assignment_for_dedup.id}'
+        ).first()
+        if _existing_auto:
+            if redis_client:
+                redis_client.setex(cache_key, 86400, str(_existing_auto.id))
+            submissions_total.labels(status='auto_submit_dedup').inc()
+            log_event(
+                'info', 'submission_auto_submit_dedup',
+                submission_id=str(_existing_auto.id), user_id=str(user.id),
+            )
+            return JsonResponse({
+                'submission_id': str(_existing_auto.id),
+                'status': _existing_auto.status,
+                'pipeline_dispatched': False,
+            }, status=202)
+
     try:
         submission = AssessmentSubmission.objects.create(
             user=user,
@@ -339,9 +363,11 @@ def submission_history(request):
     for sub in qs[:50]:
         scores_list = list(sub.scores.all())   # uses prefetch cache — no extra DB hit
         overall_score = None
+        max_score = None
         if scores_list:
             vals = [float(s.score) for s in scores_list]
-            overall_score = round(sum(vals) / len(vals), 2)
+            overall_score = round(sum(vals), 2)          # total marks, not average
+            max_score = len(scores_list) * 10             # each domain is out of 10
 
         rows.append({
             'submission_id': str(sub.id),
@@ -349,6 +375,7 @@ def submission_history(request):
             'assessment_name': getattr(sub.assessment, 'name', None),
             'status': sub.status,
             'overall_score': overall_score,
+            'max_score': max_score,
             'created_at': sub.created_at.isoformat() if sub.created_at else None,
             'report_download_url': _report_download_url(sub),
         })

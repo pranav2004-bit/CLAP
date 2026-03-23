@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders, isNetworkError, markBackendOffline } from '@/lib/api-config'
 import {
   Brain,
   RefreshCw,
@@ -36,12 +36,11 @@ interface LLMTrace {
   submission_id: string
   traces: Array<{
     domain: string
-    request_id: string
-    timestamp: string
-    latency_ms?: number
+    request_id: string | null
+    evaluated_at: string | null
+    score: number | null
     status: string
-    input_preview?: string
-    output_preview?: string
+    raw_response: Record<string, unknown> | null
   }>
 }
 
@@ -76,13 +75,25 @@ export function LLMControls() {
     try {
       const res = await fetch(getApiUrl(`admin/llm/submissions/${submissionId}/trace`), { headers: getAuthHeaders() })
       if (res.ok) {
-        setTrace(await res.json())
+        const data = await res.json()
+        setTrace({
+          submission_id: data.submission?.id || submissionId,
+          traces: (data.llm_trace || []).map((t: Record<string, unknown>) => ({
+            domain:       t.domain        as string,
+            request_id:   (t.llm_request_id as string | null) ?? null,
+            evaluated_at: (t.evaluated_at  as string | null) ?? null,
+            score:        t.score != null ? Number(t.score) : null,
+            status:       t.score != null ? 'success' : 'no data',
+            raw_response: (t.raw_response  as Record<string, unknown> | null) ?? null,
+          })),
+        })
       } else {
         const err = await res.json().catch(() => ({}))
         toast.error(err.error || 'Failed to fetch LLM trace')
         setTrace(null)
       }
     } catch (error) {
+      if (isNetworkError(error)) markBackendOffline()
       toast.error('Network error fetching trace')
     } finally {
       setTraceLoading(false)
@@ -103,6 +114,7 @@ export function LLMControls() {
         toast.error(err.error || 'Failed to re-trigger evaluation')
       }
     } catch (error) {
+      if (isNetworkError(error)) markBackendOffline()
       toast.error('Network error re-triggering evaluation')
     } finally {
       setRetriggeringId(null)
@@ -150,7 +162,11 @@ export function LLMControls() {
                 <Clock className="w-4 h-4 text-blue-600" />
                 <span className="text-xs text-gray-500">Avg Latency</span>
               </div>
-              <p className="text-2xl font-bold text-gray-900">{analytics.avg_latency_seconds?.toFixed(1)}s</p>
+              <p className="text-2xl font-bold text-gray-900">
+                {analytics.avg_latency_seconds != null && analytics.avg_latency_seconds > 0
+                  ? `${analytics.avg_latency_seconds.toFixed(1)}s`
+                  : '—'}
+              </p>
             </CardContent>
           </Card>
           <Card className="border border-gray-200">
@@ -159,7 +175,11 @@ export function LLMControls() {
                 <CheckCircle2 className="w-4 h-4 text-green-600" />
                 <span className="text-xs text-gray-500">Success Rate</span>
               </div>
-              <p className="text-2xl font-bold text-gray-900">{(analytics.success_rate * 100).toFixed(1)}%</p>
+              <p className="text-2xl font-bold text-gray-900">
+                {analytics.total_evaluations > 0
+                  ? `${(analytics.success_rate * 100).toFixed(1)}%`
+                  : '—'}
+              </p>
             </CardContent>
           </Card>
           <Card className="border border-gray-200">
@@ -269,17 +289,43 @@ export function LLMControls() {
             <div className="mt-4 space-y-2">
               <h4 className="text-sm font-medium">LLM Trace for {trace.submission_id?.slice(0, 8)}...</h4>
               {(trace.traces || []).map((t, i) => (
-                <div key={i} className="p-3 bg-gray-50 rounded-lg text-sm space-y-1">
-                  <div className="flex items-center gap-2">
-                    <Badge variant="secondary" className="capitalize">{t.domain}</Badge>
-                    <Badge className={t.status === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}>
+                <div key={i} className="p-3 bg-gray-50 rounded-lg text-sm space-y-1.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-gray-200 text-gray-700 capitalize font-medium">
+                      {t.domain}
+                    </span>
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${
+                      t.status === 'success' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-500'
+                    }`}>
                       {t.status}
-                    </Badge>
-                    {t.latency_ms && <span className="text-xs text-gray-500">{t.latency_ms}ms</span>}
+                    </span>
+                    {t.score != null && (
+                      <span className="text-xs font-semibold text-indigo-700">
+                        Score: {t.score.toFixed(2)} / 10
+                      </span>
+                    )}
                   </div>
-                  <p className="text-xs text-gray-500 font-mono">Request: {t.request_id}</p>
-                  {t.input_preview && <p className="text-xs text-gray-600">Input: {t.input_preview.slice(0, 100)}...</p>}
-                  {t.output_preview && <p className="text-xs text-gray-600">Output: {t.output_preview.slice(0, 100)}...</p>}
+                  {t.request_id && (
+                    <p className="text-xs text-gray-400 font-mono">Request ID: {t.request_id}</p>
+                  )}
+                  {t.evaluated_at && (
+                    <p className="text-xs text-gray-400">
+                      Evaluated: {new Date(t.evaluated_at).toLocaleString()}
+                    </p>
+                  )}
+                  {t.raw_response && (
+                    <details className="mt-1">
+                      <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-700">
+                        Raw LLM response
+                      </summary>
+                      <pre className="mt-1 text-xs bg-white border border-gray-200 rounded p-2 overflow-x-auto whitespace-pre-wrap break-words max-h-48">
+                        {JSON.stringify(t.raw_response, null, 2)}
+                      </pre>
+                    </details>
+                  )}
+                  {t.score == null && !t.raw_response && (
+                    <p className="text-xs text-gray-400 italic">No evaluation data recorded for this domain</p>
+                  )}
                 </div>
               ))}
               {(!trace.traces || trace.traces.length === 0) && (

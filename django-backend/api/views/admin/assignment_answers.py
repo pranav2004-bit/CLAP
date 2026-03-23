@@ -107,13 +107,25 @@ def assignment_answers(request, test_id, assignment_id):
                 answer_source = 'base'
 
             # Student's selected answer
+            # Parse response_data → integer option index.
+            # Mirrors _reevaluate_mcq_responses in tasks.py: handles both
+            # dict {"selected_option": N} and bare int N, plus a try/int()
+            # safety net for string-encoded integers stored by older clients.
             selected_option_idx = None
             if resp and resp.response_data is not None:
                 rd = resp.response_data
                 if isinstance(rd, dict):
-                    selected_option_idx = rd.get('selected_option')
+                    raw = rd.get('selected_option')
                 elif isinstance(rd, (int, float)):
-                    selected_option_idx = int(rd)
+                    raw = int(rd)
+                else:
+                    raw = None  # unrecognised type — treat as no selection
+
+                if raw is not None:
+                    try:
+                        selected_option_idx = int(raw)
+                    except (TypeError, ValueError):
+                        selected_option_idx = None
 
             # Strip correct_option from the content copy shown (keep options list)
             display_content = {k: v for k, v in content.items() if k != 'correct_option'}
@@ -128,6 +140,12 @@ def assignment_answers(request, test_id, assignment_id):
                 'correct_option_index': correct_option_idx,
                 'answer_source':        answer_source,   # 'set' or 'base'
                 'selected_option_index': selected_option_idx,
+                # True when a StudentClapResponse record exists for this item.
+                # Used by the admin preview to distinguish "student didn't answer"
+                # from "student answered but response_data couldn't be parsed".
+                # Always use this field — NOT selected_option_index — to decide
+                # whether to show a "Not answered" warning.
+                'has_response':         resp is not None,
                 # For MCQ items: unanswered = 0 marks (shows "0/N" in preview).
                 # For W/S items: None = pending LLM evaluation (shows nothing).
                 'is_correct':           resp.is_correct if resp else (False if item.item_type == 'mcq' else None),

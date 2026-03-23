@@ -62,7 +62,7 @@ export default function AdminDashboard() {
     { name: 'Speaking Test', type: 'speaking', avgScore: 6.8, completionRate: 72, icon: 'Mic', color: 'purple' },
     { name: 'Reading Test', type: 'reading', avgScore: 8.1, completionRate: 92, icon: 'BookOpen', color: 'green' },
     { name: 'Writing Test', type: 'writing', avgScore: 7.9, completionRate: 88, icon: 'PenTool', color: 'orange' },
-    { name: 'Vocabulary Test', type: 'vocabulary', avgScore: 8.3, completionRate: 95, icon: 'Brain', color: 'indigo' }
+    { name: 'Verbal Ability Test', type: 'vocabulary', avgScore: 8.3, completionRate: 95, icon: 'Brain', color: 'indigo' }
   ]
 
   const getStatusColor = (status: string) => {

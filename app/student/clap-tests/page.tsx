@@ -148,6 +148,8 @@ export default function StudentClapTestsPage() {
         fetchAssignments()
     }
 
+    const [isBackLoading, setIsBackLoading] = useState(false)
+
     const handleCardClick = (assignment: any) => {
         const state = getTimerState(assignment)
         const config = TIMER_CONFIG[state]
@@ -161,7 +163,7 @@ export default function StudentClapTestsPage() {
     }
 
     return (
-        <div className="min-h-dvh bg-background">
+        <div className="min-h-dvh bg-background overflow-x-hidden">
         {/* Offline banner */}
         {!isOnline && (
             <div className="bg-red-600 text-white text-sm font-medium text-center py-2 px-4 flex items-center justify-center gap-2">
@@ -176,10 +178,17 @@ export default function StudentClapTestsPage() {
                 <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => router.push('/student/dashboard')}
+                    disabled={isBackLoading}
+                    onClick={() => {
+                        if (isBackLoading) return
+                        setIsBackLoading(true)
+                        router.push('/student/dashboard')
+                    }}
                     className="flex items-center gap-1.5 -ml-2 shrink-0"
                 >
-                    <ArrowLeft className="w-4 h-4" />
+                    {isBackLoading
+                        ? <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                        : <ArrowLeft className="w-4 h-4 shrink-0" />}
                     <span className="hidden sm:inline">Back to Dashboard</span>
                     <span className="sm:hidden">Back</span>
                 </Button>
@@ -260,17 +269,17 @@ export default function StudentClapTestsPage() {
                             >
                                 <CardHeader className="pb-3">
                                     <div className="flex justify-between items-start gap-3">
-                                        <div className="min-w-0">
-                                            <CardTitle className="text-base sm:text-xl mb-1 leading-snug">{assignment.test_name}</CardTitle>
-                                            <p className="text-sm text-gray-500">
+                                        <div className="min-w-0 flex-1 overflow-hidden">
+                                            <CardTitle className="text-base sm:text-lg mb-1 leading-snug truncate w-full">{assignment.test_name}</CardTitle>
+                                            <p className="text-sm text-gray-500 truncate w-full">
                                                 Assigned: {new Date(assignment.assigned_at).toLocaleDateString()}
                                             </p>
                                         </div>
 
-                                        {/* Timer state badge */}
+                                        {/* Timer state badge — shrink-0 keeps it from ever wrapping */}
                                         <Badge
                                             variant="outline"
-                                            className={`flex items-center gap-1.5 shrink-0 font-semibold text-xs px-3 py-1 ${config.badgeClass}`}
+                                            className={`flex items-center gap-1.5 shrink-0 font-semibold text-xs px-3 py-1 whitespace-nowrap ${config.badgeClass}`}
                                         >
                                             {state === 'live' && (
                                                 <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse flex-shrink-0" />
@@ -289,12 +298,9 @@ export default function StudentClapTestsPage() {
                                         </span>
                                         <span className="text-gray-300">·</span>
                                         <span>
-                                            {(() => {
-                                                const mins = assignment.components?.reduce(
-                                                    (s: number, c: any) => s + (c.duration || 0), 0
-                                                ) || 0
-                                                return mins ? `${mins} min` : '—'
-                                            })()}
+                                            {assignment.test_duration_minutes
+                                                ? `${assignment.test_duration_minutes} min`
+                                                : '—'}
                                         </span>
                                         {state === 'live' && assignment.deadline_utc && (
                                             <>

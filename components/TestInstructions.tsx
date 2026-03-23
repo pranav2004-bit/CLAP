@@ -143,7 +143,7 @@ const testConfig = {
   },
   vocabulary: {
     icon: SpellCheck,
-    title: 'Vocabulary & Grammar Test',
+    title: 'Verbal Ability Test',
     color: 'text-vocabulary',
     bgColor: 'bg-vocabulary/10',
     borderColor: 'border-vocabulary/20',

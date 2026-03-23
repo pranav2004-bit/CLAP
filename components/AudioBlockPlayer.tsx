@@ -28,7 +28,15 @@ export default function AudioBlockPlayer({
   const [isLoading, setIsLoading]       = useState(true)
   const [audioError, setAudioError]     = useState(false)
   const [audioBlobUrl, setAudioBlobUrl] = useState<string | null>(null)
+  const [progress, setProgress]         = useState(0)   // 0–1
+  const [currentTime, setCurrentTime]   = useState(0)   // seconds
+  const [audioDuration, setAudioDuration] = useState(0) // seconds
   const audioRef = useRef<HTMLAudioElement>(null)
+
+  const formatTime = (s: number) => {
+    const m = Math.floor(s / 60)
+    return `${m.toString().padStart(2,'0')}:${Math.floor(s % 60).toString().padStart(2,'0')}`
+  }
 
   useEffect(() => {
     // Track the blob URL in a ref so the cleanup always has the latest value
@@ -175,7 +183,7 @@ export default function AudioBlockPlayer({
           </div>
         </div>
 
-        {audioError ? (
+        {audioError && !limitReached ? (
           <div className="flex items-center gap-2 text-red-600 text-sm bg-red-50 p-4 rounded-lg">
             <AlertCircle className="w-4 h-4 flex-shrink-0" />
             <p>Could not load audio. Please refresh the page or contact support.</p>
@@ -190,30 +198,85 @@ export default function AudioBlockPlayer({
                 onEnded={handleEnded}
                 onPlay={() => setIsPlaying(true)}
                 onPause={() => setIsPlaying(false)}
+                onLoadedMetadata={() => {
+                  const el = audioRef.current
+                  if (!el) return
+                  if (el.duration === Infinity) {
+                    el.currentTime = 1e101
+                  } else {
+                    setAudioDuration(el.duration)
+                  }
+                }}
+                onTimeUpdate={() => {
+                  const el = audioRef.current
+                  if (!el) return
+                  if (el.currentTime === 1e101) { el.currentTime = 0; return }
+                  if (el.duration && el.duration !== Infinity) {
+                    setAudioDuration(el.duration)
+                    setCurrentTime(el.currentTime)
+                    setProgress(el.currentTime / el.duration)
+                  }
+                }}
                 className="hidden"
               />
             )}
 
-            <div className="mb-4 bg-gray-100 rounded-lg p-4 flex items-center justify-center">
-              <div className="w-full max-w-md">
-                <div className="flex items-center gap-4">
-                  <Button
-                    onClick={handlePlayPause}
-                    disabled={limitReached || !audioBlobUrl}
-                    size="icon"
-                    variant={limitReached ? 'destructive' : 'default'}
+            {/* Full-width audio player */}
+            <div className="mb-4 bg-white border border-gray-200 rounded-xl p-4">
+              <div className="flex items-center gap-3">
+                {/* Play / Pause */}
+                <button
+                  onClick={handlePlayPause}
+                  disabled={limitReached || !audioBlobUrl}
+                  className={`flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-full transition-colors
+                    ${limitReached
+                      ? 'bg-red-100 text-red-400 cursor-not-allowed'
+                      : 'bg-indigo-600 hover:bg-indigo-700 text-white'}`}
+                >
+                  {isPlaying
+                    ? <Pause className="w-4 h-4 fill-current" />
+                    : <Play  className="w-4 h-4 fill-current ml-0.5" />}
+                </button>
+
+                {/* Progress area */}
+                <div className="flex-1 min-w-0 space-y-1.5">
+                  {/* Track — clickable scrub bar */}
+                  <div
+                    className={`w-full h-2 bg-gray-100 rounded-full relative overflow-hidden
+                      ${audioBlobUrl && !limitReached ? 'cursor-pointer' : ''}`}
+                    onClick={(e) => {
+                      const el = audioRef.current
+                      if (!el || !el.duration || el.duration === Infinity || limitReached) return
+                      const rect = e.currentTarget.getBoundingClientRect()
+                      const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+                      el.currentTime = ratio * el.duration
+                      setProgress(ratio)
+                    }}
                   >
-                    {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                  </Button>
-                  <div className="flex-1 text-sm text-gray-600">
-                    {limitReached
-                      ? 'Playback limit reached'
-                      : isPlaying
-                        ? 'Playing...'
-                        : 'Ready to play'}
+                    <div
+                      className="absolute left-0 top-0 h-full bg-indigo-600 rounded-full transition-none"
+                      style={{ width: `${progress * 100}%` }}
+                    />
+                  </div>
+
+                  {/* Time display */}
+                  <div className="flex justify-between text-xs tabular-nums text-gray-400">
+                    <span>{formatTime(currentTime)}</span>
+                    <span>{audioDuration ? formatTime(audioDuration) : '--:--'}</span>
                   </div>
                 </div>
               </div>
+
+              {/* Status text */}
+              <p className="mt-2 text-xs text-center text-gray-400">
+                {limitReached
+                  ? 'Playback limit reached'
+                  : !audioBlobUrl
+                    ? 'Loading…'
+                    : isPlaying
+                      ? 'Playing…'
+                      : 'Ready to play'}
+              </p>
             </div>
           </>
         )}

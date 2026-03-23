@@ -28,7 +28,7 @@ import {
     UploadCloud as CloudUpload
 } from 'lucide-react'
 import { Textarea } from '@/components/ui/textarea'
-import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders, apiFetch } from '@/lib/api-config'
 import { authStorage } from '@/lib/auth-storage'
 
 // Question classification helper
@@ -587,19 +587,55 @@ function AdminPreviewAudioPlayer({ item }: { item: any }) {
     const limitReached = hasLimit && playCount >= playLimit
 
     useEffect(() => {
-        const userId = typeof window !== 'undefined' ? authStorage.get('user_id') : null
+        if (!item.content?.has_audio_file) {
+            setAudioSrc(item.content?.url || '')
+            setIsLoadingAudio(false)
+            return
+        }
 
-        if (item.content?.has_audio_file) {
-            const baseUrl = getApiUrl(`admin/clap-items/${item.id}/audio`)
-            const separator = baseUrl.includes('?') ? '&' : '?'
-            setAudioSrc(`${baseUrl}${separator}user_id=${userId || ''}`)
-            setIsLoadingAudio(false)
-        } else if (item.content?.url) {
-            setAudioSrc(item.content.url)
-            setIsLoadingAudio(false)
-        } else {
-            setAudioSrc('')
-            setIsLoadingAudio(false)
+        // Fetch audio with Authorization header → convert to blob URL.
+        // <audio src="..."> cannot send custom headers, so we fetch the file
+        // ourselves and hand the element a local blob:// URL instead.
+        setIsLoadingAudio(true)
+        let objectUrl: string | null = null
+        let cancelled = false
+
+        // audio_endpoint: 'set-items' for ClapSetItem-specific audio,
+        //                 'clap-items' (default) for base items or set items
+        //                 that fall back to the base item's audio.
+        // base_item_id: present only when a set item falls back to base audio.
+        const audioEndpoint = item.content?.audio_endpoint || 'clap-items'
+        const audioItemId = (audioEndpoint === 'clap-items' && item.content?.base_item_id)
+            ? item.content.base_item_id
+            : item.id
+
+        apiFetch(getApiUrl(`admin/${audioEndpoint}/${audioItemId}/audio`), {
+            headers: getAuthHeaders(),
+        })
+            .then(res => {
+                if (!res.ok) throw new Error(`HTTP ${res.status}`)
+                return res.blob()
+            })
+            .then(blob => {
+                const url = URL.createObjectURL(blob)
+                if (cancelled) {
+                    URL.revokeObjectURL(url)
+                    return
+                }
+                objectUrl = url
+                setAudioSrc(objectUrl)
+                setIsLoadingAudio(false)
+            })
+            .catch(err => {
+                if (cancelled) return
+                console.error('Failed to load audio:', err)
+                setAudioSrc('')
+                setIsLoadingAudio(false)
+            })
+
+        return () => {
+            cancelled = true
+            if (objectUrl) URL.revokeObjectURL(objectUrl)
         }
     }, [item.id, item.content?.has_audio_file, item.content?.url])
 

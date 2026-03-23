@@ -94,7 +94,9 @@ def get_audio_upload_url(request, assignment_id):
         return JsonResponse({'error': 'Invalid JSON body'}, status=400)
 
     item_id = payload.get('item_id')
-    mime_type = payload.get('mime_type', '')
+    mime_type_raw = payload.get('mime_type', '')
+    # Browsers append codec params (e.g. "audio/webm;codecs=opus") — strip for validation
+    mime_type = mime_type_raw.split(';')[0].strip().lower()
     extension = payload.get('extension', '').lower().strip()
     file_size = int(payload.get('file_size') or 0)
 
@@ -103,7 +105,7 @@ def get_audio_upload_url(request, assignment_id):
         return err
 
     if mime_type not in settings.AUDIO_ALLOWED_MIMETYPES:
-        return JsonResponse({'error': f'Invalid audio format: {mime_type}', 'allowed_formats': settings.AUDIO_ALLOWED_MIMETYPES}, status=400)
+        return JsonResponse({'error': f'Invalid audio format: {mime_type_raw}', 'allowed_formats': settings.AUDIO_ALLOWED_MIMETYPES}, status=400)
 
     if extension not in settings.AUDIO_ALLOWED_EXTENSIONS:
         return JsonResponse({'error': f'Invalid file extension: {extension}', 'allowed_extensions': settings.AUDIO_ALLOWED_EXTENSIONS}, status=400)
@@ -186,7 +188,9 @@ def submit_audio_response(request, assignment_id):
         return JsonResponse({'error': 'Invalid duration format'}, status=400)
 
     s3_object_key = (request.POST.get('s3_object_key') if request.POST else payload.get('s3_object_key')) or None
-    mime_type = (request.POST.get('mime_type') if request.POST else payload.get('mime_type')) or ''
+    mime_type_raw = (request.POST.get('mime_type') if request.POST else payload.get('mime_type')) or ''
+    # Browsers append codec params (e.g. "audio/webm;codecs=opus") — strip for validation
+    mime_type = mime_type_raw.split(';')[0].strip().lower()
 
     file_path = None
     file_size = 0
@@ -196,11 +200,11 @@ def submit_audio_response(request, assignment_id):
         if not mime_type:
             return JsonResponse({'error': 'mime_type required for S3 submissions'}, status=400)
         if mime_type not in settings.AUDIO_ALLOWED_MIMETYPES:
-            return JsonResponse({'error': f'Invalid audio format: {mime_type}'}, status=400)
+            return JsonResponse({'error': f'Invalid audio format: {mime_type_raw}'}, status=400)
         file_path = f"s3://{settings.S3_BUCKET_NAME}/{s3_object_key}"
         file_size = int(payload.get('file_size') or request.POST.get('file_size') or 0)
     elif audio_file:
-        mime_type = audio_file.content_type
+        mime_type = (audio_file.content_type or '').split(';')[0].strip().lower()
         if mime_type not in settings.AUDIO_ALLOWED_MIMETYPES:
             return JsonResponse({'error': f'Invalid audio format: {mime_type}', 'allowed_formats': settings.AUDIO_ALLOWED_MIMETYPES}, status=400)
 

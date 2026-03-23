@@ -2,8 +2,8 @@
 const bcrypt = require('bcryptjs');
 
 // Test the hash we're using
-const testPassword = 'admin123';
-const storedHash = '$2b$10$NhecTEtFzvszvQ7kAfgp9.v3fQDuBrhVoNw7dp0wtUOd2wyIi7U86';
+const testPassword = '000346';
+const storedHash = '$2b$12$kc1erYlQdvB9JIVOVkW99uvME..rY1q.fk2hUyrfUnYCSw1YPjCsC';
 
 console.log('Testing password verification...');
 console.log('Password:', testPassword);

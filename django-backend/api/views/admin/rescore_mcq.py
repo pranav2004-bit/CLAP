@@ -184,7 +184,7 @@ def rescore_mcq(request, test_id):
     """
     POST /api/admin/clap-tests/<test_id>/rescore-mcq
 
-    Re-scores all MCQ components (Listening, Reading, Vocabulary & Grammar)
+    Re-scores all MCQ components (Listening, Reading, Verbal Ability)
     for every completed assignment of the specified CLAP test.
 
     Optional body (JSON):

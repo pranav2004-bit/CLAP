@@ -138,7 +138,7 @@ def create_clap_test(request):
                 {'test_type': 'speaking', 'title': 'Speaking Test', 'description': 'Oral communication assessment'},
                 {'test_type': 'reading', 'title': 'Reading Test', 'description': 'Reading comprehension assessment'},
                 {'test_type': 'writing', 'title': 'Writing Test', 'description': 'Written expression assessment'},
-                {'test_type': 'vocabulary', 'title': 'Vocabulary & Grammar Test', 'description': 'Language fundamentals assessment'}
+                {'test_type': 'vocabulary', 'title': 'Verbal Ability Test', 'description': 'Language fundamentals assessment'}
             ]
             
             components_to_create = []

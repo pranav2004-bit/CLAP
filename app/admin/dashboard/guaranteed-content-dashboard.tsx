@@ -386,7 +386,7 @@ export default function AdminDashboard() {
                     { name: 'Speaking Test', score: 6.8, icon: '🎤' },
                     { name: 'Reading Test', score: 8.1, icon: '📖' },
                     { name: 'Writing Test', score: 7.9, icon: '✍️' },
-                    { name: 'Vocabulary Test', score: 8.3, icon: '🧠' }
+                    { name: 'Verbal Ability Test', score: 8.3, icon: '🧠' }
                   ].map((test) => (
                     <div key={test.name} style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                       <div style={{ 
@@ -605,7 +605,7 @@ export default function AdminDashboard() {
                   { name: 'Speaking Test', avgScore: 6.8, completionRate: 72, icon: '🎤' },
                   { name: 'Reading Test', avgScore: 8.1, completionRate: 92, icon: '📖' },
                   { name: 'Writing Test', avgScore: 7.9, completionRate: 88, icon: '✍️' },
-                  { name: 'Vocabulary Test', avgScore: 8.3, completionRate: 95, icon: '🧠' }
+                  { name: 'Verbal Ability Test', avgScore: 8.3, completionRate: 95, icon: '🧠' }
                 ].map((test) => (
                   <div key={test.name} style={{ 
                     border: '1px solid #e2e8f0', 

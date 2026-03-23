@@ -1,331 +1,203 @@
-// Supabase storage client utilities for audio files
-import { createClient } from '@supabase/supabase-js'
+// Storage utilities — audio file operations via Django backend API.
+// All storage is on AWS S3, managed server-side through Django presigned URLs.
+import { getAuthHeaders, API_BASE_URL } from '@/lib/api-config'
 
-// Supabase configuration
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
-
-// Create Supabase client
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
-
-// Storage bucket names
+// Storage bucket identifiers (logical names — Django resolves the actual S3 bucket)
 export const STORAGE_BUCKETS = {
-  TEST_AUDIO: 'test-audio',      // For listening test audio files
-  RECORDINGS: 'recordings',      // For speaking test recordings
-  TEMP_FILES: 'temp-files'       // For temporary file storage
+  TEST_AUDIO: 'test-audio',    // Listening test audio files
+  RECORDINGS: 'recordings',    // Speaking test recordings
+  TEMP_FILES: 'temp-files'     // Temporary file storage
 } as const
 
 export type StorageBucket = keyof typeof STORAGE_BUCKETS
 
 /**
- * Upload audio file to Supabase Storage
+ * Upload audio file via Django backend (presigned S3 PUT).
  */
 export async function uploadAudioFile(
   bucket: StorageBucket,
   fileName: string,
   file: File | Blob,
-  options?: {
-    upsert?: boolean
-    contentType?: string
-  }
-): Promise<{
-  success: boolean
-  data?: { path: string; fullPath: string }
-  error?: string
-}> {
+  options?: { upsert?: boolean; contentType?: string }
+): Promise<{ success: boolean; data?: { path: string; fullPath: string }; error?: string }> {
   try {
-    const bucketName = STORAGE_BUCKETS[bucket]
-    
-    // Validate file type for audio
-    const validAudioTypes = [
-      'audio/mpeg',
-      'audio/mp3',
-      'audio/wav',
-      'audio/webm',
-      'audio/ogg',
-      'audio/aac'
-    ]
-    
+    const validAudioTypes = ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/webm', 'audio/ogg', 'audio/aac']
     if (file instanceof File && !validAudioTypes.includes(file.type)) {
-      return {
-        success: false,
-        error: 'Invalid audio file type. Supported formats: MP3, WAV, WEBM, OGG, AAC'
-      }
+      return { success: false, error: 'Invalid audio file type. Supported formats: MP3, WAV, WEBM, OGG, AAC' }
     }
-    
-    // Upload file
-    const { data, error } = await supabase.storage
-      .from(bucketName)
-      .upload(fileName, file, {
-        upsert: options?.upsert ?? false,
-        contentType: options?.contentType || file.type || 'audio/mpeg'
-      })
-    
-    if (error) {
-      console.error('Upload error:', error)
-      return {
-        success: false,
-        error: error.message
-      }
+
+    const bucketName = STORAGE_BUCKETS[bucket]
+    const contentType = options?.contentType || (file instanceof File ? file.type : 'audio/mpeg')
+
+    // Request presigned upload URL from Django
+    const presignRes = await fetch(`${API_BASE_URL}/admin/audio/upload-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+      body: JSON.stringify({ bucket: bucketName, file_name: fileName, content_type: contentType })
+    })
+
+    if (!presignRes.ok) {
+      const err = await presignRes.json().catch(() => ({}))
+      return { success: false, error: err.error || 'Failed to get upload URL' }
     }
-    
+
+    const { upload_url, object_key, headers: putHeaders } = await presignRes.json()
+
+    const putRes = await fetch(upload_url, {
+      method: 'PUT',
+      headers: { 'Content-Type': contentType, ...putHeaders },
+      body: file
+    })
+
+    if (!putRes.ok) {
+      return { success: false, error: 'Direct S3 upload failed' }
+    }
+
     return {
       success: true,
-      data: {
-        path: data.path,
-        fullPath: `${supabaseUrl}/storage/v1/object/public/${bucketName}/${data.path}`
-      }
+      data: { path: object_key, fullPath: `${API_BASE_URL}/admin/audio/url/${encodeURIComponent(object_key)}` }
     }
   } catch (error) {
-    console.error('Upload failed:', error)
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Upload failed'
-    }
+    return { success: false, error: error instanceof Error ? error.message : 'Upload failed' }
   }
 }
 
 /**
- * Get public URL for audio file
+ * Get public/signed URL for an audio file via Django.
  */
 export function getAudioPublicUrl(bucket: StorageBucket, fileName: string): string {
   const bucketName = STORAGE_BUCKETS[bucket]
-  return `${supabaseUrl}/storage/v1/object/public/${bucketName}/${fileName}`
+  return `${API_BASE_URL}/admin/audio/url/${encodeURIComponent(`${bucketName}/${fileName}`)}`
 }
 
 /**
- * Stream audio file from Supabase Storage
+ * Stream/download audio file via Django presigned URL.
  */
 export async function streamAudioFile(
   bucket: StorageBucket,
   fileName: string
-): Promise<{
-  success: boolean
-  data?: { url: string; blob?: Blob }
-  error?: string
-}> {
+): Promise<{ success: boolean; data?: { url: string; blob?: Blob }; error?: string }> {
   try {
     const bucketName = STORAGE_BUCKETS[bucket]
-    
-    const { data, error } = await supabase.storage
-      .from(bucketName)
-      .download(fileName)
-    
-    if (error) {
-      console.error('Download error:', error)
-      return {
-        success: false,
-        error: error.message
-      }
-    }
-    
-    const url = URL.createObjectURL(data)
-    
-    return {
-      success: true,
-      data: {
-        url,
-        blob: data
-      }
-    }
+    const res = await fetch(
+      `${API_BASE_URL}/admin/audio/url/${encodeURIComponent(`${bucketName}/${fileName}`)}`,
+      { headers: getAuthHeaders() }
+    )
+
+    if (!res.ok) return { success: false, error: 'Failed to fetch audio URL' }
+
+    const { url } = await res.json()
+    const audioRes = await fetch(url)
+    if (!audioRes.ok) return { success: false, error: 'Failed to download audio' }
+
+    const blob = await audioRes.blob()
+    return { success: true, data: { url: URL.createObjectURL(blob), blob } }
   } catch (error) {
-    console.error('Stream failed:', error)
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Streaming failed'
-    }
+    return { success: false, error: error instanceof Error ? error.message : 'Streaming failed' }
   }
 }
 
 /**
- * List files in a storage bucket
+ * List files in a storage bucket via Django.
  */
 export async function listAudioFiles(
   bucket: StorageBucket,
-  options?: {
-    limit?: number
-    offset?: number
-    sortBy?: { column: string; order: 'asc' | 'desc' }
-  }
+  options?: { limit?: number; offset?: number }
 ): Promise<{
   success: boolean
-  data?: Array<{
-    name: string
-    id: string
-    updated_at: string
-    created_at: string
-    last_accessed_at: string
-    metadata: Record<string, any>
-  }>
+  data?: Array<{ name: string; id: string; updated_at: string; created_at: string; last_accessed_at: string; metadata: Record<string, any> }>
   error?: string
 }> {
   try {
     const bucketName = STORAGE_BUCKETS[bucket]
-    
-    const { data, error } = await supabase.storage
-      .from(bucketName)
-      .list('', {
-        limit: options?.limit,
-        offset: options?.offset,
-        sortBy: options?.sortBy
-      })
-    
-    if (error) {
-      console.error('List error:', error)
-      return {
-        success: false,
-        error: error.message
-      }
-    }
-    
-    return {
-      success: true,
-      data: data || []
-    }
+    const params = new URLSearchParams({ bucket: bucketName })
+    if (options?.limit)  params.set('limit',  String(options.limit))
+    if (options?.offset) params.set('offset', String(options.offset))
+
+    const res = await fetch(`${API_BASE_URL}/admin/audio/list?${params}`, { headers: getAuthHeaders() })
+    if (!res.ok) return { success: false, error: 'Failed to list files' }
+    const data = await res.json()
+    return { success: true, data: data.files || [] }
   } catch (error) {
-    console.error('List failed:', error)
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Listing failed'
-    }
+    return { success: false, error: error instanceof Error ? error.message : 'Listing failed' }
   }
 }
 
 /**
- * Delete audio file from storage
+ * Delete audio file via Django.
  */
 export async function deleteAudioFile(
   bucket: StorageBucket,
   fileName: string
-): Promise<{
-  success: boolean
-  error?: string
-}> {
+): Promise<{ success: boolean; error?: string }> {
   try {
     const bucketName = STORAGE_BUCKETS[bucket]
-    
-    const { error } = await supabase.storage
-      .from(bucketName)
-      .remove([fileName])
-    
-    if (error) {
-      console.error('Delete error:', error)
-      return {
-        success: false,
-        error: error.message
-      }
+    const res = await fetch(`${API_BASE_URL}/admin/audio/delete`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+      body: JSON.stringify({ bucket: bucketName, file_name: fileName })
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      return { success: false, error: err.error || 'Deletion failed' }
     }
-    
-    return {
-      success: true
-    }
+    return { success: true }
   } catch (error) {
-    console.error('Delete failed:', error)
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Deletion failed'
-    }
+    return { success: false, error: error instanceof Error ? error.message : 'Deletion failed' }
   }
 }
 
 /**
- * Get signed URL for private audio files (expires after specified time)
+ * Get a time-limited signed URL for a private audio file via Django.
  */
 export async function getSignedUrl(
   bucket: StorageBucket,
   fileName: string,
-  expiresIn: number = 3600 // 1 hour default
-): Promise<{
-  success: boolean
-  data?: { signedUrl: string }
-  error?: string
-}> {
+  expiresIn = 3600
+): Promise<{ success: boolean; data?: { signedUrl: string }; error?: string }> {
   try {
     const bucketName = STORAGE_BUCKETS[bucket]
-    
-    const { data, error } = await supabase.storage
-      .from(bucketName)
-      .createSignedUrl(fileName, expiresIn)
-    
-    if (error) {
-      console.error('Signed URL error:', error)
-      return {
-        success: false,
-        error: error.message
-      }
-    }
-    
-    return {
-      success: true,
-      data: {
-        signedUrl: data.signedUrl
-      }
-    }
+    const res = await fetch(`${API_BASE_URL}/admin/audio/signed-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+      body: JSON.stringify({ bucket: bucketName, file_name: fileName, expires_in: expiresIn })
+    })
+    if (!res.ok) return { success: false, error: 'Failed to generate signed URL' }
+    const { signed_url } = await res.json()
+    return { success: true, data: { signedUrl: signed_url } }
   } catch (error) {
-    console.error('Signed URL failed:', error)
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Signed URL generation failed'
-    }
+    return { success: false, error: error instanceof Error ? error.message : 'Signed URL generation failed' }
   }
 }
 
 /**
- * Update file metadata
+ * Placeholder — metadata updates are managed server-side.
  */
 export async function updateFileMetadata(
-  bucket: StorageBucket,
-  fileName: string,
-  metadata: Record<string, any>
-): Promise<{
-  success: boolean
-  error?: string
-}> {
-  try {
-    // Note: Supabase storage update method typically updates file content, not metadata
-    // For metadata updates, we might need to use a different approach
-    // This is a placeholder implementation
-    console.warn('Metadata update not implemented for Supabase storage');
-    return {
-      success: true
-    };
-  } catch (error) {
-    console.error('Metadata update failed:', error)
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Metadata update failed'
-    }
-  }
+  _bucket: StorageBucket,
+  _fileName: string,
+  _metadata: Record<string, any>
+): Promise<{ success: boolean; error?: string }> {
+  return { success: true }
 }
 
-// Utility functions for audio processing
+// ── Pure utility functions ────────────────────────────────────────────────────
+
 export const AUDIO_UTILS = {
-  /**
-   * Validate audio file size (max 50MB)
-   */
   validateFileSize: (file: File): { valid: boolean; error?: string } => {
-    const maxSize = 50 * 1024 * 1024 // 50MB
+    const maxSize = 50 * 1024 * 1024 // 50 MB
     if (file.size > maxSize) {
-      return {
-        valid: false,
-        error: `File size exceeds 50MB limit. Current size: ${(file.size / (1024 * 1024)).toFixed(2)}MB`
-      }
+      return { valid: false, error: `File size exceeds 50MB limit. Current size: ${(file.size / (1024 * 1024)).toFixed(2)}MB` }
     }
     return { valid: true }
   },
-  
-  /**
-   * Generate unique filename with timestamp
-   */
-  generateFileName: (originalName: string, prefix: string = ''): string => {
+
+  generateFileName: (originalName: string, prefix = ''): string => {
     const timestamp = Date.now()
     const extension = originalName.split('.').pop() || 'mp3'
     return `${prefix}${timestamp}.${extension}`
   },
-  
-  /**
-   * Format file size for display
-   */
+
   formatFileSize: (bytes: number): string => {
     if (bytes === 0) return '0 Bytes'
     const k = 1024

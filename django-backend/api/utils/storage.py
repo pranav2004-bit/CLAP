@@ -3,10 +3,9 @@ api/utils/storage.py
 
 Provider-agnostic storage helper for CLAP application.
 
-Supports three backends (controlled by STORAGE_PROVIDER in settings):
-  'aws'       -> Amazon S3 via boto3
-  'supabase'  -> Supabase Storage (S3-compatible, same boto3 code path)
-  ''          -> Local filesystem under MEDIA_ROOT (dev only)
+Supports two backends (controlled by STORAGE_PROVIDER in settings):
+  'aws' -> Amazon S3 via boto3
+  ''    -> Local filesystem under MEDIA_ROOT (dev only)
 
 Settings reads:
   S3_BUCKET_NAME, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY,
@@ -47,7 +46,7 @@ def get_s3_client():
     Return a configured boto3 S3 client, or None if S3 is not configured.
 
     Credentials are read from Django settings (which already resolves the
-    active provider — aws or supabase — in settings.py):
+    active provider — resolved in settings.py):
         S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY, S3_BUCKET_NAME,
         S3_ENDPOINT_URL, S3_REGION_NAME, S3_ADDRESSING_STYLE,
         S3_SIGNATURE_VERSION
@@ -95,7 +94,7 @@ def upload_to_storage(
     cache_control: Optional[str] = None,
 ) -> Optional[str]:
     """
-    Upload a file-like object to S3 (or Supabase Storage).
+    Upload a file-like object to AWS S3.
 
     Returns:
         's3://<bucket>/<object_key>'  when S3 is configured and upload succeeds.

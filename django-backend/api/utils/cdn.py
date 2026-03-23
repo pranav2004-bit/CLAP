@@ -48,7 +48,6 @@ S3 URL formats handled
     s3://bucket/key              → CDN_BASE_URL/key
     https://bucket.s3.region.amazonaws.com/key?...  (virtual-hosted)
     https://s3.region.amazonaws.com/bucket/key?...  (path-style)
-    https://<ref>.supabase.co/storage/v1/object/...
 
 Security note
 -------------
@@ -190,12 +189,11 @@ def _extract_key_from_s3_uri(url: str) -> str | None:
 
 def _extract_key_from_https(url: str) -> str | None:
     """
-    Extract the object key from a standard AWS S3 or Supabase Storage HTTPS URL.
+    Extract the object key from a standard AWS S3 HTTPS URL.
 
     Supported formats:
       Virtual-hosted:  https://<bucket>.s3.<region>.amazonaws.com/<key>[?...]
       Path-style:      https://s3.<region>.amazonaws.com/<bucket>/<key>[?...]
-      Supabase:        https://<ref>.supabase.co/storage/v1/object/[public/]<bucket>/<key>
     """
     parsed = urlparse(url)
     host = parsed.netloc.lower()
@@ -210,17 +208,11 @@ def _extract_key_from_https(url: str) -> str | None:
         parts = path.lstrip('/').split('/', 1)
         return parts[1] if len(parts) == 2 else None
 
-    # Supabase Storage:  ref.supabase.co/storage/v1/object/[public/]bucket/key
-    if 'supabase.co' in host and '/storage/v1/object/' in path:
-        remainder = path.split('/storage/v1/object/', 1)[-1]
-        parts = remainder.lstrip('/').split('/', 2)
-        return parts[2] if len(parts) >= 3 else None
-
     return None
 
 
 def _is_presigned_upload(url: str) -> bool:
-    """Detect AWS presigned PUT / Supabase presigned upload URLs — never CDN-rewrite these."""
+    """Detect AWS presigned PUT URLs — never CDN-rewrite these."""
     lower = url.lower()
     return (
         'x-amz-signature' in lower

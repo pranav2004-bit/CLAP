@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useState, useEffect, useTransition } from 'react'
 import { authStorage } from '@/lib/auth-storage'
+import { refreshAuthToken } from '@/lib/api-config'
 import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
@@ -22,6 +23,7 @@ import {
   TrendingUp,
   Users
 } from 'lucide-react'
+import { CubeLoader } from '@/components/ui/CubeLoader'
 
 type AdminLayoutProps = {
   children: React.ReactNode
@@ -30,12 +32,67 @@ type AdminLayoutProps = {
 export default function AdminLayout({ children }: AdminLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [isPending, startTransition] = useTransition()
+  const [authChecked, setAuthChecked] = useState(false)
   const pathname = usePathname()
   const router = useRouter()
 
-  // Default to open if we are in an operations route
+  // ── Auth guard + proactive token refresh ──────────────────────────────────
+  useEffect(() => {
+    let refreshInterval: ReturnType<typeof setInterval> | null = null
+
+    const checkAuth = async () => {
+      const token = authStorage.get('access_token')
+      const role = authStorage.get('user_role')
+
+      // No token or wrong role → redirect immediately, render nothing
+      if (!token || role !== 'admin') {
+        window.location.replace('/admin-login?reason=session_expired')
+        return
+      }
+
+      // Proactive refresh: if the token expires within the next 10 minutes,
+      // silently get a new one now so no tab click ever hits a 401.
+      const expiresAt = Number(authStorage.get('token_expires_at') || 0)
+      if (expiresAt && Date.now() > expiresAt - 10 * 60 * 1000) {
+        await refreshAuthToken()  // best-effort; failure is caught by apiFetch on next call
+      }
+
+      setAuthChecked(true)
+
+      // Background interval: re-check every 5 minutes and refresh ahead of expiry.
+      // This keeps the token alive for admins who leave the dashboard open for hours.
+      refreshInterval = setInterval(async () => {
+        const currentToken = authStorage.get('access_token')
+        if (!currentToken) {
+          // Token was cleared externally (logout in another tab, etc.)
+          window.location.replace('/admin-login?reason=session_expired')
+          return
+        }
+        const exp = Number(authStorage.get('token_expires_at') || 0)
+        if (exp && Date.now() > exp - 10 * 60 * 1000) {
+          await refreshAuthToken()  // best-effort; apiFetch retries on 401 if this fails
+        }
+      }, 5 * 60 * 1000)
+    }
+
+    checkAuth()
+
+    return () => {
+      if (refreshInterval) clearInterval(refreshInterval)
+    }
+  }, [])
+
+  // All hooks must be declared before any conditional return (Rules of Hooks).
+  // isOperationsActive is derived from pathname (already a hook) — safe to compute here.
   const isOperationsActive = ['/admin/submissions', '/admin/scores', '/admin/llm-controls', '/admin/reports', '/admin/emails', '/admin/dlq', '/admin/notifications'].some(p => pathname.startsWith(p))
   const [controlRoomOpen, setControlRoomOpen] = useState(isOperationsActive)
+
+  // Show a minimal spinner while auth state is being verified.
+  // This prevents any authenticated API call from firing before we know
+  // the session is valid — the root cause of the session_expired redirects.
+  if (!authChecked) {
+    return <CubeLoader />
+  }
 
   const isActive = (route: string) => {
     if (route === '/admin/tests') {

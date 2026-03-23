@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { ArrowLeft, Save, Plus, Trash2, GripVertical, FileText, Mic, Image as ImageIcon, CheckSquare, Eye, X, Loader2, ArrowUp, ArrowDown, Check } from 'lucide-react'
+import { CubeLoader } from '@/components/ui/CubeLoader'
 import { toast } from 'sonner'
 import { getApiUrl, apiFetch, getAuthHeaders } from '@/lib/api-config'
 import { TestPreviewModal } from '@/components/admin/TestPreviewModal'
@@ -318,7 +319,7 @@ function ClapTestEditorContent() {
         }
     }
 
-    if (isLoading) return <div className="p-8 text-center">Loading editor...</div>
+    if (isLoading) return <CubeLoader fullScreen={false} />
 
     return (
         <div className="min-h-screen bg-gray-50 flex flex-col pb-20">
