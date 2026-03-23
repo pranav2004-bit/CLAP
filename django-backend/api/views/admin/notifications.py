@@ -71,25 +71,59 @@ def _pipeline_summary(window_hours=24):
 
 
 def _tiered_alerts(summary):
-    alerts = []
+    now = timezone.now()
+    raw = []
     unresolved = summary['dlq']['unresolved_count']
 
     if unresolved > 50:
-        alerts.append({'tier': 'P1', 'channel': 'pagerduty', 'message': f'Unresolved DLQ count is {unresolved} (>50)'})
+        raw.append({
+            'tier': 'P1', 'type': 'error', 'source': 'DLQ',
+            'title': 'P1 Critical: DLQ Overload',
+            'message': f'{unresolved} unresolved DLQ entries (threshold: >50). Immediate action required.',
+        })
     elif unresolved > 10:
-        alerts.append({'tier': 'P2', 'channel': 'slack', 'message': f'Unresolved DLQ count is {unresolved} (>10)'})
+        raw.append({
+            'tier': 'P2', 'type': 'warning', 'source': 'DLQ',
+            'title': 'P2 Warning: Elevated DLQ Count',
+            'message': f'{unresolved} unresolved DLQ entries (threshold: >10). Monitor and investigate.',
+        })
 
     oldest_age = summary['dlq']['oldest_unresolved_age_minutes']
     if oldest_age is not None and oldest_age > 30:
-        alerts.append({'tier': 'P1', 'channel': 'pagerduty', 'message': f'Oldest unresolved DLQ age is {oldest_age} minutes (>30)'})
+        raw.append({
+            'tier': 'P1', 'type': 'error', 'source': 'DLQ',
+            'title': 'P1 Critical: Stale DLQ Entry',
+            'message': f'Oldest unresolved DLQ entry is {oldest_age:.1f} minutes old (threshold: >30 min).',
+        })
     elif oldest_age is not None and oldest_age > 5:
-        alerts.append({'tier': 'P2', 'channel': 'slack', 'message': f'Oldest unresolved DLQ age is {oldest_age} minutes (>5)'})
+        raw.append({
+            'tier': 'P2', 'type': 'warning', 'source': 'DLQ',
+            'title': 'P2 Warning: Aging DLQ Entry',
+            'message': f'Oldest unresolved DLQ entry is {oldest_age:.1f} minutes old (threshold: >5 min).',
+        })
 
     failures = len(summary['recent_failure_events'])
     if failures > 25:
-        alerts.append({'tier': 'P2', 'channel': 'slack', 'message': f'{failures} failure-like audit events in last {summary["window_hours"]}h'})
+        raw.append({
+            'tier': 'P2', 'type': 'warning', 'source': 'AuditLog',
+            'title': 'P2 Warning: High Failure Rate',
+            'message': f'{failures} failure-like audit events in the last {summary["window_hours"]}h (threshold: >25).',
+        })
 
-    return alerts
+    ts = now.isoformat()
+    return [
+        {
+            'id': idx + 1,
+            'tier': a['tier'],
+            'type': a['type'],
+            'title': a['title'],
+            'message': a['message'],
+            'source': a['source'],
+            'timestamp': ts,
+            'read': False,
+        }
+        for idx, a in enumerate(raw)
+    ]
 
 
 @csrf_exempt
@@ -118,11 +152,15 @@ def send_daily_summary(request):
         return err
 
     try:
-        payload = json.loads(request.body or '{}')
-    except json.JSONDecodeError:
+        payload = json.loads(request.body or b'{}')
+    except (json.JSONDecodeError, ValueError):
         return JsonResponse({'error': 'Invalid JSON body'}, status=400)
 
-    window_hours = int(payload.get('window_hours', 24))
+    try:
+        window_hours = int(payload.get('window_hours', 24))
+    except (TypeError, ValueError):
+        window_hours = 24
+
     summary = _pipeline_summary(window_hours=window_hours)
     alerts = _tiered_alerts(summary)
 
@@ -133,14 +171,17 @@ def send_daily_summary(request):
     if not to_emails:
         return JsonResponse({'error': 'No active admin recipients found'}, status=400)
 
-    html_body = render_to_string(
-        'emails/submission_ready.html',
-        {
-            'student_name': 'Admin Team',
-            'scores': [],
-            'report_url': '',
-        },
-    )
+    try:
+        html_body = render_to_string(
+            'emails/submission_ready.html',
+            {
+                'student_name': 'Admin Team',
+                'scores': [],
+                'report_url': '',
+            },
+        )
+    except Exception:
+        html_body = '<p>CLAP Daily Pipeline Summary</p>'
 
     plain_lines = [
         f"CLAP Daily Pipeline Summary ({summary['window_hours']}h)",
@@ -155,25 +196,31 @@ def send_daily_summary(request):
         plain_lines.append('Alerts:')
         plain_lines.extend([f"- [{a['tier']}] {a['message']}" for a in alerts])
 
-    message = EmailMultiAlternatives(
-        subject='CLAP Daily Pipeline Summary',
-        body='\n'.join(plain_lines),
-        from_email=getattr(settings, 'FROM_EMAIL', None),
-        to=to_emails,
-    )
-    message.attach_alternative(html_body, 'text/html')
-    message.send()
-
-    sample_submission = AssessmentSubmission.objects.order_by('-created_at').first()
-    if sample_submission:
-        AuditLog.objects.create(
-            submission=sample_submission,
-            event_type='admin_daily_summary_sent',
-            old_status=None,
-            new_status=None,
-            worker_id=f'admin:{admin_user.id}',
-            error_detail=f'recipients={len(to_emails)}; window_hours={window_hours}; alerts={len(alerts)}',
+    try:
+        message = EmailMultiAlternatives(
+            subject='CLAP Daily Pipeline Summary',
+            body='\n'.join(plain_lines),
+            from_email=getattr(settings, 'FROM_EMAIL', None) or getattr(settings, 'DEFAULT_FROM_EMAIL', None),
+            to=to_emails,
         )
+        message.attach_alternative(html_body, 'text/html')
+        message.send()
+    except Exception as exc:
+        return JsonResponse({'error': f'Email delivery failed: {exc}'}, status=500)
+
+    try:
+        sample_submission = AssessmentSubmission.objects.order_by('-created_at').first()
+        if sample_submission:
+            AuditLog.objects.create(
+                submission=sample_submission,
+                event_type='admin_daily_summary_sent',
+                old_status=None,
+                new_status=None,
+                worker_id=f'admin:{admin_user.id}',
+                error_detail=f'recipients={len(to_emails)}; window_hours={window_hours}; alerts={len(alerts)}',
+            )
+    except Exception:
+        pass  # audit log failure must not abort the response
 
     return JsonResponse(
         {

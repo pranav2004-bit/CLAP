@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
+import { getApiUrl, getAuthHeaders, isNetworkError, markBackendOffline } from '@/lib/api-config'
 import {
   Bell,
   RefreshCw,
@@ -14,9 +14,7 @@ import {
   Info,
   AlertCircle,
   Send,
-  Clock,
   X,
-  Trash2
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -30,29 +28,42 @@ interface Alert {
   source?: string
 }
 
+const POLL_MS = 60_000
+
 export function AdminNotifications() {
-  const [alerts, setAlerts] = useState<Alert[]>([])
-  const [loading, setLoading] = useState(true)
+  const [alerts, setAlerts]           = useState<Alert[]>([])
+  const [loading, setLoading]         = useState(true)
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [sendingSummary, setSendingSummary] = useState(false)
   const [filter, setFilter] = useState<'all' | 'unread' | 'warning' | 'error'>('all')
 
-  const fetchAlerts = useCallback(async () => {
-    setLoading(true)
+  const fetchAlerts = useCallback(async (opts: { initial?: boolean } = {}) => {
+    if (opts.initial) setLoading(true)
     try {
-      const res = await fetch(getApiUrl('admin/notifications/alerts'), { headers: getAuthHeaders() })
+      const res = await fetch(getApiUrl('admin/notifications/alerts'), {
+        headers: getAuthHeaders(), cache: 'no-store',
+      })
       if (res.ok) {
         const data = await res.json()
-        setAlerts(data.alerts || data.rows || [])
+        setAlerts(data.alerts || [])
+        setLastUpdated(new Date())
+      } else {
+        toast.error(`Failed to load alerts (${res.status})`)
       }
     } catch (error) {
-      console.error('Failed to fetch alerts:', error)
+      if (isNetworkError(error)) markBackendOffline()
+      else toast.error('Network error loading notifications')
     } finally {
       setLoading(false)
     }
   }, [])
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { fetchAlerts() }, [])
+  // Initial load + auto-poll every 60 s
+  useEffect(() => {
+    fetchAlerts({ initial: true })
+    const id = setInterval(() => fetchAlerts(), POLL_MS)
+    return () => clearInterval(id)
+  }, [fetchAlerts])
 
   const sendDailySummary = async () => {
     setSendingSummary(true)
@@ -68,6 +79,7 @@ export function AdminNotifications() {
         toast.error(err.error || 'Failed to send daily summary')
       }
     } catch (error) {
+      if (isNetworkError(error)) markBackendOffline()
       toast.error('Network error sending daily summary')
     } finally {
       setSendingSummary(false)
@@ -116,7 +128,10 @@ export function AdminNotifications() {
         <div>
           <h2 className="text-xl font-bold text-gray-900">Admin Notifications</h2>
           <p className="text-sm text-gray-500 mt-1">
-            System alerts and notifications &middot; {unreadCount} unread
+            System alerts and notifications · auto-refreshes every 60 s
+            {lastUpdated && (
+              <span className="ml-2 text-gray-400">· last updated {lastUpdated.toLocaleTimeString()}</span>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -124,7 +139,7 @@ export function AdminNotifications() {
             {sendingSummary ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Send className="w-4 h-4 mr-2" />}
             Send Daily Summary
           </Button>
-          <Button variant="outline" size="sm" onClick={fetchAlerts} disabled={loading}>
+          <Button variant="outline" size="sm" onClick={() => fetchAlerts()} disabled={loading}>
             <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
