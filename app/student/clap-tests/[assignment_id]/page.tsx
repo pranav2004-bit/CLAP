@@ -970,7 +970,8 @@ export default function StudentClapTestDetailPage() {
         {assignment.components?.map((comp: any) => {
           const Icon = getIcon(comp.type)
           const isSubmitted = submittedComponents.includes(comp.type)
-          const isDisabled  = isTestLocked || !!submissionId || isSubmitted
+          const isAssignmentDone = assignment.status === 'completed' || assignment.status === 'expired'
+          const isDisabled  = isAssignmentDone || isTestLocked || !!submissionId || isSubmitted
           const isNavigating = loadingComponent === comp.type
 
           return (

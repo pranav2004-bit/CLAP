@@ -167,6 +167,10 @@ def student_test_items(request, assignment_id, component_id):
     except StudentClapAssignment.DoesNotExist:
         return JsonResponse({'error': 'Assignment not found'}, status=404)
 
+    # Block access to components of already-completed or expired assignments
+    if assignment.status in ('completed', 'expired', 'test_deleted'):
+        return JsonResponse({'error': 'Assignment already completed'}, status=403)
+
     # Verify component belongs to the assigned test
     try:
         component = ClapTestComponent.objects.get(id=component_id, clap_test=assignment.clap_test)
