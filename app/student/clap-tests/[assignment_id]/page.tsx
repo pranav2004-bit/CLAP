@@ -1010,10 +1010,10 @@ export default function StudentClapTestDetailPage() {
                 </div>
 
                 {/* Status / action chip */}
-                {isSubmitted ? (
+                {isSubmitted || isAssignmentDone ? (
                   <div className="flex items-center gap-1.5 flex-shrink-0 text-green-600">
                     <CheckCircle className="w-4 h-4" />
-                    <span className="text-xs font-bold">Done</span>
+                    <span className="text-xs font-bold">Submitted</span>
                   </div>
                 ) : (
                   <div className={`flex items-center gap-0.5 rounded-full px-3 py-1.5 text-[11px] font-bold flex-shrink-0 whitespace-nowrap
