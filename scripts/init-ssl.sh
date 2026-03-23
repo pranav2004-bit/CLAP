@@ -39,7 +39,7 @@ docker compose up -d nginx
 sleep 3  # give Nginx a moment to fully start
 
 echo "==> [3/4] Requesting Let's Encrypt certificate for $DOMAIN..."
-docker compose run --rm certbot certonly \
+docker compose run --rm --entrypoint certbot certbot certonly \
   --webroot \
   --webroot-path=/var/www/certbot \
   --domain "$DOMAIN" \
@@ -49,7 +49,7 @@ docker compose run --rm certbot certonly \
   --force-renewal
 
 echo "==> [4/4] Reloading Nginx with real certificate..."
-docker compose exec nginx nginx -s reload
+docker compose kill -s HUP nginx
 
 echo ""
 echo "SSL certificate installed successfully!"
