@@ -1,14 +1,19 @@
+import json
+import time
+import logging
 from datetime import timedelta
 from importlib.util import find_spec
 
 from django.db.models import Count
-from django.http import JsonResponse
+from django.http import JsonResponse, StreamingHttpResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from api.models import AssessmentSubmission, AuditLog, DeadLetterQueue
 from api.utils.jwt_utils import get_user_from_request
+
+logger = logging.getLogger(__name__)
 
 if find_spec('redis') is not None:
     import redis
@@ -71,9 +76,31 @@ def submission_status_overview(request):
     for status, _ in AssessmentSubmission.STATUS_CHOICES:
         status_counts.setdefault(status, 0)
 
+    # Map granular pipeline statuses to the 4 frontend summary buckets
+    processing_statuses = {
+        AssessmentSubmission.STATUS_RULES_COMPLETE,
+        AssessmentSubmission.STATUS_LLM_PROCESSING,
+        AssessmentSubmission.STATUS_LLM_COMPLETE,
+        AssessmentSubmission.STATUS_REPORT_GENERATING,
+        AssessmentSubmission.STATUS_REPORT_READY,
+        AssessmentSubmission.STATUS_EMAIL_SENDING,
+    }
+    total = sum(status_counts.values())
+    pending    = status_counts.get(AssessmentSubmission.STATUS_PENDING, 0)
+    processing = sum(status_counts.get(s, 0) for s in processing_statuses)
+    completed  = status_counts.get(AssessmentSubmission.STATUS_COMPLETE, 0)
+    failed     = status_counts.get(AssessmentSubmission.STATUS_LLM_FAILED, 0)
+
     return JsonResponse({
-        'total_submissions': sum(status_counts.values()),
-        'status_counts': status_counts,
+        # Flat fields the frontend reads directly
+        'total':       total,
+        'pending':     pending,
+        'processing':  processing,
+        'completed':   completed,
+        'failed':      failed,
+        # Full breakdown for detailed views
+        'total_submissions': total,
+        'status_counts':     status_counts,
     })
 
 
@@ -88,7 +115,7 @@ def submission_list(request):
 
     status = request.GET.get('status')
     if status:
-        qs = qs.filter(status=status)
+        qs = qs.filter(status=status.upper())
 
     student_id = request.GET.get('student_id')
     if student_id:
@@ -110,28 +137,45 @@ def submission_list(request):
     if created_to:
         qs = qs.filter(created_at__lte=created_to)
 
+    # Pagination — max 30 per page
+    import math
+    try:
+        page = max(1, int(request.GET.get('page', 1)))
+    except (ValueError, TypeError):
+        page = 1
+    page_size = 30
+    total_count = qs.count()
+    total_pages = max(1, math.ceil(total_count / page_size))
+    offset = (page - 1) * page_size
+
     rows = []
-    for sub in qs[:200]:
+    for sub in qs[offset: offset + page_size]:
+        assessment_name = (
+            getattr(sub.assessment, 'name', None)
+            or getattr(sub.assessment, 'title', None)
+            or str(sub.assessment)
+        )
         rows.append({
-            'id': str(sub.id),
-            'status': sub.status,
-            'student': {
-                'id': str(sub.user_id),
-                'email': sub.user.email,
-                'full_name': sub.user.full_name,
-                'batch_id': str(sub.user.batch_id) if sub.user.batch_id else None,
-            },
-            'assessment': {
-                'id': str(sub.assessment_id),
-                'title': sub.assessment.title,
-            },
-            'report_url': sub.report_url,
-            'email_sent_at': sub.email_sent_at.isoformat() if sub.email_sent_at else None,
-            'created_at': sub.created_at.isoformat() if sub.created_at else None,
-            'updated_at': sub.updated_at.isoformat() if sub.updated_at else None,
+            'id':              str(sub.id),
+            'status':          sub.status,
+            # Flat fields — matches what the frontend reads directly
+            'user_email':      sub.user.email,
+            'user_name':       sub.user.full_name or sub.user.username or sub.user.email,
+            'student_id':      sub.user.student_id or '',
+            'assessment_name': assessment_name,
+            'report_url':      sub.report_url,
+            'email_sent_at':   sub.email_sent_at.isoformat() if sub.email_sent_at else None,
+            'created_at':      sub.created_at.isoformat() if sub.created_at else None,
+            'updated_at':      sub.updated_at.isoformat() if sub.updated_at else None,
         })
 
-    return JsonResponse({'submissions': rows})
+    return JsonResponse({
+        'submissions': rows,
+        'total_count': total_count,
+        'page':        page,
+        'page_size':   page_size,
+        'total_pages': total_pages,
+    })
 
 
 @csrf_exempt
@@ -148,33 +192,36 @@ def submission_detail(request, submission_id):
 
     events = AuditLog.objects.filter(submission=sub).order_by('created_at')
 
+    assessment_name = (
+        getattr(sub.assessment, 'name', None)
+        or getattr(sub.assessment, 'title', None)
+        or str(sub.assessment)
+    )
+
     return JsonResponse({
-        'id': str(sub.id),
-        'status': sub.status,
-        'version': sub.version,
-        'correlation_id': sub.correlation_id,
-        'student': {
-            'id': str(sub.user_id),
-            'email': sub.user.email,
-            'full_name': sub.user.full_name,
-        },
-        'assessment': {
-            'id': str(sub.assessment_id),
-            'title': sub.assessment.title,
-        },
-        'report_url': sub.report_url,
-        'email_sent_at': sub.email_sent_at.isoformat() if sub.email_sent_at else None,
-        'created_at': sub.created_at.isoformat() if sub.created_at else None,
-        'updated_at': sub.updated_at.isoformat() if sub.updated_at else None,
-        'audit_events': [
+        'id':              str(sub.id),
+        'status':          sub.status,
+        'version':         sub.version,
+        'correlation_id':  sub.correlation_id,
+        # Flat fields — matches what the frontend reads directly
+        'user_email':      sub.user.email,
+        'user_name':       sub.user.full_name or sub.user.username or sub.user.email,
+        'student_id':      sub.user.student_id or '',
+        'assessment_name': assessment_name,
+        'report_url':      sub.report_url,
+        'email_sent_at':   sub.email_sent_at.isoformat() if sub.email_sent_at else None,
+        'created_at':      sub.created_at.isoformat() if sub.created_at else None,
+        'updated_at':      sub.updated_at.isoformat() if sub.updated_at else None,
+        # audit_log key matches what the frontend reads
+        'audit_log': [
             {
-                'id': event.id,
-                'event_type': event.event_type,
-                'old_status': event.old_status,
-                'new_status': event.new_status,
-                'worker_id': event.worker_id,
+                'id':           event.id,
+                'event_type':   event.event_type,
+                'old_status':   event.old_status,
+                'new_status':   event.new_status,
+                'worker_id':    event.worker_id,
                 'error_detail': event.error_detail,
-                'created_at': event.created_at.isoformat() if event.created_at else None,
+                'timestamp':    event.created_at.isoformat() if event.created_at else None,
             }
             for event in events
         ],
@@ -311,3 +358,104 @@ def pipeline_health(request):
         'redis_available': redis_client is not None,
         'redis_connected': redis_connected,
     })
+
+
+def _compute_health_payload():
+    """Compute the pipeline health snapshot — same logic as pipeline_health view."""
+    redis_client = _redis_client()
+    queue_depths = _queue_depths(redis_client)
+
+    unresolved_qs = DeadLetterQueue.objects.filter(resolved=False).order_by('created_at')
+    unresolved_dlq = unresolved_qs.count()
+    oldest = unresolved_qs.first()
+    oldest_age_seconds = None
+    if oldest and oldest.created_at:
+        oldest_age_seconds = int((timezone.now() - oldest.created_at).total_seconds())
+
+    redis_connected = False
+    if redis_client:
+        try:
+            redis_client.ping()
+            redis_connected = True
+        except Exception:
+            pass
+
+    celery_active = False
+    if find_spec('celery') is not None:
+        try:
+            from clap_backend.celery import app as celery_app
+            active_workers = celery_app.control.inspect().ping()
+            celery_active = bool(active_workers)
+        except Exception:
+            pass
+
+    return {
+        'queue_depths':      queue_depths,
+        'queue_depth':       sum(q['depth'] for q in queue_depths if q['depth'] is not None),
+        'dlq': {
+            'unresolved_count':  unresolved_dlq,
+            'oldest_entry_id':   oldest.id if oldest else None,
+            'oldest_age_seconds': oldest_age_seconds,
+        },
+        'dlq_count':         unresolved_dlq,
+        'celery_available':  find_spec('celery') is not None,
+        'celery_active':     celery_active,
+        'redis_available':   redis_client is not None,
+        'redis_connected':   redis_connected,
+        'timestamp':         timezone.now().isoformat(),
+    }
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def pipeline_health_stream(request):
+    """
+    Server-Sent Events (SSE) endpoint for real-time pipeline health.
+
+    Replaces the 15-second polling setInterval in the admin dashboard.
+    The server pushes an update every 10 seconds instead of the client
+    making repeated HTTP requests — zero wasted round trips when nothing changes.
+
+    Auth: JWT passed as ?token=<jwt> query param (EventSource cannot set headers).
+    Nginx: X-Accel-Buffering: no disables proxy buffering for streaming.
+
+    SSE event format:
+        data: {"celery_active": true, "redis_connected": true, ...}\n\n
+        : heartbeat\n\n   (every 10 s, keeps connection alive through proxies)
+    """
+    user = get_user_from_request(request)
+    if not user or user.role != 'admin':
+        # SSE requires a regular response for auth errors (not a stream)
+        return JsonResponse({'error': 'Unauthorized'}, status=401)
+
+    _PUSH_INTERVAL_S  = 10   # push health data every 10 s
+    _HEARTBEAT_S      = 10   # interleaved heartbeat comment
+
+    def event_stream():
+        try:
+            while True:
+                try:
+                    payload = _compute_health_payload()
+                    yield f"data: {json.dumps(payload)}\n\n"
+                except Exception as exc:
+                    logger.error('SSE health snapshot failed: %s', exc, exc_info=True)
+                    yield f": error computing health\n\n"
+
+                # Sleep in small increments so GeneratorExit is caught promptly
+                for _ in range(_PUSH_INTERVAL_S):
+                    time.sleep(1)
+                    yield f": heartbeat\n\n"
+
+        except GeneratorExit:
+            # Client closed the connection — clean exit, no error log needed
+            pass
+
+    response = StreamingHttpResponse(
+        event_stream(),
+        content_type='text/event-stream; charset=utf-8',
+    )
+    # Prevent caching at every layer
+    response['Cache-Control']      = 'no-cache, no-store, must-revalidate'
+    response['X-Accel-Buffering']  = 'no'   # disable Nginx proxy buffering
+    response['Connection']         = 'keep-alive'
+    return response

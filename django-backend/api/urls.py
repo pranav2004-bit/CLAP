@@ -119,6 +119,8 @@ urlpatterns = [
     path('admin/submissions/overview', submissions_monitor.submission_status_overview, name='admin_submissions_overview'),
     path('admin/submissions', submissions_monitor.submission_list, name='admin_submissions_list'),
     path('admin/submissions/health', submissions_monitor.pipeline_health, name='admin_submissions_health'),
+    # SSE: replaces 15-second polling — server pushes health every 10 s
+    path('admin/submissions/health-stream', submissions_monitor.pipeline_health_stream, name='admin_submissions_health_stream'),
     path('admin/submissions/dlq-widget', submissions_monitor.dlq_dashboard_widget, name='admin_submissions_dlq_widget'),
     path('admin/submissions/dlq/<int:dlq_id>/quick-action', submissions_monitor.dlq_quick_action, name='admin_submissions_dlq_quick_action'),
     path('admin/submissions/<uuid:submission_id>', submissions_monitor.submission_detail, name='admin_submissions_detail'),
@@ -138,6 +140,7 @@ urlpatterns = [
     path('admin/reports/template-preview', report_management.report_template_preview, name='admin_report_template_preview'),
 
     # Email Management
+    path('admin/emails/preview', email_management.email_template_preview, name='admin_email_template_preview'),
     path('admin/emails/status', email_management.email_delivery_status, name='admin_email_delivery_status'),
     path('admin/emails/submissions/<uuid:submission_id>/resend', email_management.resend_email, name='admin_email_resend'),
     path('admin/emails/bulk-resend', email_management.bulk_resend_email, name='admin_email_bulk_resend'),
@@ -152,6 +155,7 @@ urlpatterns = [
     path('admin/stats/analytics', dashboard_stats.analytics_stats, name='admin_stats_analytics'),
 
     # Score Management
+    path('admin/scores/search', score_management.scores_search, name='admin_scores_search'),
     path('admin/scores/submissions/<uuid:submission_id>', score_management.scores_by_submission, name='admin_scores_submission'),
     path('admin/scores/submissions/<uuid:submission_id>/override', score_management.override_score, name='admin_scores_override'),
     path('admin/scores/batches/<uuid:batch_id>', score_management.scores_by_batch, name='admin_scores_batch'),

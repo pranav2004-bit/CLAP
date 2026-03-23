@@ -24,6 +24,16 @@ export const getAuthHeaders = (): Record<string, string> => {
     return userId ? { 'x-user-id': userId } : {}
 }
 
+/**
+ * Return the raw JWT access token string, or null if not authenticated.
+ * Used for SSE / EventSource URLs where custom headers cannot be set:
+ *   new EventSource(`/api/stream?token=${getToken()}`)
+ */
+export const getToken = (): string | null => {
+    if (typeof window === 'undefined') return null
+    return authStorage.get('access_token') || null
+}
+
 // ── Debounce guard ─────────────────────────────────────────────────────────────
 // Prevents multiple simultaneous 401s (e.g. from background timer polls) from all
 // triggering separate redirects and competing over localStorage cleanup.
@@ -39,11 +49,17 @@ export const handle401 = () => {
     if (_redirecting) return   // another 401 already triggered the redirect
     _redirecting = true
 
+    // Read role BEFORE clearing — used to pick the correct login page.
+    // Fall back to URL path so admins are never accidentally sent to the
+    // student login page when sessionStorage was empty (e.g. after a hard
+    // browser refresh that wiped the tab's sessionStorage).
     const role = authStorage.get('user_role')
+    const isAdminRoute = window.location.pathname.startsWith('/admin')
+
     // Clear all auth tokens — the session is truly expired
     authStorage.clear()
 
-    const loginPath = role === 'admin' ? '/admin-login' : '/login'
+    const loginPath = (role === 'admin' || isAdminRoute) ? '/admin-login' : '/login'
     window.location.href = `${loginPath}?reason=session_expired`
 }
 
@@ -85,7 +101,7 @@ export const refreshAuthToken = async (): Promise<boolean> => {
                 return true
             }
             return false
-        } catch {
+        } catch (_e) {
             return false  // network error — don't log out; let the next call retry
         } finally {
             _refreshPromise = null
@@ -107,7 +123,14 @@ export const refreshAuthToken = async (): Promise<boolean> => {
  * interrupt the user's session.
  */
 export const apiFetch = async (url: string, options?: RequestInit): Promise<Response> => {
-    const res = await fetch(url, options)
+    let res: Response
+    try {
+        res = await fetch(url, options)
+    } catch (err) {
+        if (isNetworkError(err)) markBackendOffline()
+        throw err
+    }
+    markBackendOnline() // any HTTP response → backend is reachable
     if (res.status !== 401) return res
 
     // ── 401 received — try to silently refresh ────────────────────────────────
@@ -144,3 +167,46 @@ export const apiFetch = async (url: string, options?: RequestInit): Promise<Resp
 export const silentFetch = (url: string, options?: RequestInit): Promise<Response> => {
     return fetch(url, options)
 }
+
+// ── Backend connectivity tracking ───────────────────────────────────────────
+// When a network-level error (ERR_EMPTY_RESPONSE, connection refused) is
+// detected anywhere in the app, call markBackendOffline().  The
+// BackendStatusBanner component listens for these events and shows a
+// non-intrusive banner instead of multiple competing toast messages.
+// When any request succeeds again, markBackendOnline() auto-dismisses the
+// banner and triggers a clean page reload.
+
+let _backendOffline = false
+
+/**
+ * Returns true for pure network failures (connection refused, empty response,
+ * DNS failure) as opposed to HTTP-level errors (4xx / 5xx).
+ * All browsers represent these as TypeError from fetch().
+ */
+export const isNetworkError = (err: unknown): boolean => err instanceof TypeError
+
+/**
+ * Call when a network error is detected during a background API poll.
+ * Emits a one-time 'clap:backend:offline' event consumed by BackendStatusBanner.
+ */
+export const markBackendOffline = (): void => {
+    if (_backendOffline) return
+    _backendOffline = true
+    if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('clap:backend:offline'))
+    }
+}
+
+/**
+ * Call when any request succeeds after being offline.
+ * Emits 'clap:backend:online' — the banner auto-reloads the page.
+ */
+export const markBackendOnline = (): void => {
+    if (!_backendOffline) return
+    _backendOffline = false
+    if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('clap:backend:online'))
+    }
+}
+
+export const getBackendOffline = (): boolean => _backendOffline

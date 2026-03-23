@@ -9,6 +9,8 @@ Supported authentication methods (in priority order):
                           WARNING: disable in production unless your reverse
                           proxy strips this header from external requests.
   2. Authorization: Bearer <JWT>  — HS256 JWT signed with settings.SECRET_KEY.
+  3. ?token=<JWT> query param     — For SSE/EventSource (cannot set headers).
+                                    Only accepted on GET requests.
 
 E2 security note:
   TRUST_X_USER_ID_HEADER defaults to True for backward compatibility with
@@ -35,7 +37,7 @@ def get_user_from_request(request):
 
     Returns a User instance on success, or None if authentication fails.
     """
-    # ── Method 1: x-user-id header or query param ───────────────────────────────
+    # ── Method 1: x-user-id header or query param ─────────────────────────────
     trust_header = getattr(settings, 'TRUST_X_USER_ID_HEADER', True)
     if trust_header:
         user_id = request.headers.get('x-user-id', '').strip()
@@ -50,30 +52,44 @@ def get_user_from_request(request):
                 logger.warning('User ID authentication failed (id=%s)', user_id)
                 # Fall through to JWT check
 
-    # ── Method 2: JWT Bearer token ────────────────────────────────
+    # ── Resolve raw JWT token from header or query param ──────────────────────
+    raw_token = ''
+
+    # Standard Authorization: Bearer <jwt> header
     auth_header = request.headers.get('Authorization', '')
     if auth_header.startswith('Bearer '):
-        if jwt is None:
-            logger.error('PyJWT is not installed — cannot decode Bearer tokens.')
-            return None
+        raw_token = auth_header.split(' ', 1)[1].strip()
 
-        token = auth_header.split(' ', 1)[1]
-        try:
-            payload = jwt.decode(
-                token,
-                settings.SECRET_KEY,
-                algorithms=['HS256'],
-            )
-            user_id = payload.get('sub') or payload.get('user_id')
-            if user_id:
-                return User.objects.get(id=user_id)
-        except jwt.ExpiredSignatureError:
-            logger.warning('Bearer token expired')
-        except jwt.InvalidTokenError as exc:
-            logger.warning('Invalid Bearer token: %s', exc)
-        except User.DoesNotExist:
-            logger.warning('Bearer token: user not found (id=%s)', user_id)
-        except Exception as exc:
-            logger.error('Unexpected error decoding Bearer token: %s', exc)
+    # ?token=<jwt> query param — for SSE / EventSource / media elements.
+    # EventSource API does not support custom headers, so SSE endpoints pass
+    # the JWT as a query param.  Only accepted on GET requests.
+    if not raw_token and request.method == 'GET':
+        raw_token = request.GET.get('token', '').strip()
+
+    if not raw_token:
+        return None
+
+    # ── Decode and validate JWT ────────────────────────────────────────────────
+    if jwt is None:
+        logger.error('PyJWT is not installed — cannot decode JWT tokens.')
+        return None
+
+    try:
+        payload = jwt.decode(
+            raw_token,
+            settings.SECRET_KEY,
+            algorithms=['HS256'],
+        )
+        user_id = payload.get('sub') or payload.get('user_id')
+        if user_id:
+            return User.objects.get(id=user_id)
+    except jwt.ExpiredSignatureError:
+        logger.warning('JWT token expired')
+    except jwt.InvalidTokenError as exc:
+        logger.warning('Invalid JWT token: %s', exc)
+    except User.DoesNotExist:
+        logger.warning('JWT token: user not found')
+    except Exception as exc:
+        logger.error('Unexpected error decoding JWT token: %s', exc)
 
     return None
