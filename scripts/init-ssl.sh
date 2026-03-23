@@ -39,14 +39,18 @@ docker compose up -d nginx
 sleep 3  # give Nginx a moment to fully start
 
 echo "==> [3/4] Requesting Let's Encrypt certificate for $DOMAIN..."
+# Remove dummy cert so certbot can issue a real one
+rm -rf ./data/certbot/conf/live/$DOMAIN
+rm -rf ./data/certbot/conf/archive/$DOMAIN
+rm -f  ./data/certbot/conf/renewal/$DOMAIN.conf
+
 docker compose run --rm --entrypoint certbot certbot certonly \
   --webroot \
   --webroot-path=/var/www/certbot \
   --domain "$DOMAIN" \
   --email "$EMAIL" \
   --agree-tos \
-  --no-eff-email \
-  --force-renewal
+  --no-eff-email
 
 echo "==> [4/4] Reloading Nginx with real certificate..."
 docker compose kill -s HUP nginx
