@@ -122,6 +122,11 @@ jobs:
         file: ./django-backend/Dockerfile
         target: runtime
         push: false
+        # load: true exports the built image from BuildKit cache into the local
+        # Docker daemon so the smoke-test step can run it with `docker run`.
+        # Without this, build-push-action stores the image in BuildKit cache only
+        # and `docker run clap-backend:latest` fails with "image not found locally".
+        load: true
         # Tag with git SHA so it can be referenced in deployment rollbacks (F3)
         tags: |
           clap-backend:${{ github.sha }}
