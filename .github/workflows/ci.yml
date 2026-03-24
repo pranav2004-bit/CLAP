@@ -99,7 +99,7 @@ jobs:
       #   PYSEC-2026-4539 / CVE-2026-4539 — pygments 2.19.2 (transitive via ipython/weasyprint)
       #     No patched version released as of 2026-03. Risk accepted: pygments is a
       #     dev/report-rendering dependency, not exposed to untrusted user input in our stack.
-      run: pip-audit -r requirements.txt --strict --ignore-vuln PYSEC-2026-4539
+      run: pip-audit -r requirements.txt --strict --ignore-vuln CVE-2026-4539
 
   # ── Docker image build ───────────────────────────────────────────────────────
   # F1: Ensures the Docker image builds cleanly on every PR.
