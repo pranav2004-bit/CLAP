@@ -971,7 +971,8 @@ export default function StudentClapTestDetailPage() {
           const Icon = getIcon(comp.type)
           const isSubmitted = submittedComponents.includes(comp.type)
           const isAssignmentDone = assignment.status === 'completed' || assignment.status === 'expired'
-          const isDisabled  = isAssignmentDone || isTestLocked || !!submissionId || isSubmitted
+          const isDone      = isSubmitted || isAssignmentDone || !!submissionId
+          const isDisabled  = isDone || isTestLocked
           const isNavigating = loadingComponent === comp.type
 
           return (
@@ -986,7 +987,7 @@ export default function StudentClapTestDetailPage() {
               className={`
                 bg-white rounded-2xl border overflow-hidden touch-manipulation
                 transition-all duration-150
-                ${isSubmitted
+                ${isDone
                   ? 'border-green-100 bg-green-50/40'
                   : isDisabled
                     ? 'border-gray-100 opacity-50 cursor-not-allowed'
@@ -997,7 +998,7 @@ export default function StudentClapTestDetailPage() {
 
                 {/* Icon badge */}
                 <div className={`w-10 h-10 rounded-xl flex-shrink-0 flex items-center justify-center
-                  ${isSubmitted ? 'bg-green-100 text-green-600' : 'bg-indigo-50 text-indigo-600'}`}>
+                  ${isDone ? 'bg-green-100 text-green-600' : 'bg-indigo-50 text-indigo-600'}`}>
                   {isNavigating
                     ? <Loader2 className="w-5 h-5 animate-spin" />
                     : <Icon className="w-5 h-5" />}
@@ -1006,11 +1007,11 @@ export default function StudentClapTestDetailPage() {
                 {/* Title */}
                 <div className="flex-1 min-w-0">
                   <p className={`text-sm font-semibold leading-snug truncate
-                    ${isSubmitted ? 'text-green-800' : 'text-gray-900'}`}>{getDisplayTitle(comp.type, comp.title)}</p>
+                    ${isDone ? 'text-green-800' : 'text-gray-900'}`}>{getDisplayTitle(comp.type, comp.title)}</p>
                 </div>
 
                 {/* Status / action chip */}
-                {isSubmitted || isAssignmentDone ? (
+                {isDone ? (
                   <div className="flex items-center gap-1.5 flex-shrink-0 text-green-600">
                     <CheckCircle className="w-4 h-4" />
                     <span className="text-xs font-bold">Submitted</span>
