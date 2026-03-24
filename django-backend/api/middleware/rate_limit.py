@@ -13,11 +13,24 @@ Configuration (in settings.py / .env):
   RATE_LIMIT_ANON_PER_MINUTE  — requests/min per IP for unauthenticated (default: 60)
   RATE_LIMIT_AUTH_PER_MINUTE  — requests/min per user ID for authenticated (default: 300)
 
+Rate limit key strategy (enterprise — campus-safe):
+  Authenticated (Bearer JWT)  → key = 'uid:<user_id>' extracted from JWT sub claim.
+                                Each student has their own independent 300/min bucket.
+                                3000 students from the same campus IP never compete.
+  Unauthenticated (no token)  → key = 'anon:<ip>' (per-IP, protects public endpoints).
+
+  CRITICAL: Do NOT use IP as the key for authenticated requests.
+  In campus/institution environments thousands of students share ONE NAT IP.
+  Using IP would collapse all 3000 students into a single 300/min bucket (5 req/s),
+  causing ~98% of saves and timer polls to receive 429 during a live test.
+
 Behaviour:
   - Returns HTTP 429 with Retry-After header when limit exceeded.
   - Fails OPEN if Redis is unavailable (never blocks legitimate traffic for Redis downtime).
   - Skips CORS preflight (OPTIONS) and the health-check endpoint.
   - Uses INCR + EXPIRE (atomic on Redis) — no race conditions.
+  - JWT decoding uses verify_exp=False — expiry is validated by the view layer,
+    not here. We only need the user ID for bucketing.
 """
 
 import logging
@@ -84,16 +97,58 @@ def _rate_limited(redis_client, key: str, limit: int, window_seconds: int = 60) 
         return False, 0, 60
 
 
+def _extract_user_id_from_bearer(auth_header: str, fallback: str) -> str:
+    """
+    Decode the JWT Bearer token (WITHOUT full validation) to extract the `sub`
+    (user ID) claim for rate-limit keying.
+
+    We intentionally skip expiry verification here because:
+      1. The view layer already validates the token and rejects expired ones.
+      2. We only need the user identity for bucketing — auth is not our concern.
+      3. Blocking an expired-token request at the rate-limit layer before the view
+         can return a proper 401 would confuse clients expecting auth errors.
+
+    Falls back to `fallback` (typically 'anon:{ip}') if decoding fails for any reason.
+    """
+    if find_spec('jwt') is None:
+        return fallback
+    try:
+        import jwt as pyjwt
+        token = auth_header.split(' ', 1)[1].strip()
+        if not token:
+            return fallback
+        payload = pyjwt.decode(
+            token,
+            settings.SECRET_KEY,
+            algorithms=['HS256'],
+            options={
+                'verify_exp': False,    # expiry checked by view, not here
+                'verify_nbf': False,    # not-before also skipped
+                'verify_aud': False,    # no audience claim in our tokens
+            },
+        )
+        sub = payload.get('sub') or payload.get('user_id')
+        return f'uid:{sub}' if sub else fallback
+    except Exception:
+        # Malformed / wrong-key token — fall back gracefully.
+        # The view layer will reject it with 401; we don't need to block here.
+        return fallback
+
+
 class ApiRateLimitMiddleware:
     """
-    Django WSGI middleware that applies per-IP and per-user rate limits to all
+    Django WSGI middleware that applies per-user and per-IP rate limits to all
     /api/ endpoints using Redis counters.
+
+    Key design: authenticated requests are keyed on the JWT user ID (sub claim),
+    NOT on the IP address.  This is critical for campus deployments where thousands
+    of students share a single NAT IP — IP-based keying would collapse all students
+    into one shared bucket and cause mass 429s during live tests.
     """
 
-    # Paths exempt from the global IP rate limit.
+    # Paths exempt from the global rate limit.
     # /api/auth/login has its own dedicated per-identifier lockout and per-IP
-    # limit (200/min) implemented directly in api/views/auth.py, which is
-    # appropriate for school networks where many students share one public IP.
+    # limit (200/min) implemented directly in api/views/auth.py.
     EXEMPT_PATHS = {'/api/health/', '/api/health', '/api/auth/login'}
 
     def __init__(self, get_response):
@@ -115,17 +170,17 @@ class ApiRateLimitMiddleware:
         # Only apply to /api/ paths
         if not request.path.startswith('/api/'):
             return False
-        # Skip CORS preflight
+        # Skip CORS preflight — OPTIONS must never be rate limited
         if request.method == 'OPTIONS':
             return False
-        # Skip exempt paths
+        # Skip exempt paths (health, login)
         if request.path in self.EXEMPT_PATHS:
             return False
         return True
 
     def _get_client_ip(self, request) -> str:
         """Extract real client IP, respecting trusted reverse proxy headers."""
-        # X-Forwarded-For is set by nginx/ALB; use first (leftmost = client)
+        # X-Forwarded-For is set by nginx; use first (leftmost = real client)
         forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR', '')
         if forwarded_for:
             return forwarded_for.split(',')[0].strip()
@@ -135,30 +190,36 @@ class ApiRateLimitMiddleware:
         """
         Perform the rate-limit check.  Returns a 429 JsonResponse if limited,
         None if the request should proceed.
+
+        Key selection:
+          Bearer token present → decode JWT → key = 'uid:<user_id>' (per student)
+          No Bearer token      → key = 'anon:<ip>' (per IP, unauthenticated)
+
+        This ensures 3000 campus students on the same IP each get their own
+        independent 300/min bucket and never block each other.
         """
         redis_client = _get_redis()
         if redis_client is None:
             return None  # Fail open — Redis unavailable
 
         ip = self._get_client_ip(request)
-
-        # Determine if request is authenticated
-        user_id = request.headers.get('x-user-id', '').strip()
-        if not user_id:
-            auth_header = request.headers.get('Authorization', '')
-            if auth_header.startswith('Bearer '):
-                # Treat any request with a bearer token as authenticated for rate-limit
-                # purposes (JWT validity is checked by the view, not here)
-                user_id = f'token:{ip}'  # use IP as tie-breaker for unauthenticated tokens
+        auth_header = request.headers.get('Authorization', '')
 
         minute_bucket = int(time.time()) // 60   # 1-minute sliding window
 
-        if user_id:
-            # Authenticated: rate-limit by user ID
-            key = f'rl:auth:{user_id}:{minute_bucket}'
+        if auth_header.startswith('Bearer '):
+            # ── Authenticated request ────────────────────────────────────────
+            # Decode JWT to get the actual user ID for the rate-limit key.
+            # This is the ONLY correct approach for campus environments:
+            # each student gets their own private 300/min bucket regardless
+            # of how many students share the same public IP address.
+            user_key = _extract_user_id_from_bearer(auth_header, fallback=f'anon:{ip}')
+            key = f'rl:auth:{user_key}:{minute_bucket}'
             limit = self.auth_limit
         else:
-            # Unauthenticated: rate-limit by IP
+            # ── Unauthenticated request ──────────────────────────────────────
+            # No Bearer token → fall back to per-IP bucketing.
+            # Covers public endpoints and pre-login traffic.
             key = f'rl:anon:{ip}:{minute_bucket}'
             limit = self.anon_limit
 
@@ -166,8 +227,8 @@ class ApiRateLimitMiddleware:
 
         if is_limited:
             logger.warning(
-                'Rate limit exceeded — path=%s ip=%s user_id=%s count=%d limit=%d',
-                request.path, ip, user_id or 'anon', current_count, limit,
+                'Rate limit exceeded — path=%s ip=%s key=%s count=%d limit=%d',
+                request.path, ip, key, current_count, limit,
             )
             response = JsonResponse(
                 {
