@@ -96,7 +96,9 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
-    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    # 1 GB: JWT rate-limit buckets (3000 × ~500B) + Celery result backend + auth lockout keys
+    # allkeys-lru: evicts least-recently-used keys when full — safe for ephemeral rate-limit data
+    command: redis-server --maxmemory 1gb --maxmemory-policy allkeys-lru
     healthcheck:
       test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
@@ -121,11 +123,19 @@ services:
       REDIS_URL: "redis://redis:6379/2"
       CELERY_BROKER_URL: "redis://redis:6379/0"
       CELERY_RESULT_BACKEND: "redis://redis:6379/1"
-      # 4 workers × 4 threads = 16 concurrent requests — handles 100 concurrent users
-      # Formula: workers ≈ 2×CPU+1 (4 is safe on 2-CPU servers, scale up for 4-CPU)
-      GUNICORN_WORKERS: "4"
-      GUNICORN_THREADS: "4"
+      # 5 workers × 8 threads = 40 concurrent requests — handles 3000 concurrent users
+      # Workers: (2×CPU)+1 = 5 for 2-vCPU EC2 (full formula, was under-provisioned at 4)
+      # Threads: 8 per worker — gthread handles I/O-bound Django well; each thread blocks
+      #          on DB query ~10-50ms, so 40 threads sustain ~800-4000 req/s
+      # Memory:  5 workers × ~200MB (preload_app CoW) = ~1GB total — safe on t3.large+
+      # DB conns: 5 × 8 = 40 persistent connections to Aurora (CONN_MAX_AGE=600)
+      GUNICORN_WORKERS: "5"
+      GUNICORN_THREADS: "8"
       GUNICORN_TIMEOUT: "120"
+      # Recycle workers after 2000 requests (±200 jitter) to flush any ORM connection
+      # or memory drift — spread restarts so no thundering herd on simultaneous recycle
+      GUNICORN_MAX_REQUESTS: "2000"
+      GUNICORN_MAX_REQUESTS_JITTER: "200"
       # Skip automatic migrations for production-style external DBs
       RUN_MIGRATIONS: "false"
     depends_on:
@@ -251,9 +261,9 @@ services:
       python -m celery -A clap_backend worker
         --loglevel=info
         --queues=rule_scoring,email
-        --concurrency=8
+        --concurrency=12
         --hostname=scoring@%h
-        --max-tasks-per-child=500
+        --max-tasks-per-child=1000
 
   # ── Celery Beat: Periodic task scheduler ────────────────────────
   # Schedules:

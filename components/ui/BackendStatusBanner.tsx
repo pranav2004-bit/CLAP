@@ -9,8 +9,13 @@
  * When the backend is unreachable (ERR_EMPTY_RESPONSE, connection refused):
  *  • Shows a fixed amber bar above the footer
  *  • Auto-pings /api/health every 5 s
- *  • When backend responds → shows a green "Back online" flash → reloads page
- *    so all data is re-fetched cleanly without stale state
+ *  • When backend responds:
+ *      - On active test page  → shows green "Reconnected" flash, then hides banner.
+ *                               NEVER reloads — would destroy unsaved test answers.
+ *                               The test page's own polling/auto-save timers resume
+ *                               naturally once the network is back.
+ *      - On all other pages   → shows green flash then reloads the page so all
+ *                               stale data is re-fetched cleanly.
  *
  * When backend is online → renders nothing (zero DOM cost).
  */
@@ -22,29 +27,46 @@ import { WifiOff, Wifi, RefreshCw } from 'lucide-react'
 const PING_INTERVAL_MS = 5_000
 const HEALTH_TIMEOUT_MS = 4_000
 
+// Matches /student/clap-tests/<uuid> and /student/clap-tests/<uuid>/anything
+// A student is in the middle of a test if this pattern matches the pathname.
+const ACTIVE_TEST_PATTERN = /\/student\/clap-tests\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\/|$)/i
+
+function isActiveTestPage(): boolean {
+  if (typeof window === 'undefined') return false
+  return ACTIVE_TEST_PATTERN.test(window.location.pathname)
+}
+
 type BannerState = 'hidden' | 'offline' | 'recovering'
 
 export function BackendStatusBanner() {
-  const [state, setState]       = useState<BannerState>('hidden')
-  const [countdown, setCountdown] = useState(PING_INTERVAL_MS / 1000)
-  const [pinging, setPinging]   = useState(false)
-  const pingTimerRef            = useRef<ReturnType<typeof setInterval> | null>(null)
-  const countdownTimerRef       = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [state, setState]           = useState<BannerState>('hidden')
+  const [countdown, setCountdown]   = useState(PING_INTERVAL_MS / 1000)
+  const [pinging, setPinging]       = useState(false)
+  const [onTestPage, setOnTestPage] = useState(false)
+  const pingTimerRef                = useRef<ReturnType<typeof setInterval> | null>(null)
+  const countdownTimerRef           = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // ── Health ping ────────────────────────────────────────────────────────────
   const ping = useCallback(async () => {
     if (pinging) return
     setPinging(true)
     try {
-      // AbortSignal.timeout is broadly supported; fall back gracefully if not
       const signal = typeof AbortSignal !== 'undefined' && 'timeout' in AbortSignal
         ? AbortSignal.timeout(HEALTH_TIMEOUT_MS)
         : undefined
       const res = await fetch(getApiUrl('health'), { signal })
       if (res.ok || res.status < 500) {
-        // Backend is back — show brief green state then reload
+        // Backend is back — behaviour depends on whether student is mid-test
         setState('recovering')
-        setTimeout(() => { window.location.reload() }, 1_200)
+        if (isActiveTestPage()) {
+          // NEVER reload during an active test — unsaved answers would be lost.
+          // The test page's own timers (auto-save, timer-poll) resume automatically.
+          // Just dismiss the banner after a brief reassurance flash.
+          setTimeout(() => setState('hidden'), 3_000)
+        } else {
+          // Safe to reload: re-fetches stale data cleanly
+          setTimeout(() => { window.location.reload() }, 1_200)
+        }
       }
     } catch {
       // Still offline — reset countdown
@@ -72,20 +94,26 @@ export function BackendStatusBanner() {
   }, [ping])
 
   const stopPolling = useCallback(() => {
-    if (pingTimerRef.current)     { clearInterval(pingTimerRef.current);     pingTimerRef.current = null }
+    if (pingTimerRef.current)      { clearInterval(pingTimerRef.current);      pingTimerRef.current = null }
     if (countdownTimerRef.current) { clearInterval(countdownTimerRef.current); countdownTimerRef.current = null }
   }, [])
 
   // ── Listen for connectivity events ────────────────────────────────────────
   useEffect(() => {
     const onOffline = () => {
+      setOnTestPage(isActiveTestPage())
       setState('offline')
       startPolling()
     }
     const onOnline = () => {
       stopPolling()
       setState('recovering')
-      setTimeout(() => { window.location.reload() }, 1_200)
+      if (isActiveTestPage()) {
+        // Mid-test: safe dismiss only — NO reload
+        setTimeout(() => setState('hidden'), 3_000)
+      } else {
+        setTimeout(() => { window.location.reload() }, 1_200)
+      }
     }
 
     window.addEventListener('clap:backend:offline', onOffline)
@@ -105,9 +133,11 @@ export function BackendStatusBanner() {
       <div className="fixed bottom-10 left-0 right-0 z-[200] flex items-center justify-center gap-2.5 px-4 py-2.5 bg-emerald-50 border-t border-emerald-200 shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-300">
         <Wifi className="w-4 h-4 text-emerald-600 shrink-0" />
         <span className="text-sm font-medium text-emerald-800">
-          Backend is back online — reloading…
+          {onTestPage
+            ? 'Connection restored — your test progress is safe. Continue working.'
+            : 'Backend is back online — reloading…'}
         </span>
-        <RefreshCw className="w-3.5 h-3.5 text-emerald-600 animate-spin" />
+        {!onTestPage && <RefreshCw className="w-3.5 h-3.5 text-emerald-600 animate-spin" />}
       </div>
     )
   }
@@ -117,7 +147,9 @@ export function BackendStatusBanner() {
       <div className="flex items-center gap-2.5 min-w-0">
         <WifiOff className="w-4 h-4 text-amber-600 shrink-0" />
         <span className="text-sm font-medium text-amber-800 truncate">
-          Backend is starting up — retrying in <strong>{countdown}s</strong>
+          {onTestPage
+            ? <>Connection lost — <strong>your answers are saved</strong>. Reconnecting in <strong>{countdown}s</strong>…</>
+            : <>Backend is starting up — retrying in <strong>{countdown}s</strong></>}
         </span>
       </div>
       <button
