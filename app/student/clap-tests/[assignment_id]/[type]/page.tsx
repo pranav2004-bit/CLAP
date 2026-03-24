@@ -82,6 +82,9 @@ export default function ClapTestTakingPage() {
     const [currentItemIndex, setCurrentItemIndex] = useState(0)
     const [answers, setAnswers]             = useState<Record<string, any>>({})
     const [isLoading, setIsLoading]         = useState(true)
+    const [loadError, setLoadError]         = useState(false)
+    // Incrementing this causes the fetch useEffect to re-run (retry on error)
+    const [retryKey, setRetryKey]           = useState(0)
     const [componentId, setComponentId]     = useState<string | null>(null)
 
     // Palette / sidebar state
@@ -146,29 +149,46 @@ export default function ClapTestTakingPage() {
     }
 
     // ── Fetch items ───────────────────────────────────────────────────────────
+    // fetchWithRetry (defined above) transparently handles:
+    //   • 5xx / network errors  → exponential backoff, up to 3 attempts (0.5s, 1s, 2s)
+    //   • 429 Too Many Requests → honours Retry-After header, then retries
+    //   • other 4xx             → returns immediately (permanent client error)
+    //
+    // On unrecoverable failure, loadError is set to true and a full-page error
+    // UI is shown with a manual "Retry" button (see render below).
+    // retryKey increment from that button causes this useEffect to re-run cleanly.
     useEffect(() => {
         const controller = new AbortController()
 
         const fetchTestContent = async () => {
             try {
-                const assignmentResponse = await apiFetch(getApiUrl('student/clap-assignments'), {
-                    headers: getAuthHeaders(),
-                    signal: controller.signal,
-                })
+                // ── Step 1: Resolve component ID from assignment list ────────────
+                // fetchWithRetry auto-retries 5xx/429; permanent 4xx passes through.
+                const assignmentResponse = await fetchWithRetry(
+                    getApiUrl('student/clap-assignments'),
+                    { headers: getAuthHeaders(), signal: controller.signal },
+                )
                 if (controller.signal.aborted) return
                 const assignmentData = await assignmentResponse.json()
 
+                if (!assignmentResponse.ok) {
+                    console.error('Assignments fetch failed:', assignmentResponse.status)
+                    setLoadError(true)
+                    return
+                }
+
                 const myAssignment = assignmentData.assignments.find((a: any) => a.assignment_id === params.assignment_id)
-                if (!myAssignment) throw new Error('Assignment not found')
+                if (!myAssignment) { setLoadError(true); return }
 
                 const component = myAssignment.components.find((c: any) => c.type === params.type)
-                if (!component) throw new Error('Component not found')
+                if (!component) { setLoadError(true); return }
 
                 setComponentId(component.id)
 
-                const itemsResponse = await apiFetch(
+                // ── Step 2: Fetch questions + saved responses ────────────────────
+                const itemsResponse = await fetchWithRetry(
                     getApiUrl(`student/clap-assignments/${params.assignment_id}/components/${component.id}/items`),
-                    { headers: getAuthHeaders(), signal: controller.signal }
+                    { headers: getAuthHeaders(), signal: controller.signal },
                 )
                 if (controller.signal.aborted) return
                 const itemsData = await itemsResponse.json()
@@ -184,12 +204,15 @@ export default function ClapTestTakingPage() {
                     })
                     setAnswers(savedAnswers)
                 } else {
-                    toast.error('Failed to load questions')
+                    // Non-retryable 4xx (e.g. 403, 404) — show error UI
+                    console.error('Items fetch failed:', itemsResponse.status)
+                    setLoadError(true)
                 }
             } catch (error) {
                 if ((error as Error).name === 'AbortError') return
-                console.error(error)
-                toast.error('Failed to load assessment')
+                // All retries exhausted (network down, persistent 5xx, etc.)
+                console.error('fetchTestContent failed after retries:', error)
+                setLoadError(true)
             } finally {
                 if (!controller.signal.aborted) setIsLoading(false)
             }
@@ -197,7 +220,9 @@ export default function ClapTestTakingPage() {
 
         if (params.assignment_id && params.type) fetchTestContent()
         return () => controller.abort()
-    }, [params.assignment_id, params.type])
+    // retryKey increments when the student clicks "Retry" in the error UI
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [params.assignment_id, params.type, retryKey])
 
     // ── Mark item as visited when navigating ─────────────────────────────────
     useEffect(() => {
@@ -726,6 +751,47 @@ export default function ClapTestTakingPage() {
     // ── Loading ───────────────────────────────────────────────────────────────
     if (isLoading) {
         return <CubeLoader />
+    }
+
+    // ── Load error — questions could not be fetched after all retries ─────────
+    // Shows a recoverable full-page error instead of a blank "0 of 0 answered"
+    // interface. The student can click Retry to re-run the full fetch chain with
+    // exponential backoff. If the backend is recovering (e.g. just restarted),
+    // a single retry click will succeed within a few seconds.
+    // Timer continues to run in the background — server_deadline is authoritative.
+    if (loadError && items.length === 0) {
+        return (
+            <div className="h-[calc(100dvh-1.875rem)] flex flex-col items-center justify-center bg-slate-50 px-6 text-center gap-6">
+                <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center">
+                    <AlertCircle className="w-8 h-8 text-red-500" />
+                </div>
+                <div>
+                    <h2 className="text-xl font-bold text-gray-900 mb-2">Questions Could Not Load</h2>
+                    <p className="text-sm text-gray-600 max-w-sm leading-relaxed">
+                        There was a problem fetching your questions. Your timer is still running.
+                        <br /><br />
+                        Click <strong>Retry</strong> to try again. If the problem persists, contact your exam administrator.
+                    </p>
+                </div>
+                <button
+                    onClick={() => {
+                        setLoadError(false)
+                        setIsLoading(true)
+                        setRetryKey(k => k + 1)
+                    }}
+                    className="flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition-colors shadow-sm"
+                >
+                    <RotateCcw className="w-4 h-4" />
+                    Retry
+                </button>
+                {globalTimeLeft !== null && timerLoaded && (
+                    <p className="text-sm font-semibold text-amber-600 flex items-center gap-1.5">
+                        <Clock className="w-4 h-4" />
+                        Time remaining: {formatTime(globalTimeLeft)}
+                    </p>
+                )}
+            </div>
+        )
     }
 
     return (
