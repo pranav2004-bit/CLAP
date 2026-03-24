@@ -8,6 +8,9 @@ jobs:
   deploy:
     name: Deploy Backend to EC2
     runs-on: ubuntu-latest
+    # Guard: skip entirely if secrets are not configured (forks, draft PRs).
+    # Prevents the confusing "no host provided" failure on every push.
+    if: ${{ secrets.EC2_HOST != '' && secrets.EC2_SSH_KEY != '' }}
 
     steps:
       - name: Deploy via SSH
