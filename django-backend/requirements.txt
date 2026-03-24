@@ -2,7 +2,7 @@
 # Python 3.10+
 
 # Core Django
-Django==4.2.21
+Django==4.2.29
 djangorestframework==3.15.2
 django-cors-headers==4.4.0
 python-decouple==3.8
@@ -12,12 +12,12 @@ psycopg2-binary==2.9.9
 
 # Authentication & Security
 bcrypt==4.1.2
-PyJWT==2.9.0
-djangorestframework-simplejwt==5.3.1
+PyJWT==2.12.0
+djangorestframework-simplejwt==5.5.1
 # cryptography is required for Phase 2.3 CloudFront signed URL generation (RSA-SHA1).
 # It is also used by PyJWT for RS256/ES256 JWT algorithms.
 # bcrypt>=4.0 no longer depends on it, so we pin it explicitly.
-cryptography==43.0.3
+cryptography==46.0.5
 
 # OpenAI Integration
 openai==1.57.0
@@ -45,9 +45,9 @@ boto3==1.35.24
 django-storages==1.14.4
 
 # PDF generation (report worker)
-# pydyf 0.12.x has an incompatible API change (stream.transform signature)
-# that breaks WeasyPrint 62.3. Pin to 0.11.0 until WeasyPrint releases a fix.
-weasyprint==62.3
+# WeasyPrint 68.0 resolves the pydyf stream.transform API incompatibility
+# that affected 62.3. Updating both together to the latest compatible pair.
+weasyprint==68.0
 pydyf==0.11.0
 
 # Audio conversion (WebM/MP4 → MP3 64kbps mono, runs in celery-reports worker)

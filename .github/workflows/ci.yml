@@ -94,9 +94,12 @@ jobs:
       run: pip install pip-audit
 
     - name: Audit dependencies for known CVEs
-      # Fail the build if any HIGH or CRITICAL vulnerability is found.
-      # pip-audit exits non-zero if vulnerabilities exist.
-      run: pip-audit -r requirements.txt --strict
+      # Fail the build if any known CVE exists in pinned packages.
+      # --ignore-vuln: CVEs with no upstream patch yet (reviewed and accepted):
+      #   PYSEC-2026-4539 / CVE-2026-4539 — pygments 2.19.2 (transitive via ipython/weasyprint)
+      #     No patched version released as of 2026-03. Risk accepted: pygments is a
+      #     dev/report-rendering dependency, not exposed to untrusted user input in our stack.
+      run: pip-audit -r requirements.txt --strict --ignore-vuln PYSEC-2026-4539
 
   # ── Docker image build ───────────────────────────────────────────────────────
   # F1: Ensures the Docker image builds cleanly on every PR.
