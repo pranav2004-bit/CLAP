@@ -143,6 +143,8 @@ jobs:
           -e DEBUG=True \
           -e STORAGE_PROVIDER= \
           -e EMAIL_PROVIDER=console \
+          -e DB_USER=ci_placeholder \
+          -e DB_PASSWORD=ci_placeholder \
           --entrypoint python \
           clap-backend:latest \
           manage.py check
