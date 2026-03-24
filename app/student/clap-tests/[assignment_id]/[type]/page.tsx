@@ -387,25 +387,40 @@ export default function ClapTestTakingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [globalTimeLeft])
 
-    // ── Page-unload beacon (keepalive fetch, fire-and-forget) ─────────────────
-    // Fires when the student closes the tab or navigates away mid-test.
-    // Uses fetch keepalive (not sendBeacon) so auth headers can be included.
-    // The Beat task is the backstop if this doesn't reach the server.
-    useEffect(() => {
-        const handleUnload = () => {
-            if (hasAutoSubmittedRef.current) return
-            // keepalive: true — browser keeps the request alive after page is closed
-            fetch(getApiUrl(`student/clap-assignments/${params.assignment_id}/auto-submit`), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-                body: JSON.stringify({ reason: 'client_unload' }),
-                keepalive: true,
-            }).catch(() => {})
-        }
-        window.addEventListener('pagehide', handleUnload)
-        return () => window.removeEventListener('pagehide', handleUnload)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [params.assignment_id])
+    // ── Page-unload beacon REMOVED — reload = restore ────────────────────────
+    //
+    // WHY REMOVED:
+    //   pagehide fires on BOTH tab close AND page reload (F5, mobile pull-to-refresh,
+    //   browser crash recovery). The old beacon auto-submitted on every pagehide,
+    //   so any accidental reload permanently ended the test. On mobile browsers
+    //   beforeunload is silently ignored, making this unrecoverable.
+    //
+    // RELOAD = RESTORE:
+    //   On reload this page re-mounts and re-fetches items. The server returns
+    //   saved_response for every item — all answers are restored automatically.
+    //   server_deadline is the authoritative timer; it continues from the correct
+    //   remaining time regardless of how long the reload took.
+    //
+    //   Edge cases all handled:
+    //     • Timer expired during reload  → pollGlobalTimer detects is_expired=true
+    //                                      → handleAutoSubmit fires on remount ✅
+    //     • Assignment already completed → page shows completed state, no re-submit ✅
+    //     • Audio mid-recording          → recording is lost (browser state cleared)
+    //                                      but all OTHER saved answers are intact ✅
+    //     • Debounced text unsaved       → last saved version restored; at most
+    //                                      600 ms of typing since last save is lost ✅
+    //     • Mobile pull-to-refresh       → restores, no submit ✅
+    //     • bfcache restore (pageshow    → React remounts, fresh fetch, all safe ✅
+    //       persisted=true)
+    //
+    // GENUINE ABANDONMENT (tab close, battery death):
+    //   Three independent backstops ensure submission without the beacon:
+    //     1. Frontend timer:  handleAutoSubmit('client_timer') fires at t=0
+    //     2. Beat task:       auto_submit_expired_assignments runs periodically
+    //     3. Finish button:   _finalize_and_dispatch when all components complete
+    //
+    // The beforeunload "Leave site?" warning (useAntiCheat) is kept as the first
+    // line of defence against accidental navigation on desktop browsers.
 
     // ── Unified auto-submit ───────────────────────────────────────────────────
     // DESIGN CONTRACT:

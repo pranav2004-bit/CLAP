@@ -554,25 +554,30 @@ export default function StudentClapTestDetailPage() {
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [pollGlobalTimer])
 
-  // ── Page-unload beacon (keepalive fetch, fire-and-forget) ─────────────────
-  // Fires when the student closes the browser or navigates away mid-test.
-  // Uses fetch keepalive (not sendBeacon) so auth headers can be included.
-  // The server Beat task is the backstop if this request doesn't reach the server.
-  useEffect(() => {
-    if (!params.assignment_id) return
-    const handleUnload = () => {
-      if (isAutoSubmitRef.current || !assignmentReadyRef.current) return
-      fetch(getApiUrl(`student/clap-assignments/${params.assignment_id}/auto-submit`), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-        body: JSON.stringify({ reason: 'client_unload' }),
-        keepalive: true,
-      }).catch(() => {})
-    }
-    window.addEventListener('pagehide', handleUnload)
-    return () => window.removeEventListener('pagehide', handleUnload)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.assignment_id])
+  // ── Page-unload beacon REMOVED — reload = restore ────────────────────────
+  //
+  // WHY REMOVED:
+  //   pagehide fires on BOTH tab close AND page reload (F5, mobile pull-to-refresh,
+  //   browser crash recovery). The old beacon auto-submitted on every pagehide,
+  //   meaning any accidental reload permanently ended the student's test — no
+  //   warning, no recovery. On mobile browsers beforeunload is silently ignored,
+  //   making this especially dangerous.
+  //
+  // RELOAD = RESTORE:
+  //   On reload the page re-mounts, re-fetches items from the server, and
+  //   saved_response repopulates every answer automatically. The timer is
+  //   server-authoritative (server_deadline) so it continues correctly.
+  //   The student resumes exactly where they left off.
+  //
+  // TAB CLOSE / GENUINE ABANDONMENT:
+  //   Three independent backstops handle submission without the beacon:
+  //     1. Frontend timer:  handleAutoSubmit('client_timer') fires when time hits 0
+  //     2. Beat task:       auto_submit_expired_assignments submits any started
+  //                         assignment whose global_deadline has passed
+  //     3. Finish button:   _finalize_and_dispatch when all components complete
+  //
+  // The beforeunload "Leave site?" warning (useAntiCheat) is kept as the first
+  // line of defence against accidental navigation on desktop browsers.
 
   // ── Local countdown (smooth 1-s tick; reads deadlineRef so no stale state) ─
   // This is purely cosmetic — the deadline is always fetched fresh on each poll.
