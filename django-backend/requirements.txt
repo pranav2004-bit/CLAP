@@ -40,6 +40,7 @@ whitenoise==6.6.0
 
 # Async Processing & Infra
 celery==5.4.0
+flower==2.0.1
 redis==5.0.8
 boto3==1.35.24
 django-storages==1.14.4
