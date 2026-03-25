@@ -113,40 +113,42 @@ services:
   # Django connects to: pgbouncer:5432 (via DB_HOST=pgbouncer in env_file)
   # PgBouncer connects to: ${PGBOUNCER_DB_HOST:-db}:${PGBOUNCER_DB_PORT:-5432}
   pgbouncer:
-    image: bitnami/pgbouncer:latest
+    # edoburu/pgbouncer: actively maintained, Docker Hub, Alpine-based.
+    # Bitnami deprecated their Docker Hub images in 2024 — use this instead.
+    image: edoburu/pgbouncer:latest
     restart: unless-stopped
     environment:
       # ── Target database (real Postgres / Aurora) ──────────────────
-      POSTGRESQL_HOST: ${PGBOUNCER_DB_HOST:-db}
-      POSTGRESQL_PORT: ${PGBOUNCER_DB_PORT:-5432}
-      POSTGRESQL_DATABASE: ${DB_NAME:-postgres}
-      POSTGRESQL_USERNAME: ${DB_USER:-postgres}
-      POSTGRESQL_PASSWORD: ${DB_PASSWORD:-${POSTGRES_PASSWORD:-SANJIVO_CLAP}}
+      DB_HOST: ${PGBOUNCER_DB_HOST:-db}
+      DB_PORT: ${PGBOUNCER_DB_PORT:-5432}
+      DB_NAME: ${DB_NAME:-postgres}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-SANJIVO_CLAP}
       # ── Pool configuration ────────────────────────────────────────
       # transaction mode: connection released after each transaction.
       # Most efficient for Django's short-lived request/response cycle.
-      PGBOUNCER_POOL_MODE: transaction
+      POOL_MODE: transaction
       # 20 real DB connections shared across 400 Django/Celery clients.
       # Increase if you see "no more connections allowed" errors.
-      PGBOUNCER_DEFAULT_POOL_SIZE: "20"
+      DEFAULT_POOL_SIZE: "20"
       # 5 extra connections reserved for admin + spike absorption.
-      PGBOUNCER_RESERVE_POOL_SIZE: "5"
+      RESERVE_POOL_SIZE: "5"
       # 400 client connections allowed (5w×8t + 16 celery + headroom).
-      PGBOUNCER_MAX_CLIENT_CONN: "400"
+      MAX_CLIENT_CONN: "400"
       # Kill idle server connections after 10 minutes (prevents Aurora stale).
-      PGBOUNCER_SERVER_IDLE_TIMEOUT: "600"
+      SERVER_IDLE_TIMEOUT: "600"
       # Kill idle client connections after 10 minutes.
-      PGBOUNCER_CLIENT_IDLE_TIMEOUT: "600"
+      CLIENT_IDLE_TIMEOUT: "600"
       # Log level — warning keeps logs quiet in production.
-      PGBOUNCER_LOG_CONNECTIONS: "0"
-      PGBOUNCER_LOG_DISCONNECTIONS: "0"
+      LOG_CONNECTIONS: "0"
+      LOG_DISCONNECTIONS: "0"
     ports:
       - "5432:5432"    # expose on host for local psql/migrations
     depends_on:
       db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U ${DB_USER:-postgres} || exit 1"]
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-p", "5432", "-U", "postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
