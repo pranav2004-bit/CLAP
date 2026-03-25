@@ -128,7 +128,7 @@ DLQ infrastructure     ✅ _record_dlq, AuditLog, DeadLetterQueue already in pla
 
 **P2-11 Fix:** Added `flower` service to docker-compose.yml
 - Bound to 127.0.0.1:5555 ONLY (not public internet)
-- Access via SSH tunnel: `ssh -L 5555:localhost:5555 -i clap-production-key.pem ubuntu@13.200.200.90`
+- Access via SSH tunnel: `ssh -L 5555:localhost:5555 -i clap-production-key.pem ubuntu@13.203.120.191`
 - Then open: http://localhost:5555
 - Shows: queue depth, task rates, worker status, failed tasks, retry counts
 

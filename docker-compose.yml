@@ -393,7 +393,7 @@ services:
   # SECURITY: flower is NOT exposed to the public internet.
   # Port 5555 is bound to 127.0.0.1 only (localhost).
   # Access via SSH tunnel from your local machine:
-  #   ssh -L 5555:localhost:5555 -i clap-production-key.pem ubuntu@13.200.200.90
+  #   ssh -L 5555:localhost:5555 -i clap-production-key.pem ubuntu@13.203.120.191
   #   Then open: http://localhost:5555
   flower:
     image: clap-backend:latest
