@@ -64,7 +64,7 @@ def list_clap_tests(request):
                 'batch_id': str(test.batch_id) if test.batch_id else None,
                 'batch_name': test.batch.batch_name if test.batch else 'Unknown Batch',
                 'status': test.status,
-                'is_assigned': bool(test.batch_id),
+                'is_assigned': test.status == 'published',
                 'created_at': test.created_at.isoformat() if test.created_at else None,
                 'global_duration_minutes': test.global_duration_minutes,
                 'global_deadline': test.global_deadline.isoformat() if test.global_deadline else None,

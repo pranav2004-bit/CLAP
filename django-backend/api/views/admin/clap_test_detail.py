@@ -55,7 +55,7 @@ def get_clap_test(request, test_id):
             'batch_id': str(clap_test.batch_id) if clap_test.batch_id else None,
             'batch_name': clap_test.batch.batch_name if clap_test.batch else 'Unknown Batch',
             'status': clap_test.status,
-            'is_assigned': bool(clap_test.batch_id),
+            'is_assigned': clap_test.status == 'published',
             'created_at': clap_test.created_at.isoformat() if clap_test.created_at else None,
             'global_duration_minutes': clap_test.global_duration_minutes,
             'tests': [
