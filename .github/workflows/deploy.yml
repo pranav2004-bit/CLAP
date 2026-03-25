@@ -37,6 +37,9 @@ jobs:
             echo "==> Running migrations..."
             docker compose exec -T django python manage.py migrate --no-input
 
+            echo "==> Reloading nginx to pick up new Django container..."
+            docker compose restart nginx
+
             echo "==> Pruning old images..."
             docker image prune -f
 
