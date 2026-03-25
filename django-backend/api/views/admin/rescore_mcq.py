@@ -28,6 +28,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from api.models import (
+    AuditLog,
     ClapTest,
     ClapTestComponent,
     ClapSetItem,
@@ -73,25 +74,21 @@ def _build_set_answer_key(assigned_set_id) -> dict:
     return key
 
 
-def _rescore_assignment(assignment: StudentClapAssignment, component_map: dict) -> dict:
+def _rescore_assignment(assignment: StudentClapAssignment, component_ids_map: dict) -> dict:
     """
     Re-evaluate all MCQ responses for one assignment.
     Returns a dict: domain → awarded_marks (Decimal).
 
     This runs inside the caller's transaction.atomic() block.
+
+    component_ids_map: pre-built outside the loop (P0-2 N+1 fix).
+        { domain: [component_id, ...] }  — built ONCE per rescore request,
+        not once per assignment. Eliminates 3×N DB queries for N assignments.
     """
     set_answer_key = _build_set_answer_key(assignment.assigned_set_id)
     domain_totals: dict[str, Decimal] = {}
 
-    for domain, component_type in component_map.items():
-        component_ids = [
-            cid for cid in
-            ClapTestComponent.objects.filter(
-                clap_test=assignment.clap_test,
-                test_type=component_type,
-            ).values_list('id', flat=True)
-        ]
-
+    for domain, component_ids in component_ids_map.items():
         if not component_ids:
             domain_totals[domain] = Decimal('0.00')
             continue
@@ -241,26 +238,55 @@ def rescore_mcq(request, test_id):
     import time
     t0 = time.monotonic()
 
+    # ── P0-2: Build component_ids map ONCE outside the assignment loop ────────
+    # Old code fetched ClapTestComponent 3× per assignment (one per domain).
+    # For 500 assignments: 1500 extra queries. Now: exactly 3 queries total.
+    component_ids_map: dict[str, list] = {}
+    for domain, component_type in _RULE_BASED_DOMAINS.items():
+        component_ids_map[domain] = list(
+            ClapTestComponent.objects.filter(
+                clap_test=clap_test,
+                test_type=component_type,
+            ).values_list('id', flat=True)
+        )
+
+    # ── Bulk-fetch latest submission per student in one query ─────────────────
+    # Old code: one AssessmentSubmission query per assignment = N queries.
+    # New code: one query for all students → dict lookup per assignment.
+    student_ids = [a.student_id for a in assignments]
+    submission_map: dict = {}
+    for sub in (
+        AssessmentSubmission.objects
+        .filter(user_id__in=student_ids, assessment=clap_test)
+        .order_by('created_at')   # ascending → latest wins
+    ):
+        submission_map[str(sub.user_id)] = sub
+
     rescored = 0
     skipped = 0
     errors = []
 
     for assignment in assignments:
         try:
-            # Fetch submission for this student/test (latest wins)
-            submission = (
-                AssessmentSubmission.objects
-                .filter(user=assignment.student, assessment=clap_test)
-                .order_by('-created_at')
-                .first()
-            )
+            submission = submission_map.get(str(assignment.student_id))
 
             with transaction.atomic():
-                domain_totals = _rescore_assignment(assignment, _RULE_BASED_DOMAINS)
+                domain_totals = _rescore_assignment(assignment, component_ids_map)
 
                 if submission:
                     for domain, marks in domain_totals.items():
                         _upsert_rule_score(submission, domain, marks)
+
+                    # P3-12: Audit trail — record every admin rescore action
+                    # so test integrity can be traced post-exam.
+                    AuditLog.objects.create(
+                        submission=submission,
+                        event_type='admin_rescore_mcq',
+                        old_status=submission.status,
+                        new_status=submission.status,
+                        worker_id=f'admin:{user.id}',
+                        error_detail=str({d: str(m) for d, m in domain_totals.items()}),
+                    )
 
             log_event(
                 'info', 'mcq_rescored_by_admin',

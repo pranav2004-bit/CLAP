@@ -412,6 +412,27 @@ export default function ClapTestTakingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [globalTimeLeft])
 
+    // ── P1-5: Centralised timer cleanup on component unmount ─────────────────
+    // Individual save/retry timers are cleaned up inline within their own logic
+    // (see saveRetryIntervalRef, saveStatusTimerRef, saveDebounceRef usage above).
+    // This catch-all useEffect guarantees ALL timers are cleared when the component
+    // unmounts — covering navigations, hot-reloads, and React Strict Mode double-mounts.
+    // Without this, timers that fire after unmount attempt setState on an unmounted
+    // component, causing "Can't perform a React state update on an unmounted component"
+    // warnings (React 17) or silent no-ops (React 18) that mask real memory retention.
+    useEffect(() => {
+        return () => {
+            // Clear all timer refs on unmount — order does not matter
+            if (saveStatusTimerRef.current)   { clearTimeout(saveStatusTimerRef.current);   saveStatusTimerRef.current = null }
+            if (saveRetryIntervalRef.current) { clearInterval(saveRetryIntervalRef.current); saveRetryIntervalRef.current = null }
+            if (saveDebounceRef.current)      { clearTimeout(saveDebounceRef.current);       saveDebounceRef.current = null }
+            if (timerPollingRef.current)      { clearTimeout(timerPollingRef.current);       timerPollingRef.current = null }
+            // Mark assignment as done so any in-flight save callbacks are no-ops
+            isAssignmentDoneRef.current = true
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [])
+
     // ── Page-unload beacon REMOVED — reload = restore ────────────────────────
     //
     // WHY REMOVED:

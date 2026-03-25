@@ -99,21 +99,29 @@ def _rate_limited(redis_client, key: str, limit: int, window_seconds: int = 60) 
 
 def _extract_user_id_from_bearer(auth_header: str, fallback: str) -> str:
     """
-    Decode the JWT Bearer token (WITHOUT full validation) to extract the `sub`
-    (user ID) claim for rate-limit keying.
+    Decode the JWT Bearer token to extract the `sub` (user ID) claim for
+    rate-limit keying.
 
-    We intentionally skip expiry verification here because:
-      1. The view layer already validates the token and rejects expired ones.
-      2. We only need the user identity for bucketing — auth is not our concern.
-      3. Blocking an expired-token request at the rate-limit layer before the view
-         can return a proper 401 would confuse clients expecting auth errors.
+    P3-15 — Expired token handling:
+      If the token's `exp` claim is in the past, we fall back to `anon:{ip}`
+      instead of using the user ID. This prevents an attacker from holding an
+      expired token and repeatedly using it to consume the target user's
+      300/min rate-limit bucket (the view layer already rejects the request
+      with 401, so consuming the bucket achieves nothing useful for a
+      legitimate user — but it could be used to throttle a specific student's
+      bucket via token replay).
 
-    Falls back to `fallback` (typically 'anon:{ip}') if decoding fails for any reason.
+      Legitimate users with expired tokens get the lower anon limit (60/min),
+      which is fine — their client should refresh the token, after which they
+      get the full 300/min user bucket again.
+
+    Falls back to `fallback` (typically 'anon:{ip}') for any decode failure.
     """
     if find_spec('jwt') is None:
         return fallback
     try:
         import jwt as pyjwt
+        import time as _time
         token = auth_header.split(' ', 1)[1].strip()
         if not token:
             return fallback
@@ -122,11 +130,18 @@ def _extract_user_id_from_bearer(auth_header: str, fallback: str) -> str:
             settings.SECRET_KEY,
             algorithms=['HS256'],
             options={
-                'verify_exp': False,    # expiry checked by view, not here
-                'verify_nbf': False,    # not-before also skipped
+                'verify_exp': False,    # we check exp manually below (P3-15)
+                'verify_nbf': False,    # not-before skipped — rate limit only
                 'verify_aud': False,    # no audience claim in our tokens
             },
         )
+        # P3-15: Explicitly check token expiry.
+        # If expired → use anon:{ip} key (lower limit, but correct behaviour).
+        # The view layer will reject with 401 regardless.
+        exp = payload.get('exp')
+        if exp is not None and int(exp) < int(_time.time()):
+            return fallback
+
         sub = payload.get('sub') or payload.get('user_id')
         return f'uid:{sub}' if sub else fallback
     except Exception:
