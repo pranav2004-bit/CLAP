@@ -97,6 +97,13 @@ export default function StudentClapTestDetailPage() {
   // iOS Safari detection (no native requestFullscreen)
   const isIOS = typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent)
 
+  // True when the assignment includes a Speaking module — used to pre-request mic
+  // permission before entering fullscreen so the browser dialog doesn't exit fullscreen.
+  const hasSpeakingModule = useMemo(
+    () => assignment?.components?.some((c: any) => c.type === 'speaking') ?? false,
+    [assignment]
+  )
+
   // Fire-and-forget malpractice event — uses silentFetch so a 401 on this
   // background call NEVER kicks the student out of their active exam.
   const reportMalpractice = useCallback((eventType: string, meta: Record<string, unknown> = {}) => {
@@ -705,6 +712,15 @@ export default function StudentClapTestDetailPage() {
     return Math.round(((idx + 1) / STATUS_STEPS.length) * 100)
   }, [submission])
 
+  // Canonical module display order
+  const MODULE_ORDER: Record<string, number> = {
+    listening: 0,
+    speaking: 1,
+    reading: 2,
+    writing: 3,
+    vocabulary: 4,
+  }
+
   const getIcon = (type: string) => {
     switch (type) {
       case 'listening': return Headphones
@@ -909,6 +925,17 @@ export default function StudentClapTestDetailPage() {
             <button
               className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 rounded-xl transition-colors"
               onClick={async () => {
+                // Pre-request microphone permission if a Speaking module exists.
+                // This fires the browser permission dialog BEFORE fullscreen so it
+                // doesn't interrupt (and exit) the fullscreen session mid-test.
+                if (hasSpeakingModule && typeof navigator !== 'undefined' && navigator.mediaDevices) {
+                  try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+                    stream.getTracks().forEach(t => t.stop()) // permission cached; release stream
+                  } catch (_e) {
+                    // User denied — continue anyway; speaking module handles missing permission
+                  }
+                }
                 await requestFullscreen()
                 setShowFullscreenPrompt(false)
               }}
@@ -919,17 +946,17 @@ export default function StudentClapTestDetailPage() {
         </div>
       )}
 
-    <div className={`px-4 pt-4 pb-3 sm:px-6 max-w-4xl w-full mx-auto shrink-0 ${!isOnline ? 'pt-10 sm:pt-12' : ''}`}>
-      {/* Header row — context label on left, action on right */}
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-widest">Assessment</span>
+    {/* ── Slim top bar: back/exit · test name · timer ─────────────────────── */}
+    <div className={`flex items-center justify-between gap-3 px-4 py-2 border-b border-gray-200 bg-white shrink-0 ${!isOnline ? 'mt-8' : ''}`}>
+      {/* Left: action button + test name */}
+      <div className="flex items-center gap-2 min-w-0">
         {testIsActive ? (
           <button
             onClick={() => setExitStep(1)}
-            className="flex items-center gap-1.5 text-red-500 hover:bg-red-50 active:bg-red-100 rounded-lg px-2.5 py-1.5 transition-colors text-xs font-semibold touch-manipulation select-none"
+            className="flex items-center gap-1 text-red-500 hover:bg-red-50 active:bg-red-100 rounded-lg px-2.5 py-1.5 transition-colors text-xs font-semibold touch-manipulation select-none shrink-0"
           >
             <LogOut className="w-3.5 h-3.5" />
-            Exit Test
+            Exit
           </button>
         ) : (
           <button
@@ -939,84 +966,44 @@ export default function StudentClapTestDetailPage() {
               setIsBackLoading(true)
               router.push('/student/clap-tests')
             }}
-            className="flex items-center gap-1.5 text-gray-500 hover:bg-gray-100 active:bg-gray-200 rounded-lg px-2.5 py-1.5 transition-colors text-xs font-semibold touch-manipulation select-none disabled:opacity-50"
+            className="flex items-center gap-1 text-gray-500 hover:bg-gray-100 active:bg-gray-200 rounded-lg px-2.5 py-1.5 transition-colors text-xs font-semibold touch-manipulation select-none disabled:opacity-50 shrink-0"
           >
-            {isBackLoading
-              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              : <ArrowLeft className="w-3.5 h-3.5" />}
+            {isBackLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowLeft className="w-3.5 h-3.5" />}
             Back
           </button>
         )}
+        <span className="text-sm font-semibold text-gray-800 truncate">{assignment.test_name}</span>
       </div>
 
-      <div className="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-2xl p-4 sm:p-8 text-white mb-4 sm:mb-6 shadow-xl overflow-hidden">
-        <h1 className="text-xl sm:text-3xl font-bold mb-1 sm:mb-2 break-words">{assignment.test_name}</h1>
-        <p className="text-sm sm:text-base text-indigo-100">
-          Complete all {assignment.components?.length ?? 0} modules to finish the assessment.
-        </p>
-
-        {/* ── Meta row: status · date · timer ── */}
-        <div className="mt-3 sm:mt-4 flex items-center justify-between gap-3 flex-wrap">
-          {/* Left: badge + date */}
-          <div className="flex items-center gap-2 min-w-0">
-            <Badge className="bg-white/20 hover:bg-white/30 text-white border-0 capitalize shrink-0">
-              {assignment.status || 'pending'}
-            </Badge>
-            <span className="text-xs text-indigo-200 truncate">
-              {new Date(assignment.assigned_at).toLocaleDateString()}
-            </span>
-          </div>
-
-          {/* Right: timer pill
-              3 states:
-              • !timerLoaded              → --:-- skeleton (first poll pending / 429 backoff)
-              • timerLoaded & time > 0    → live countdown with colour coding
-              • timerLoaded & time == null → hidden (no deadline configured for this test) */}
-          {(!timerLoaded || globalTimeLeft !== null) && !submissionId && (
-            <div className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-mono text-lg font-bold border transition-all duration-500 shrink-0 ${
-              !timerLoaded
-                ? 'bg-white/10 border-white/20 opacity-60'
-                : timerExtended
-                  ? 'bg-green-500/30 border-green-300/60 scale-105'
-                  : globalTimeLeft! < 120
-                    ? 'bg-red-500/30 border-red-300/60 animate-pulse'
-                    : globalTimeLeft! < 300
-                      ? 'bg-orange-400/25 border-orange-300/50'
-                      : 'bg-white/10 border-white/20'
-            }`}>
-              <Clock className={`w-4 h-4 ${
-                !timerLoaded ? 'opacity-40' :
-                timerExtended ? 'text-green-300' :
-                globalTimeLeft! < 120 ? 'text-red-300' : ''
-              }`} />
-              <span className={
-                !timerLoaded ? 'text-white/50' :
-                timerExtended ? 'text-green-200' :
-                globalTimeLeft! < 120 ? 'text-red-200' :
-                globalTimeLeft! < 300 ? 'text-orange-200' : ''
-              }>
-                {timerLoaded ? `${formatTime(globalTimeLeft!)} left` : '--:--'}
-              </span>
-              {timerLoaded && timerSyncError && (
-                <span className="text-xs text-yellow-300 font-normal ml-1" title="Timer sync failed — retrying">⚠</span>
-              )}
-            </div>
+      {/* Right: timer */}
+      {(!timerLoaded || globalTimeLeft !== null) && !submissionId && (
+        <div className={`px-2.5 py-1 rounded-md flex items-center gap-1.5 font-mono text-sm font-bold border transition-all duration-500 shrink-0 ${
+          !timerLoaded
+            ? 'bg-gray-100 border-gray-200 text-gray-400'
+            : timerExtended
+              ? 'bg-green-50 border-green-300 text-green-700 scale-105'
+              : globalTimeLeft! < 120
+                ? 'bg-red-50 border-red-300 text-red-700 animate-pulse'
+                : globalTimeLeft! < 300
+                  ? 'bg-orange-50 border-orange-300 text-orange-700'
+                  : 'bg-gray-50 border-gray-200 text-gray-700'
+        }`}>
+          <Clock className="w-3.5 h-3.5" />
+          <span>{timerLoaded ? `${formatTime(globalTimeLeft!)} left` : '--:--'}</span>
+          {timerLoaded && timerSyncError && (
+            <span className="text-xs text-yellow-500 ml-0.5" title="Timer sync failed — retrying">⚠</span>
           )}
         </div>
-      </div>
-
-
-      {/* Tab-switch warning banner */}
-      {tabWarnings === 1 && (
-        <div className="bg-yellow-50 border border-yellow-300 rounded-lg px-4 py-3 flex items-start gap-3 mb-3">
-          <AlertTriangle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
-          <div>
-            <p className="text-yellow-900 font-semibold text-sm">Tab switch detected (1/2)</p>
-            <p className="text-yellow-700 text-sm">One more will automatically submit your entire assessment.</p>
-          </div>
-        </div>
       )}
-      </div>{/* closes the px-4 py-4 content div */}
+    </div>
+
+    {/* Tab-switch warning banner */}
+    {tabWarnings === 1 && (
+      <div className="bg-yellow-50 border-b border-yellow-200 px-4 py-2.5 flex items-center gap-2.5 shrink-0">
+        <AlertTriangle className="w-4 h-4 text-yellow-600 flex-shrink-0" />
+        <p className="text-yellow-900 text-xs font-medium">Tab switch detected (1/2) — one more will auto-submit the entire assessment.</p>
+      </div>
+    )}
 
       {/* ── Post-submission screen (submission_id present) ─────────────────── */}
       {submissionId && (
@@ -1058,7 +1045,9 @@ export default function StudentClapTestDetailPage() {
             lg:flex-col lg:w-56 xl:w-64 shrink-0 lg:justify-between
           ">
             <div className="flex flex-row lg:flex-col lg:flex-1 min-w-0">
-              {assignment.components?.map((comp: any) => {
+              {[...(assignment.components ?? [])].sort((a: any, b: any) =>
+                (MODULE_ORDER[a.type] ?? 99) - (MODULE_ORDER[b.type] ?? 99)
+              ).map((comp: any) => {
                 const Icon = getIcon(comp.type)
                 const isAssignmentDone = assignment.status === 'completed' || assignment.status === 'expired'
                 const isSubmitted = submittedComponents.includes(comp.type) || isAssignmentDone
@@ -1070,9 +1059,9 @@ export default function StudentClapTestDetailPage() {
                     onClick={() => { if (!isTestLocked) setActiveTest(comp.type) }}
                     disabled={isTestLocked}
                     className={`
-                      flex items-center gap-2.5 px-4 py-3.5 transition-all touch-manipulation
-                      shrink-0 lg:shrink-0 lg:w-full text-left whitespace-nowrap lg:whitespace-normal
-                      border-b-2 lg:border-b-0 lg:border-l-2 border-transparent
+                      flex items-center gap-2.5 px-3 py-3 transition-all touch-manipulation
+                      shrink-0 lg:w-full text-left whitespace-nowrap lg:whitespace-normal
+                      border-b-2 lg:border-b-0 lg:border-l-[3px] border-transparent
                       disabled:cursor-not-allowed disabled:opacity-50
                       ${isActive
                         ? 'bg-indigo-50 text-indigo-700 border-indigo-500 font-semibold'
@@ -1115,7 +1104,10 @@ export default function StudentClapTestDetailPage() {
 
           {/* ── CENTER: Active test module ────────────────────────────────── */}
           <div className="flex-1 overflow-hidden min-h-0 flex flex-col">
-            {activeTest ? (
+            {/* Don't render module content while fullscreen prompt is blocking */}
+            {showFullscreenPrompt ? (
+              <div className="flex-1 bg-gray-950" />
+            ) : activeTest ? (
               <TestModuleRunner
                 key={activeTest}
                 assignmentId={params.assignment_id as string}
@@ -1124,10 +1116,23 @@ export default function StudentClapTestDetailPage() {
                 onModuleSubmitted={handleModuleSubmitted}
               />
             ) : (
-              <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
-                <div className="text-center">
-                  <Brain className="w-10 h-10 mx-auto mb-3 opacity-30" />
-                  <p>Select a module from the sidebar to begin.</p>
+              <div className="flex-1 flex items-center justify-center">
+                <div className="text-center px-6">
+                  {(assignment.status === 'completed' || assignment.status === 'expired') ? (
+                    <>
+                      <div className="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <CheckCircle className="w-7 h-7 text-green-600" />
+                      </div>
+                      <p className="text-gray-700 font-semibold text-sm mb-1">Assessment Completed</p>
+                      <p className="text-gray-400 text-xs">Select any module from the sidebar to review your answers.</p>
+                    </>
+                  ) : (
+                    <>
+                      <Brain className="w-10 h-10 mx-auto mb-3 text-gray-300" />
+                      <p className="text-gray-500 text-sm font-medium">Select a module to begin</p>
+                      <p className="text-gray-400 text-xs mt-1">Choose from the sidebar on the left</p>
+                    </>
+                  )}
                 </div>
               </div>
             )}

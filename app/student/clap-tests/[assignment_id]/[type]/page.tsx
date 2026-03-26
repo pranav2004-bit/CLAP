@@ -768,6 +768,11 @@ export default function ClapTestTakingPage({
             // 3. Notify parent shell (unified mode) or navigate back to hub (standalone)
             // In unified mode the hub shows its own success toast; in standalone show one here.
             if (onModuleSubmitted) {
+                // Close the modal and reset state BEFORE notifying the parent.
+                // If this is the last module, the parent won't remount this component,
+                // so we must clean up state here or the submit button stays frozen.
+                setShowSubmitModal(false)
+                setIsSubmitting(false)
                 onModuleSubmitted(params.type)
             } else {
                 toast.success('Module submitted!')
