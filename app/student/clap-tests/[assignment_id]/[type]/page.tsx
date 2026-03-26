@@ -124,6 +124,12 @@ export default function ClapTestTakingPage({
     const [answers, setAnswers]             = useState<Record<string, any>>({})
     const [isLoading, setIsLoading]         = useState(true)
     const [loadError, setLoadError]         = useState(false)
+    // When loadError is true, this holds a machine-readable code from the backend
+    // so the UI can show the correct message instead of the generic error screen.
+    // 'ALREADY_COMPLETED' → assignment was already submitted (no retry needed)
+    // 'GLOBAL_DEADLINE_EXCEEDED' → deadline passed server-side
+    // null → generic / network error (Retry button makes sense)
+    const [loadErrorCode, setLoadErrorCode] = useState<string | null>(null)
     // Incrementing this causes the fetch useEffect to re-run (retry on error)
     const [retryKey, setRetryKey]           = useState(0)
     const [componentId, setComponentId]     = useState<string | null>(null)
@@ -269,14 +275,20 @@ export default function ClapTestTakingPage({
                     })
                     setAnswers(savedAnswers)
                 } else {
-                    // Non-retryable 4xx (e.g. 403, 404) — show error UI
+                    // Non-retryable 4xx — show error UI.
+                    // For known 403 codes (ALREADY_COMPLETED, GLOBAL_DEADLINE_EXCEEDED)
+                    // we surface a specific message so students aren't shown a misleading
+                    // "Retry" button that will never succeed.
                     console.error('Items fetch failed:', itemsResponse.status)
+                    const errCode: string | null = itemsData?.code ?? null
+                    setLoadErrorCode(errCode)
                     setLoadError(true)
                 }
             } catch (error) {
                 if ((error as Error).name === 'AbortError') return
                 // All retries exhausted (network down, persistent 5xx, etc.)
                 console.error('fetchTestContent failed after retries:', error)
+                setLoadErrorCode(null)  // network error — no known code
                 setLoadError(true)
             } finally {
                 if (!controller.signal.aborted) setIsLoading(false)
@@ -861,31 +873,71 @@ export default function ClapTestTakingPage({
     // a single retry click will succeed within a few seconds.
     // Timer continues to run in the background — server_deadline is authoritative.
     if (loadError && items.length === 0) {
+        // ── Already-submitted / deadline-exceeded: no Retry — it won't help ──
+        const isAlreadyDone = loadErrorCode === 'ALREADY_COMPLETED' || loadErrorCode === 'GLOBAL_DEADLINE_EXCEEDED'
+
         return (
-            <div className="h-[calc(100dvh-1.875rem)] flex flex-col items-center justify-center bg-slate-50 px-6 text-center gap-6">
-                <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center">
-                    <AlertCircle className="w-8 h-8 text-red-500" />
+            <div className={`flex flex-col items-center justify-center px-6 text-center gap-6 ${externalFullscreen ? 'flex-1 min-h-0' : 'h-[calc(100dvh-1.875rem)]'} bg-slate-50`}>
+                <div className={`w-16 h-16 rounded-full flex items-center justify-center ${isAlreadyDone ? 'bg-green-50' : 'bg-red-50'}`}>
+                    {isAlreadyDone
+                        ? <CheckCircle className="w-8 h-8 text-green-500" />
+                        : <AlertCircle className="w-8 h-8 text-red-500" />
+                    }
                 </div>
                 <div>
-                    <h2 className="text-xl font-bold text-gray-900 mb-2">Questions Could Not Load</h2>
-                    <p className="text-sm text-gray-600 max-w-sm leading-relaxed">
-                        There was a problem fetching your questions. Your timer is still running.
-                        <br /><br />
-                        Click <strong>Retry</strong> to try again. If the problem persists, contact your exam administrator.
-                    </p>
+                    {isAlreadyDone ? (
+                        <>
+                            <h2 className="text-xl font-bold text-gray-900 mb-2">
+                                {loadErrorCode === 'GLOBAL_DEADLINE_EXCEEDED'
+                                    ? 'Test Time Expired'
+                                    : 'Test Already Submitted'}
+                            </h2>
+                            <p className="text-sm text-gray-600 max-w-sm leading-relaxed">
+                                {loadErrorCode === 'GLOBAL_DEADLINE_EXCEEDED'
+                                    ? 'The exam deadline has passed. Your answers have been recorded automatically. You can close this window.'
+                                    : 'This test has already been submitted. Your answers are saved. You can close this window or view your results.'}
+                            </p>
+                        </>
+                    ) : (
+                        <>
+                            <h2 className="text-xl font-bold text-gray-900 mb-2">Questions Could Not Load</h2>
+                            <p className="text-sm text-gray-600 max-w-sm leading-relaxed">
+                                There was a problem fetching your questions. Your timer is still running.
+                                <br /><br />
+                                Click <strong>Retry</strong> to try again. If the problem persists, contact your exam administrator.
+                            </p>
+                        </>
+                    )}
                 </div>
-                <button
-                    onClick={() => {
-                        setLoadError(false)
-                        setIsLoading(true)
-                        setRetryKey(k => k + 1)
-                    }}
-                    className="flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition-colors shadow-sm"
-                >
-                    <RotateCcw className="w-4 h-4" />
-                    Retry
-                </button>
-                {globalTimeLeft !== null && timerLoaded && (
+
+                {/* Only show Retry for recoverable errors — not for completed/expired */}
+                {!isAlreadyDone && (
+                    <button
+                        onClick={() => {
+                            setLoadError(false)
+                            setLoadErrorCode(null)
+                            setIsLoading(true)
+                            setRetryKey(k => k + 1)
+                        }}
+                        className="flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition-colors shadow-sm"
+                    >
+                        <RotateCcw className="w-4 h-4" />
+                        Retry
+                    </button>
+                )}
+
+                {/* For completed tests, offer to go back to dashboard */}
+                {isAlreadyDone && (
+                    <a
+                        href="/student/dashboard"
+                        className="flex items-center gap-2 px-6 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl transition-colors"
+                    >
+                        Back to Dashboard
+                    </a>
+                )}
+
+                {/* Timer — only shown for non-completed errors (still relevant) */}
+                {!isAlreadyDone && globalTimeLeft !== null && timerLoaded && (
                     <p className="text-sm font-semibold text-amber-600 flex items-center gap-1.5">
                         <Clock className="w-4 h-4" />
                         Time remaining: {formatTime(globalTimeLeft)}

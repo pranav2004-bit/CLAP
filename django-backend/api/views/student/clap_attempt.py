@@ -169,7 +169,7 @@ def student_test_items(request, assignment_id, component_id):
 
     # Block access to components of already-completed or expired assignments
     if assignment.status in ('completed', 'expired', 'test_deleted'):
-        return JsonResponse({'error': 'Assignment already completed'}, status=403)
+        return JsonResponse({'error': 'Assignment already completed', 'code': 'ALREADY_COMPLETED'}, status=403)
 
     # Verify component belongs to the assigned test
     try:
