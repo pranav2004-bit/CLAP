@@ -872,7 +872,7 @@ export default function ClapTestTakingPage({
             inert: blocks ALL keyboard, pointer, and focus interaction (HTML spec).
             style fallback: covers iOS Safari 15.4 and below (no inert support).  */}
         <div
-            className={`${externalFullscreen ? 'h-full' : 'h-[calc(100dvh-1.875rem)]'} flex flex-col bg-slate-50 overflow-x-hidden`}
+            className={`${externalFullscreen ? 'flex-1 min-h-0' : 'h-[calc(100dvh-1.875rem)]'} flex flex-col bg-slate-50 overflow-x-hidden`}
             {...(autoSubmitActive ? { inert: '' as unknown as boolean } : {})}
             style={autoSubmitActive ? { pointerEvents: 'none', userSelect: 'none' } : undefined}
         >
@@ -1013,7 +1013,9 @@ export default function ClapTestTakingPage({
             )}
 
             {/* ── Header ─────────────────────────────────────────────────────── */}
-            <header className={`bg-white border-b px-4 sm:px-6 py-3 flex items-center justify-between shadow-sm gap-3 shrink-0 ${!isOnline ? 'mt-9' : ''}`}>
+            {/* Hidden in unified shell — hub top bar + dropdown already provide
+                the module title and navigation context, saving a full row on mobile */}
+            <header className={`bg-white border-b px-4 sm:px-6 py-3 flex items-center justify-between shadow-sm gap-3 shrink-0 ${!isOnline ? 'mt-9' : ''} ${externalFullscreen ? 'hidden' : ''}`}>
                 <div className="flex items-center gap-3 min-w-0">
                     {/* Hide in unified mode — parent shell owns the exit flow */}
                     {!externalFullscreen && (
