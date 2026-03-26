@@ -1191,6 +1191,7 @@ export default function StudentClapTestDetailPage() {
                 key={activeTest}
                 assignmentId={params.assignment_id as string}
                 type={activeTest}
+                componentId={assignment.components?.find((c: any) => c.type === activeTest)?.id}
                 externalFullscreen
                 onModuleSubmitted={handleModuleSubmitted}
                 onRegisterPaletteOpener={(opener) => { paletteOpenerRef.current = opener }}

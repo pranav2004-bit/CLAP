@@ -80,6 +80,13 @@ async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 3)
 interface TestModuleRunnerProps {
     assignmentId?: string
     type?: string
+    /**
+     * Pre-resolved component UUID from the hub's assignment data.
+     * When provided, the module skips the /student/clap-assignments re-fetch
+     * (step 1 of fetchTestContent) and goes directly to the items endpoint.
+     * This eliminates a redundant API call on every module switch.
+     */
+    componentId?: string
     /** When true: hub shell manages fullscreen + anti-cheat. Module skips both. */
     externalFullscreen?: boolean
     /** Called after a successful manual module submit (replaces router.push in unified mode). */
@@ -98,6 +105,7 @@ export { ClapTestTakingPage as TestModuleRunner }
 export default function ClapTestTakingPage({
     assignmentId: propsAssignmentId,
     type: propsType,
+    componentId: propsComponentId,
     externalFullscreen = false,
     onModuleSubmitted,
     onRegisterPaletteOpener,
@@ -204,32 +212,47 @@ export default function ClapTestTakingPage({
 
         const fetchTestContent = async () => {
             try {
-                // ── Step 1: Resolve component ID from assignment list ────────────
-                // fetchWithRetry auto-retries 5xx/429; permanent 4xx passes through.
-                const assignmentResponse = await fetchWithRetry(
-                    getApiUrl('student/clap-assignments'),
-                    { headers: getAuthHeaders(), signal: controller.signal },
-                )
-                if (controller.signal.aborted) return
-                const assignmentData = await assignmentResponse.json()
+                // ── Step 1: Resolve component ID ─────────────────────────────────
+                // When the hub shell provides `componentId` as a prop (unified mode),
+                // skip the /student/clap-assignments list fetch entirely — the hub
+                // already owns that data.  This removes a redundant API round-trip on
+                // every module switch and eliminates a failure point that caused the
+                // "Questions Could Not Load" error when the list call was slow/failed.
+                let resolvedComponentId: string
 
-                if (!assignmentResponse.ok) {
-                    console.error('Assignments fetch failed:', assignmentResponse.status)
-                    setLoadError(true)
-                    return
+                if (propsComponentId) {
+                    // Fast path: pre-resolved by hub — no extra network call needed.
+                    resolvedComponentId = propsComponentId
+                    setComponentId(propsComponentId)
+                } else {
+                    // Standalone route path: resolve from the assignments list.
+                    // fetchWithRetry auto-retries 5xx/429; permanent 4xx passes through.
+                    const assignmentResponse = await fetchWithRetry(
+                        getApiUrl('student/clap-assignments'),
+                        { headers: getAuthHeaders(), signal: controller.signal },
+                    )
+                    if (controller.signal.aborted) return
+                    const assignmentData = await assignmentResponse.json()
+
+                    if (!assignmentResponse.ok) {
+                        console.error('Assignments fetch failed:', assignmentResponse.status)
+                        setLoadError(true)
+                        return
+                    }
+
+                    const myAssignment = assignmentData.assignments.find((a: any) => a.assignment_id === params.assignment_id)
+                    if (!myAssignment) { setLoadError(true); return }
+
+                    const component = myAssignment.components.find((c: any) => c.type === params.type)
+                    if (!component) { setLoadError(true); return }
+
+                    resolvedComponentId = component.id
+                    setComponentId(component.id)
                 }
-
-                const myAssignment = assignmentData.assignments.find((a: any) => a.assignment_id === params.assignment_id)
-                if (!myAssignment) { setLoadError(true); return }
-
-                const component = myAssignment.components.find((c: any) => c.type === params.type)
-                if (!component) { setLoadError(true); return }
-
-                setComponentId(component.id)
 
                 // ── Step 2: Fetch questions + saved responses ────────────────────
                 const itemsResponse = await fetchWithRetry(
-                    getApiUrl(`student/clap-assignments/${params.assignment_id}/components/${component.id}/items`),
+                    getApiUrl(`student/clap-assignments/${params.assignment_id}/components/${resolvedComponentId}/items`),
                     { headers: getAuthHeaders(), signal: controller.signal },
                 )
                 if (controller.signal.aborted) return
