@@ -765,12 +765,12 @@ export default function ClapTestTakingPage({
                 localStorage.setItem(storageKey, JSON.stringify([...existing, params.type as string]))
             }
 
-            toast.success('Module submitted!')
-
             // 3. Notify parent shell (unified mode) or navigate back to hub (standalone)
+            // In unified mode the hub shows its own success toast; in standalone show one here.
             if (onModuleSubmitted) {
                 onModuleSubmitted(params.type)
             } else {
+                toast.success('Module submitted!')
                 router.push(`/student/clap-tests/${params.assignment_id}`)
             }
         } catch (error) {

@@ -303,20 +303,32 @@ export default function StudentClapTestDetailPage() {
   }, [params.assignment_id, router])
 
   // ── handleModuleSubmitted — called by TestModuleRunner after manual submit ──
+  // NOTE: confirmSubmit() in [type]/page.tsx writes `type` to localStorage BEFORE
+  // calling this callback, so `existing` will already include it. The localStorage
+  // write here is a safety net; the state update MUST happen unconditionally.
   const handleModuleSubmitted = useCallback((type: string) => {
     const storageKey = `submitted_components_${params.assignment_id}`
     const existing = JSON.parse(localStorage.getItem(storageKey) || '[]') as string[]
+
+    // Ensure localStorage is up-to-date (confirmSubmit may have already written it)
+    const updated = existing.includes(type) ? existing : [...existing, type]
     if (!existing.includes(type)) {
-      const updated = [...existing, type]
       localStorage.setItem(storageKey, JSON.stringify(updated))
-      setSubmittedComponents(updated)
-      // Auto-advance to next incomplete test
-      if (assignment) {
-        const next = assignment.components?.find((c: any) => !updated.includes(c.type))
-        if (next) setActiveTest(next.type)
+    }
+
+    // Always sync React state — confirmSubmit only touches localStorage, not this state
+    setSubmittedComponents(updated)
+
+    // Auto-advance to next incomplete test
+    if (assignment) {
+      const next = assignment.components?.find((c: any) => !updated.includes(c.type))
+      if (next) {
+        setActiveTest(next.type)
+        toast.success(`${type.charAt(0).toUpperCase() + type.slice(1)} submitted — moving to next module`)
+      } else {
+        toast.success(`${type.charAt(0).toUpperCase() + type.slice(1)} submitted — all modules complete!`)
       }
     }
-    toast.success(`${type.charAt(0).toUpperCase() + type.slice(1)} module submitted!`)
   }, [params.assignment_id, assignment])
 
   // ── handleAutoSubmit ─────────────────────────────────────────────────────
