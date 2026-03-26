@@ -1205,7 +1205,7 @@ export default function ClapTestTakingPage({
             </header>
 
             {/* ── Main layout: Left content + Right palette ───────────────────── */}
-            <div className="flex flex-row flex-1 overflow-hidden">
+            <div className="flex flex-row flex-1 overflow-hidden min-h-0">
 
                 {/* ── LEFT PANE: Question area ─────────────────────────────── */}
                 <div className="flex-1 flex flex-col overflow-hidden bg-slate-50">
