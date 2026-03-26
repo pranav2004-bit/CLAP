@@ -89,6 +89,12 @@ interface TestModuleRunnerProps {
     componentId?: string
     /** When true: hub shell manages fullscreen + anti-cheat. Module skips both. */
     externalFullscreen?: boolean
+    /**
+     * When true: the component has already been submitted. The student can browse
+     * their answers (Previous/Next work) but cannot edit any response and the
+     * Submit button is hidden. A "View Only" banner is shown.
+     */
+    readOnly?: boolean
     /** Called after a successful manual module submit (replaces router.push in unified mode). */
     onModuleSubmitted?: (type: string) => void
     /**
@@ -107,6 +113,7 @@ export default function ClapTestTakingPage({
     type: propsType,
     componentId: propsComponentId,
     externalFullscreen = false,
+    readOnly = false,
     onModuleSubmitted,
     onRegisterPaletteOpener,
 }: TestModuleRunnerProps = {}) {
@@ -1230,8 +1237,8 @@ export default function ClapTestTakingPage({
                                     +{currentItem.points || 1} Mark{(currentItem.points || 1) !== 1 ? 's' : ''}
                                 </span>
                             )}
-                            {/* Mark for Review — icon-only on mobile, full label on sm+ */}
-                            {isCurrentItemQuestion && (
+                            {/* Mark for Review — hidden in read-only mode */}
+                            {isCurrentItemQuestion && !readOnly && (
                                 <Button
                                     variant="ghost"
                                     size="sm"
@@ -1249,6 +1256,16 @@ export default function ClapTestTakingPage({
                             )}
                         </div>
                     </div>
+
+                    {/* ── Read-only banner — shown when module already submitted ── */}
+                    {readOnly && (
+                        <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center gap-2 shrink-0">
+                            <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+                            <span className="text-xs font-semibold text-amber-700">
+                                This section has been submitted — view only. Answers cannot be changed.
+                            </span>
+                        </div>
+                    )}
 
                     {/* Progress bar */}
                     <div className="w-full bg-gray-200 h-1.5 shrink-0">
@@ -1279,11 +1296,13 @@ export default function ClapTestTakingPage({
                                                         {currentItem.content.options?.map((opt: string, index: number) => (
                                                             <div
                                                                 key={index}
-                                                                onClick={() => handleSaveAnswer(index)}
-                                                                className={`p-3.5 sm:p-4 rounded-lg border-2 transition-all cursor-pointer active:scale-[0.99] touch-manipulation select-none ${
+                                                                onClick={readOnly ? undefined : () => handleSaveAnswer(index)}
+                                                                className={`p-3.5 sm:p-4 rounded-lg border-2 transition-all select-none ${
+                                                                    readOnly ? 'cursor-default' : 'cursor-pointer active:scale-[0.99] touch-manipulation'
+                                                                } ${
                                                                     answers[currentItem.id] === index
                                                                         ? 'border-indigo-500 bg-indigo-50 shadow-sm'
-                                                                        : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                                                                        : readOnly ? 'border-gray-200 bg-white' : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
                                                                 }`}
                                                             >
                                                                 <div className="flex items-center gap-3">
@@ -1321,6 +1340,8 @@ export default function ClapTestTakingPage({
                                                         <h3 className="text-base sm:text-xl font-medium whitespace-pre-wrap">{currentItem.content.question}</h3>
                                                         <Textarea
                                                             value={currentText}
+                                                            readOnly={readOnly}
+                                                            disabled={readOnly}
                                                             onChange={(e) => {
                                                                 const newText  = e.target.value
                                                                 const newCount = countWords(newText)
@@ -1381,19 +1402,26 @@ export default function ClapTestTakingPage({
                                             )}
 
                                             {currentItem.item_type === 'audio_recording' && (
-                                                <AudioRecorderItem
-                                                    itemId={currentItem.id}
-                                                    assignmentId={params.assignment_id as string}
-                                                    question={currentItem.content.question || 'Record your response'}
-                                                    instructions={currentItem.content.instructions}
-                                                    maxDuration={currentItem.content.max_duration || 300}
-                                                    savedAudioUrl={answers[currentItem.id]?.file_url}
-                                                    onSave={(data) => handleSaveAnswer({
-                                                        type: 'audio',
-                                                        file_url: data.audio_response.file_url,
-                                                        duration: data.audio_response.duration
-                                                    })}
-                                                />
+                                                readOnly ? (
+                                                    <div className="flex items-center gap-2 text-sm text-gray-500 bg-gray-50 border rounded-lg px-4 py-3">
+                                                        <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
+                                                        <span>Speaking response submitted.</span>
+                                                    </div>
+                                                ) : (
+                                                    <AudioRecorderItem
+                                                        itemId={currentItem.id}
+                                                        assignmentId={params.assignment_id as string}
+                                                        question={currentItem.content.question || 'Record your response'}
+                                                        instructions={currentItem.content.instructions}
+                                                        maxDuration={currentItem.content.max_duration || 300}
+                                                        savedAudioUrl={answers[currentItem.id]?.file_url}
+                                                        onSave={(data) => handleSaveAnswer({
+                                                            type: 'audio',
+                                                            file_url: data.audio_response.file_url,
+                                                            duration: data.audio_response.duration
+                                                        })}
+                                                    />
+                                                )
                                             )}
 
                                         </div>
@@ -1405,9 +1433,9 @@ export default function ClapTestTakingPage({
 
                     {/* ── Footer: Clear Response (top on mobile) + Prev/Next ──── */}
                     <div className="bg-white border-t border-slate-200 px-4 sm:px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0 shadow-[0_-2px_8px_rgba(0,0,0,0.05)]">
-                        {/* Clear Response — mobile: row 1 (above nav); desktop: left side */}
+                        {/* Clear Response — hidden in read-only mode */}
                         <div className="flex gap-2 w-full sm:w-auto order-1">
-                            {currentItem?.item_type === 'mcq' && (
+                            {!readOnly && currentItem?.item_type === 'mcq' && (
                                 <Button
                                     variant="outline"
                                     onClick={handleClearResponse}
@@ -1420,7 +1448,7 @@ export default function ClapTestTakingPage({
                             )}
                         </div>
 
-                        {/* Prev / Save & Next — mobile: row 2 (below Clear Response); desktop: right side */}
+                        {/* Prev / Next — in read-only mode: navigation only, no Submit */}
                         <div className="flex gap-2 w-full sm:w-auto order-2">
                             <Button
                                 variant="outline"
@@ -1431,7 +1459,8 @@ export default function ClapTestTakingPage({
                                 <ChevronLeft className="w-4 h-4 mr-1" />
                                 Previous
                             </Button>
-                            {currentItemIndex === items.length - 1 ? (
+                            {/* In read-only mode: never show Submit, Next is always plain navigation */}
+                            {!readOnly && currentItemIndex === items.length - 1 ? (
                                 <Button
                                     onClick={handleSubmitClick}
                                     className="flex-1 sm:w-36 bg-green-600 hover:bg-green-700 text-white font-bold border-b-4 border-green-800 active:border-b-0 active:translate-y-[2px] transition-all touch-manipulation focus-visible:ring-green-600 focus-visible:ring-offset-0"
@@ -1442,10 +1471,10 @@ export default function ClapTestTakingPage({
                             ) : (
                                 <Button
                                     onClick={handleNext}
-                                    className="flex-1 sm:w-36 bg-indigo-600 hover:bg-indigo-700 text-white font-bold border-b-4 border-indigo-800 active:border-b-0 active:translate-y-[2px] transition-all touch-manipulation"
+                                    disabled={currentItemIndex === items.length - 1}
+                                    className="flex-1 sm:w-36 bg-indigo-600 hover:bg-indigo-700 text-white font-bold border-b-4 border-indigo-800 active:border-b-0 active:translate-y-[2px] transition-all touch-manipulation disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
-                                    <span className="hidden sm:inline">Save & Next</span>
-                                    <span className="sm:hidden">Next</span>
+                                    <span>{readOnly ? 'Next' : 'Save & Next'}</span>
                                     <ChevronRight className="w-4 h-4 ml-1" />
                                 </Button>
                             )}

@@ -1193,6 +1193,7 @@ export default function StudentClapTestDetailPage() {
                 type={activeTest}
                 componentId={assignment.components?.find((c: any) => c.type === activeTest)?.id}
                 externalFullscreen
+                readOnly={submittedComponents.includes(activeTest)}
                 onModuleSubmitted={handleModuleSubmitted}
                 onRegisterPaletteOpener={(opener) => { paletteOpenerRef.current = opener }}
               />
