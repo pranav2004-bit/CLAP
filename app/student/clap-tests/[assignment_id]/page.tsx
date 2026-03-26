@@ -5,7 +5,7 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Headphones, Mic, BookOpen, PenTool, Brain, CheckCircle, PlayCircle, Loader2, Clock, AlertTriangle, LogOut, WifiOff, ArrowLeft, ChevronRight } from 'lucide-react'
+import { Headphones, Mic, BookOpen, PenTool, Brain, CheckCircle, PlayCircle, Loader2, Clock, AlertTriangle, LogOut, WifiOff, ArrowLeft, ChevronRight, LayoutGrid } from 'lucide-react'
 import { CubeLoader } from '@/components/ui/CubeLoader'
 import { toast } from 'sonner'
 import { getApiUrl, getAuthHeaders, apiFetch, silentFetch } from '@/lib/api-config'
@@ -64,6 +64,9 @@ export default function StudentClapTestDetailPage() {
   const isAutoSubmitRef     = useRef(false)               // prevents double auto-submit
   const assignmentReadyRef  = useRef(false)               // true once assignment is loaded
   const redirectTargetRef   = useRef('/student/clap-tests') // updated by IIFE when submission_id arrives
+  // Ref to the active module's palette-open function (registered via onRegisterPaletteOpener).
+  // Cleared when the module remounts (new key) and re-registered on each module mount.
+  const paletteOpenerRef    = useRef<(() => void) | null>(null)
 
   // Completed Components State
   const [submittedComponents, setSubmittedComponents] = useState<string[]>([])
@@ -1042,33 +1045,51 @@ export default function StudentClapTestDetailPage() {
 
           {/* ── MOBILE MODULE PICKER: compact dropdown (hidden on lg+) ──────── */}
           <div className="lg:hidden shrink-0 relative bg-white border-b border-gray-100">
-            <button
-              onClick={() => !isTestLocked && setIsModuleDropdownOpen(o => !o)}
-              disabled={isTestLocked}
-              className="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {(() => {
-                const isAssignmentDone = assignment.status === 'completed' || assignment.status === 'expired'
-                if (activeTest) {
-                  const ActiveIcon = getIcon(activeTest)
-                  const isSubmitted = submittedComponents.includes(activeTest) || isAssignmentDone
-                  return (
-                    <>
-                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isSubmitted ? 'bg-green-500' : 'bg-indigo-500'}`} />
-                      <ActiveIcon className="w-4 h-4 text-indigo-600 flex-shrink-0" />
-                      <span className="text-sm font-semibold text-gray-800 flex-1 truncate">
-                        {getDisplayTitle(activeTest, activeTest.charAt(0).toUpperCase() + activeTest.slice(1) + ' Test')}
-                      </span>
-                    </>
-                  )
-                }
-                return <span className="text-sm text-gray-400 flex-1">Select a module…</span>
-              })()}
-              <span className="text-[11px] text-gray-400 shrink-0 font-medium">
-                {submittedComponents.length}/{assignment.components?.length ?? 0} done
-              </span>
-              <ChevronRight className={`w-4 h-4 text-gray-400 flex-shrink-0 transition-transform duration-200 ${isModuleDropdownOpen ? 'rotate-90' : ''}`} />
-            </button>
+            {/* Row: [module switcher — flex-1] | [divider] | [palette button] */}
+            <div className="flex items-stretch">
+
+              {/* Left: module switcher trigger */}
+              <button
+                onClick={() => !isTestLocked && setIsModuleDropdownOpen(o => !o)}
+                disabled={isTestLocked}
+                className="flex-1 flex items-center gap-2 px-4 py-2.5 text-left hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed min-w-0"
+              >
+                {(() => {
+                  const isAssignmentDone = assignment.status === 'completed' || assignment.status === 'expired'
+                  if (activeTest) {
+                    const ActiveIcon = getIcon(activeTest)
+                    const isSubmitted = submittedComponents.includes(activeTest) || isAssignmentDone
+                    return (
+                      <>
+                        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isSubmitted ? 'bg-green-500' : 'bg-indigo-500'}`} />
+                        <ActiveIcon className="w-4 h-4 text-indigo-600 flex-shrink-0" />
+                        <span className="text-sm font-semibold text-gray-800 flex-1 truncate">
+                          {getDisplayTitle(activeTest, activeTest.charAt(0).toUpperCase() + activeTest.slice(1) + ' Test')}
+                        </span>
+                      </>
+                    )
+                  }
+                  return <span className="text-sm text-gray-400 flex-1">Select a module…</span>
+                })()}
+                <span className="text-[11px] text-gray-400 shrink-0 font-medium">
+                  {submittedComponents.length}/{assignment.components?.length ?? 0} done
+                </span>
+                <ChevronRight className={`w-4 h-4 text-gray-400 flex-shrink-0 transition-transform duration-200 ${isModuleDropdownOpen ? 'rotate-90' : ''}`} />
+              </button>
+
+              {/* Divider */}
+              <div className="w-px bg-gray-200 shrink-0 my-1.5" />
+
+              {/* Right: open questions palette */}
+              <button
+                onClick={() => paletteOpenerRef.current?.()}
+                disabled={!activeTest || isTestLocked}
+                title="Open questions palette"
+                className="flex items-center gap-1.5 px-3.5 py-2.5 hover:bg-indigo-50 active:bg-indigo-100 transition-colors disabled:opacity-30 disabled:cursor-not-allowed touch-manipulation shrink-0"
+              >
+                <LayoutGrid className="w-4 h-4 text-indigo-600" />
+              </button>
+            </div>
 
             {/* Dropdown list */}
             {isModuleDropdownOpen && (
@@ -1172,6 +1193,7 @@ export default function StudentClapTestDetailPage() {
                 type={activeTest}
                 externalFullscreen
                 onModuleSubmitted={handleModuleSubmitted}
+                onRegisterPaletteOpener={(opener) => { paletteOpenerRef.current = opener }}
               />
             ) : (
               <div className="flex-1 flex items-center justify-center">

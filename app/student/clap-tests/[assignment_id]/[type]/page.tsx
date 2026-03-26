@@ -84,6 +84,12 @@ interface TestModuleRunnerProps {
     externalFullscreen?: boolean
     /** Called after a successful manual module submit (replaces router.push in unified mode). */
     onModuleSubmitted?: (type: string) => void
+    /**
+     * Called once on mount with a function that opens the questions palette.
+     * Allows the hub shell to render a palette-open button in its own toolbar row
+     * without needing direct access to the module's internal isPaletteOpen state.
+     */
+    onRegisterPaletteOpener?: (open: () => void) => void
 }
 
 // Named export so [assignment_id]/page.tsx can import without dynamic route paths.
@@ -94,6 +100,7 @@ export default function ClapTestTakingPage({
     type: propsType,
     externalFullscreen = false,
     onModuleSubmitted,
+    onRegisterPaletteOpener,
 }: TestModuleRunnerProps = {}) {
     const routeParams = useParams()
     // Stable params object — uses props when in unified mode, URL params when standalone
@@ -117,6 +124,15 @@ export default function ClapTestTakingPage({
     const [visited, setVisited]             = useState<Set<number>>(new Set([0]))
     const [marked, setMarked]               = useState<Set<number>>(new Set())
     const [isPaletteOpen, setIsPaletteOpen] = useState(false)
+
+    // Register palette opener with parent shell (unified mode) so the hub
+    // can place the open-palette button inside its own toolbar row.
+    useEffect(() => {
+        if (onRegisterPaletteOpener) {
+            onRegisterPaletteOpener(() => setIsPaletteOpen(true))
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [onRegisterPaletteOpener])
 
     // Submit confirmation modal
     const [showSubmitModal, setShowSubmitModal] = useState(false)
