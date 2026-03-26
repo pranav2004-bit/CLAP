@@ -60,16 +60,20 @@ def retrieve_audio_file(request, item_id):
     except AdminAudioFile.DoesNotExist:
         return JsonResponse({'error': 'Audio file not found'}, status=404)
 
-    # Check playback limit
+    # Check playback limit.
+    # play_limit=0 means "not configured / unlimited" — never block in that case.
+    # The old code lacked this guard: 0 >= 0 is True, so every audio fetch on an
+    # unconfigured item returned 403 "Playback limit reached".
     play_limit = item.content.get('play_limit', 0)
-    try:
-        response = StudentClapResponse.objects.get(assignment=assignment, item=item)
-        play_count = response.response_data.get('play_count', 0) if response.response_data else 0
-        if play_count >= play_limit:
-            return JsonResponse({'error': 'Playback limit reached'}, status=403)
-    except StudentClapResponse.DoesNotExist:
-        # No response yet, playback allowed
-        pass
+    if play_limit > 0:
+        try:
+            response = StudentClapResponse.objects.get(assignment=assignment, item=item)
+            play_count = response.response_data.get('play_count', 0) if response.response_data else 0
+            if play_count >= play_limit:
+                return JsonResponse({'error': 'Playback limit reached', 'code': 'PLAY_LIMIT_REACHED'}, status=403)
+        except StudentClapResponse.DoesNotExist:
+            # No response yet — playback allowed
+            pass
 
     # Serve file — route based on storage backend
     if admin_audio.file_path.startswith('s3://'):

@@ -6,15 +6,34 @@ import { Card } from '@/components/ui/card'
 import { Play, Pause, Volume2, AlertCircle, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { getApiUrl, getAuthHeaders, apiFetch } from '@/lib/api-config'
-import { authStorage } from '@/lib/auth-storage'
 
-// ── Module-level blob cache ────────────────────────────────────────────────────
-// Keyed by `${itemId}:${assignmentId}`.
-// Blob URLs are created once and reused on every remount — navigating between
-// questions (Next/Previous) unmounts the component but the fetched audio is
-// retained here so no re-fetch (and no flicker / "Could not load" error) occurs.
-// Blob URLs are only revoked when the browser tab is closed (GC handles it).
-const _audioBlobCache = new Map<string, string>()
+// ── Module-level audio state ───────────────────────────────────────────────────
+//
+// _audioBlobCache  — completed blob URLs keyed by `${itemId}:${assignmentId}`.
+//   Blob URLs are created once per session and reused on every remount.
+//   Navigating Next/Previous unmounts the component but does NOT revoke the URL;
+//   the next mount gets an instant cache hit with no network call.
+//
+// _audioFetchInProgress — in-flight fetch promises for the same key.
+//   Prevents the race condition where the student navigates away before the blob
+//   download finishes, comes back, and triggers a second parallel download.
+//   All mounts that arrive while a download is already running share the same
+//   promise; when it resolves they all get the blob URL simultaneously.
+//
+const _audioBlobCache       = new Map<string, string>()
+const _audioFetchInProgress = new Map<string, Promise<string | null>>()
+
+// ── Error codes from the audio endpoint ───────────────────────────────────────
+// The backend returns a `code` field on 4xx responses so the frontend can
+// distinguish "play limit reached" (not an error — show limit UI) from
+// "assignment expired" (informational) from a real fetch failure (show retry).
+type AudioErrorKind =
+  | 'play_limit'        // 403 PLAY_LIMIT_REACHED — don't show error, show limit UI
+  | 'assignment'        // 403/404 assignment issue — show specific message
+  | 'not_found'         // 404 audio file missing
+  | 'server'            // 5xx / S3 error — transient, retry makes sense
+  | 'network'           // fetch threw (offline, DNS, timeout)
+  | null                // no error
 
 interface AudioBlockPlayerProps {
   itemId: string
@@ -28,114 +47,185 @@ interface AudioBlockPlayerProps {
 
 export default function AudioBlockPlayer({
   itemId, assignmentId, title, instructions, playLimit,
-  hasAudioFile, legacyUrl
+  hasAudioFile, legacyUrl,
 }: AudioBlockPlayerProps) {
-  const [playCount, setPlayCount]       = useState(0)
-  const [limitReached, setLimitReached] = useState(false)
-  const [isPlaying, setIsPlaying]       = useState(false)
-  const [isLoading, setIsLoading]       = useState(true)
-  const [audioError, setAudioError]     = useState(false)
-  const [audioBlobUrl, setAudioBlobUrl] = useState<string | null>(null)
-  const [progress, setProgress]         = useState(0)   // 0–1
-  const [currentTime, setCurrentTime]   = useState(0)   // seconds
-  const [audioDuration, setAudioDuration] = useState(0) // seconds
+  const [playCount, setPlayCount]         = useState(0)
+  const [limitReached, setLimitReached]   = useState(false)
+  const [isPlaying, setIsPlaying]         = useState(false)
+  const [isLoading, setIsLoading]         = useState(true)
+  const [audioError, setAudioError]       = useState<AudioErrorKind>(null)
+  const [audioBlobUrl, setAudioBlobUrl]   = useState<string | null>(null)
+  const [progress, setProgress]           = useState(0)   // 0–1
+  const [currentTime, setCurrentTime]     = useState(0)   // seconds
+  const [audioDuration, setAudioDuration] = useState(0)   // seconds
   const audioRef = useRef<HTMLAudioElement>(null)
 
   const formatTime = (s: number) => {
     const m = Math.floor(s / 60)
-    return `${m.toString().padStart(2,'0')}:${Math.floor(s % 60).toString().padStart(2,'0')}`
+    return `${m.toString().padStart(2, '0')}:${Math.floor(s % 60).toString().padStart(2, '0')}`
   }
 
+  // ── Reset state on item change (when parent navigates to a different audio item) ──
   useEffect(() => {
-    // Abort controller — cancels in-flight fetches when the component unmounts
-    // (e.g. student navigates away before audio finishes downloading).
-    const controller = new AbortController()
+    setIsPlaying(false)
+    setProgress(0)
+    setCurrentTime(0)
+    setAudioDuration(0)
+  }, [itemId])
+
+  // ── Main init effect ───────────────────────────────────────────────────────
+  useEffect(() => {
+    let cancelled = false  // local flag: true after cleanup runs
 
     const init = async () => {
-      try {
-        if (!hasAudioFile) { setIsLoading(false); return }
+      if (!hasAudioFile) { if (!cancelled) setIsLoading(false); return }
 
-        // ── Cache hit: audio already downloaded this session ──────────────────
-        const cacheKey = `${itemId}:${assignmentId}`
-        const cached = _audioBlobCache.get(cacheKey)
-        if (cached) {
+      const cacheKey = `${itemId}:${assignmentId}`
+
+      // ── 1. Instant cache hit — blob already downloaded this session ────────
+      const cached = _audioBlobCache.get(cacheKey)
+      if (cached) {
+        if (!cancelled) {
           setAudioBlobUrl(cached)
-          // Still refresh play-count from server so the counter is accurate
-          apiFetch(
-            getApiUrl(`student/clap-items/${itemId}/playback-status?assignment_id=${assignmentId}`),
-            { headers: getAuthHeaders(), signal: controller.signal }
-          ).then(r => r.ok ? r.json() : null).then(d => {
-            if (!d || controller.signal.aborted) return
-            setPlayCount(d.play_count || 0)
-            setLimitReached(d.limit_reached || false)
-          }).catch(() => {/* non-critical */})
           setIsLoading(false)
-          return
         }
-
-        // ── Cache miss: first time loading this audio item ────────────────────
-
-        // 1. Fetch playback status with proper JWT auth
-        const statusRes = await apiFetch(
+        // Non-blocking play-count refresh — failure is silent (not critical UX)
+        apiFetch(
           getApiUrl(`student/clap-items/${itemId}/playback-status?assignment_id=${assignmentId}`),
-          { headers: getAuthHeaders(), signal: controller.signal }
-        )
-        if (controller.signal.aborted) return
-        if (statusRes.ok) {
-          const statusData = await statusRes.json()
-          setPlayCount(statusData.play_count || 0)
-          setLimitReached(statusData.limit_reached || false)
-        }
-
-        // 2. Fetch the audio file as a blob using proper JWT auth
-        //    (native <audio> cannot send Authorization headers, so we pre-fetch)
-        const audioRes = await apiFetch(
-          getApiUrl(`student/clap-items/${itemId}/audio?assignment_id=${assignmentId}`),
-          { headers: getAuthHeaders(), signal: controller.signal }
-        )
-        if (controller.signal.aborted) return
-        if (!audioRes.ok) {
-          setAudioError(true)
-          return
-        }
-        const blob = await audioRes.blob()
-        if (controller.signal.aborted) return
-
-        const blobUrl = URL.createObjectURL(blob)
-        // Store in module-level cache — survives Next/Previous navigation
-        _audioBlobCache.set(cacheKey, blobUrl)
-        setAudioBlobUrl(blobUrl)
-      } catch (error) {
-        if ((error as Error).name === 'AbortError') return
-        console.error('Audio init failed', error)
-        setAudioError(true)
-      } finally {
-        if (!controller.signal.aborted) setIsLoading(false)
+          { headers: getAuthHeaders() },
+        ).then(r => r.ok ? r.json() : null).then(d => {
+          if (cancelled || !d) return
+          setPlayCount(d.play_count  ?? 0)
+          setLimitReached(d.limit_reached ?? false)
+        }).catch(() => { /* non-critical */ })
+        return
       }
+
+      // ── 2. In-flight deduplication — another mount already started this fetch ──
+      //    Await the existing promise instead of spawning a parallel download.
+      const existing = _audioFetchInProgress.get(cacheKey)
+      if (existing) {
+        const url = await existing
+        if (cancelled) return
+        if (url) {
+          setAudioBlobUrl(url)
+          setIsLoading(false)
+        } else {
+          // The shared fetch failed — show a retryable error
+          setAudioError('server')
+          setIsLoading(false)
+        }
+        return
+      }
+
+      // ── 3. Cache miss + no in-flight fetch — start a new download ─────────
+      // Wrap in a promise that is shared across any concurrent mounts for the
+      // same cacheKey.  Resolves with the blob URL on success, null on failure.
+      const fetchPromise: Promise<string | null> = (async () => {
+        try {
+          // 3a. Playback status (play count / limit check)
+          const statusRes = await apiFetch(
+            getApiUrl(`student/clap-items/${itemId}/playback-status?assignment_id=${assignmentId}`),
+            { headers: getAuthHeaders() },
+          )
+          if (!cancelled && statusRes.ok) {
+            const d = await statusRes.json()
+            setPlayCount(d.play_count  ?? 0)
+            setLimitReached(d.limit_reached ?? false)
+            // If limit already reached, skip audio download — player will show limit UI
+            if (d.limit_reached) {
+              if (!cancelled) setIsLoading(false)
+              return null
+            }
+          }
+
+          // 3b. Audio blob download
+          const audioRes = await apiFetch(
+            getApiUrl(`student/clap-items/${itemId}/audio?assignment_id=${assignmentId}`),
+            { headers: getAuthHeaders() },
+          )
+
+          if (!audioRes.ok) {
+            // Parse error code from response body for specific UI handling
+            let errBody: any = {}
+            try { errBody = await audioRes.json() } catch (_) { /* ignore */ }
+
+            const code: string = errBody?.code || ''
+            const msg: string  = (errBody?.error || '').toLowerCase()
+
+            if (code === 'PLAY_LIMIT_REACHED' || msg.includes('limit')) {
+              // Play limit exhausted — not a load error; show limit UI
+              if (!cancelled) {
+                setLimitReached(true)
+                setIsLoading(false)
+              }
+              return null
+            }
+            if (audioRes.status === 403 || audioRes.status === 404) {
+              if (msg.includes('assignment') || msg.includes('not found')) {
+                if (!cancelled) { setAudioError('assignment'); setIsLoading(false) }
+              } else if (audioRes.status === 404) {
+                if (!cancelled) { setAudioError('not_found'); setIsLoading(false) }
+              } else {
+                if (!cancelled) { setAudioError('assignment'); setIsLoading(false) }
+              }
+              return null
+            }
+            // 5xx or unexpected
+            if (!cancelled) { setAudioError('server'); setIsLoading(false) }
+            return null
+          }
+
+          const blob   = await audioRes.blob()
+          const blobUrl = URL.createObjectURL(blob)
+          _audioBlobCache.set(cacheKey, blobUrl)
+          if (!cancelled) {
+            setAudioBlobUrl(blobUrl)
+            setIsLoading(false)
+          }
+          return blobUrl
+
+        } catch (err) {
+          const isAbort = (err as Error)?.name === 'AbortError'
+          if (!isAbort && !cancelled) {
+            setAudioError('network')
+            setIsLoading(false)
+          }
+          return null
+        } finally {
+          // Always clean up the in-progress entry so future mounts do a fresh fetch
+          _audioFetchInProgress.delete(cacheKey)
+        }
+      })()
+
+      _audioFetchInProgress.set(cacheKey, fetchPromise)
+      await fetchPromise   // wait so the cancelled flag can suppress setState calls above
     }
 
     init()
 
-    // On unmount: cancel any in-flight fetch.
-    // Do NOT revoke the blob URL — it is intentionally kept in the cache
-    // so that navigating back to this question does not trigger a re-fetch.
-    return () => { controller.abort() }
+    return () => {
+      // Signal all pending setState calls in this closure to be ignored.
+      // We do NOT abort the underlying HTTP request — the fetch may be shared
+      // with another mount (in-flight deduplication).  Aborting it would break
+      // the other mount.  The _audioFetchInProgress cleanup in the finally block
+      // ensures a fresh fetch if the last consumer unmounts before the blob lands.
+      cancelled = true
+    }
   }, [itemId, assignmentId, hasAudioFile])
 
+  // ── Play / Pause ───────────────────────────────────────────────────────────
   const handlePlayPause = async () => {
     if (!audioRef.current) return
     if (limitReached) {
       toast.error('You have reached your maximum play limit.')
       return
     }
-
     if (isPlaying) {
       audioRef.current.pause()
-      // setIsPlaying(false) is driven by the onPause event below
     } else {
       try {
         await audioRef.current.play()
-        // setIsPlaying(true) is driven by the onPlay event below
       } catch (err) {
         toast.error('Failed to play audio. Please try again.')
         console.error('Play error:', err)
@@ -143,6 +233,7 @@ export default function AudioBlockPlayer({
     }
   }
 
+  // ── Track completion (increments server-side play counter) ────────────────
   const handleEnded = async () => {
     setIsPlaying(false)
     try {
@@ -151,8 +242,8 @@ export default function AudioBlockPlayer({
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-          body: JSON.stringify({ assignment_id: assignmentId, playback_completed: true })
-        }
+          body: JSON.stringify({ assignment_id: assignmentId, playback_completed: true }),
+        },
       )
       const data = await response.json()
       if (response.ok) {
@@ -164,11 +255,12 @@ export default function AudioBlockPlayer({
           toast.info(`Plays remaining: ${data.remaining_plays}`)
         }
       }
-    } catch (error) {
-      console.error('Playback tracking failed', error)
+    } catch (err) {
+      console.error('Playback tracking failed', err)
     }
   }
 
+  // ── Loading spinner ────────────────────────────────────────────────────────
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-8 text-gray-500 gap-2">
@@ -178,7 +270,7 @@ export default function AudioBlockPlayer({
     )
   }
 
-  // Legacy URL-based audio (no tracking)
+  // ── Legacy URL-based audio (no tracking) ──────────────────────────────────
   if (!hasAudioFile && legacyUrl) {
     return (
       <div className="space-y-4">
@@ -195,7 +287,16 @@ export default function AudioBlockPlayer({
     )
   }
 
-  // File-based audio with play-limit tracking
+  // ── Error messages keyed by kind ───────────────────────────────────────────
+  const errorMessage: Record<NonNullable<AudioErrorKind>, string> = {
+    play_limit:  'You have reached your maximum play limit for this audio.',
+    assignment:  'This audio item is no longer accessible. Please contact your exam administrator.',
+    not_found:   'Audio file not found on the server. Please contact your exam administrator.',
+    server:      'Could not load audio due to a server issue. Click Retry to try again.',
+    network:     'Could not load audio. Check your internet connection and click Retry.',
+  }
+
+  // ── File-based audio with play-limit tracking ──────────────────────────────
   return (
     <div className="space-y-4">
       {title && <h3 className="text-xl font-medium">{title}</h3>}
@@ -219,14 +320,34 @@ export default function AudioBlockPlayer({
           </div>
         </div>
 
-        {audioError && !limitReached ? (
-          <div className="flex items-center gap-2 text-red-600 text-sm bg-red-50 p-4 rounded-lg">
-            <AlertCircle className="w-4 h-4 flex-shrink-0" />
-            <p>Could not load audio. Please refresh the page or contact support.</p>
+        {/* ── Error state — retryable vs permanent ─────────────────────────── */}
+        {audioError && !limitReached && (
+          <div className="space-y-3">
+            <div className="flex items-start gap-2 text-red-600 text-sm bg-red-50 p-4 rounded-lg">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <p>{errorMessage[audioError]}</p>
+            </div>
+            {/* Only show Retry for transient errors — not for assignment/not_found */}
+            {(audioError === 'server' || audioError === 'network') && (
+              <button
+                onClick={() => {
+                  const cacheKey = `${itemId}:${assignmentId}`
+                  // Clear any stale in-progress entry so init() starts fresh
+                  _audioFetchInProgress.delete(cacheKey)
+                  setAudioError(null)
+                  setIsLoading(true)
+                }}
+                className="w-full py-2 text-sm font-semibold text-indigo-600 border border-indigo-200 rounded-lg hover:bg-indigo-50 transition-colors"
+              >
+                Retry
+              </button>
+            )}
           </div>
-        ) : (
+        )}
+
+        {/* ── Player UI ────────────────────────────────────────────────────── */}
+        {!audioError && (
           <>
-            {/* Hidden audio element using the authenticated blob URL */}
             {audioBlobUrl && (
               <audio
                 ref={audioRef}
@@ -257,15 +378,13 @@ export default function AudioBlockPlayer({
               />
             )}
 
-            {/* Full-width audio player */}
             <div className="mb-4 bg-white border border-gray-200 rounded-xl p-4">
               <div className="flex items-center gap-3">
-                {/* Play / Pause */}
                 <button
                   onClick={handlePlayPause}
                   disabled={limitReached || !audioBlobUrl}
                   className={`flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-full transition-colors
-                    ${limitReached
+                    ${limitReached || !audioBlobUrl
                       ? 'bg-red-100 text-red-400 cursor-not-allowed'
                       : 'bg-indigo-600 hover:bg-indigo-700 text-white'}`}
                 >
@@ -274,16 +393,14 @@ export default function AudioBlockPlayer({
                     : <Play  className="w-4 h-4 fill-current ml-0.5" />}
                 </button>
 
-                {/* Progress area */}
                 <div className="flex-1 min-w-0 space-y-1.5">
-                  {/* Track — clickable scrub bar */}
                   <div
                     className={`w-full h-2 bg-gray-100 rounded-full relative overflow-hidden
                       ${audioBlobUrl && !limitReached ? 'cursor-pointer' : ''}`}
                     onClick={(e) => {
                       const el = audioRef.current
                       if (!el || !el.duration || el.duration === Infinity || limitReached) return
-                      const rect = e.currentTarget.getBoundingClientRect()
+                      const rect  = e.currentTarget.getBoundingClientRect()
                       const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
                       el.currentTime = ratio * el.duration
                       setProgress(ratio)
@@ -294,8 +411,6 @@ export default function AudioBlockPlayer({
                       style={{ width: `${progress * 100}%` }}
                     />
                   </div>
-
-                  {/* Time display */}
                   <div className="flex justify-between text-xs tabular-nums text-gray-400">
                     <span>{formatTime(currentTime)}</span>
                     <span>{audioDuration ? formatTime(audioDuration) : '--:--'}</span>
@@ -303,7 +418,6 @@ export default function AudioBlockPlayer({
                 </div>
               </div>
 
-              {/* Status text */}
               <p className="mt-2 text-xs text-center text-gray-400">
                 {limitReached
                   ? 'Playback limit reached'
@@ -317,6 +431,7 @@ export default function AudioBlockPlayer({
           </>
         )}
 
+        {/* ── Play limit banner ─────────────────────────────────────────────── */}
         {limitReached && (
           <div className="flex items-center gap-2 text-red-600 text-sm bg-red-50 p-3 rounded-lg">
             <AlertCircle className="w-4 h-4 flex-shrink-0" />
