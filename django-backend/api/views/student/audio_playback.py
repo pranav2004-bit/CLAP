@@ -98,7 +98,19 @@ def retrieve_audio_file(request, item_id):
                 content_type=content_type,
             )
             response['Content-Disposition'] = 'inline'
-            response['Cache-Control'] = 'no-store'
+            # Audio content is identical for every student — same file served by admin.
+            # Match the local-file behaviour (public, max-age=86400) so browsers and
+            # CDN/nginx can cache the response.  Previously 'no-store' forced every
+            # page-refresh to re-stream the blob through a sync Gunicorn worker,
+            # causing worker saturation when a whole class started simultaneously.
+            # The response originates from the Django origin (not S3 directly) so
+            # there is no cross-origin concern with caching here.
+            response['Cache-Control'] = 'public, max-age=86400'
+            # Surface the file size so browsers can show correct progress bars and
+            # CDN/nginx can buffer properly without holding the Django worker open.
+            content_length = s3_obj.get('ContentLength')
+            if content_length:
+                response['Content-Length'] = str(content_length)
             return response
         except Exception as exc:
             return JsonResponse({'error': f'Failed to fetch audio: {exc}'}, status=500)

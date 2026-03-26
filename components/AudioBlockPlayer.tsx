@@ -126,6 +126,18 @@ export default function AudioBlockPlayer({
       // same cacheKey.  Resolves with the blob URL on success, null on failure.
       const fetchPromise: Promise<string | null> = (async () => {
         try {
+          // 3a-pre. Thundering-herd jitter: when an entire class starts the
+          // listening test simultaneously every browser fires the audio download
+          // at the same millisecond, saturating Gunicorn sync workers.
+          // A small random delay (0–1500 ms) spreads the burst across a 1.5 s
+          // window.  The playback-status fetch below is unaffected (it is fast
+          // and does not stream binary data), so the UI shows the play count
+          // immediately while the audio blob downloads in the background.
+          await new Promise<void>(resolve =>
+            setTimeout(resolve, Math.random() * 1500)
+          )
+          if (cancelled) return null
+
           // 3a. Playback status (play count / limit check)
           const statusRes = await apiFetch(
             getApiUrl(`student/clap-items/${itemId}/playback-status?assignment_id=${assignmentId}`),
