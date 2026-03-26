@@ -341,9 +341,17 @@ export default function ClapTestResultsPage() {
               <h1 className="text-lg font-semibold text-gray-900">
                 {testInfo ? `Results: ${testInfo.test_name}` : 'Loading...'}
               </h1>
-              {testInfo && (
-                <p className="text-xs text-gray-500">
-                  Test ID: {testInfo.test_id} &middot; {totalCount} student{totalCount !== 1 ? 's' : ''} attempted
+              {testInfo && summary && (
+                <p className="text-xs text-gray-500 flex items-center gap-1.5 flex-wrap">
+                  <span>Test ID: {testInfo.test_id}</span>
+                  <span>&middot;</span>
+                  <span>{summary.total_assigned} assigned</span>
+                  <span>&middot;</span>
+                  <span className="text-green-600 font-medium">{summary.completed} completed</span>
+                  <span>&middot;</span>
+                  <span className="text-yellow-600 font-medium">{summary.started} in progress</span>
+                  <span>&middot;</span>
+                  <span className="text-gray-400">{summary.not_started} not started</span>
                 </p>
               )}
             </div>
@@ -638,7 +646,15 @@ export default function ClapTestResultsPage() {
                     {totalPages > 1 && (
                       <div className="flex items-center justify-between px-4 py-3 border-t">
                         <p className="text-sm text-gray-500">
-                          Page {page} of {totalPages} ({totalCount} total)
+                          Page {page} of {totalPages} &nbsp;·&nbsp;
+                          {statusFilter && statusFilter !== 'all'
+                            ? `${totalCount} matching`
+                            : `${totalCount} students`}
+                          {statusFilter === 'all' && summary && summary.completed > 0 && (
+                            <span className="text-green-600 font-medium ml-1">
+                              ({summary.completed} completed)
+                            </span>
+                          )}
                         </p>
                         <div className="flex gap-2">
                           <Button
