@@ -54,6 +54,9 @@ export default function AudioBlockPlayer({
   const [isPlaying, setIsPlaying]         = useState(false)
   const [isLoading, setIsLoading]         = useState(true)
   const [audioError, setAudioError]       = useState<AudioErrorKind>(null)
+  // Incrementing retryKey re-runs the init useEffect — used by the Retry button
+  // to restart the audio fetch after a server or network error.
+  const [retryKey, setRetryKey]           = useState(0)
   const [audioBlobUrl, setAudioBlobUrl]   = useState<string | null>(null)
   const [progress, setProgress]           = useState(0)   // 0–1
   const [currentTime, setCurrentTime]     = useState(0)   // seconds
@@ -212,7 +215,7 @@ export default function AudioBlockPlayer({
       // ensures a fresh fetch if the last consumer unmounts before the blob lands.
       cancelled = true
     }
-  }, [itemId, assignmentId, hasAudioFile])
+  }, [itemId, assignmentId, hasAudioFile, retryKey])
 
   // ── Play / Pause ───────────────────────────────────────────────────────────
   const handlePlayPause = async () => {
@@ -335,7 +338,8 @@ export default function AudioBlockPlayer({
                   // Clear any stale in-progress entry so init() starts fresh
                   _audioFetchInProgress.delete(cacheKey)
                   setAudioError(null)
-                  setIsLoading(true)
+                  setIsLoading(true)   // show spinner immediately
+                  setRetryKey(k => k + 1)  // re-runs the init useEffect
                 }}
                 className="w-full py-2 text-sm font-semibold text-indigo-600 border border-indigo-200 rounded-lg hover:bg-indigo-50 transition-colors"
               >
