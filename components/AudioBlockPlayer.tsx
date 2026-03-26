@@ -8,6 +8,14 @@ import { toast } from 'sonner'
 import { getApiUrl, getAuthHeaders, apiFetch } from '@/lib/api-config'
 import { authStorage } from '@/lib/auth-storage'
 
+// ── Module-level blob cache ────────────────────────────────────────────────────
+// Keyed by `${itemId}:${assignmentId}`.
+// Blob URLs are created once and reused on every remount — navigating between
+// questions (Next/Previous) unmounts the component but the fetched audio is
+// retained here so no re-fetch (and no flicker / "Could not load" error) occurs.
+// Blob URLs are only revoked when the browser tab is closed (GC handles it).
+const _audioBlobCache = new Map<string, string>()
+
 interface AudioBlockPlayerProps {
   itemId: string
   assignmentId: string
@@ -39,18 +47,40 @@ export default function AudioBlockPlayer({
   }
 
   useEffect(() => {
-    // Track the blob URL in a ref so the cleanup always has the latest value
-    let blobUrl: string | null = null
+    // Abort controller — cancels in-flight fetches when the component unmounts
+    // (e.g. student navigates away before audio finishes downloading).
+    const controller = new AbortController()
 
     const init = async () => {
       try {
-        if (!hasAudioFile) return
+        if (!hasAudioFile) { setIsLoading(false); return }
+
+        // ── Cache hit: audio already downloaded this session ──────────────────
+        const cacheKey = `${itemId}:${assignmentId}`
+        const cached = _audioBlobCache.get(cacheKey)
+        if (cached) {
+          setAudioBlobUrl(cached)
+          // Still refresh play-count from server so the counter is accurate
+          apiFetch(
+            getApiUrl(`student/clap-items/${itemId}/playback-status?assignment_id=${assignmentId}`),
+            { headers: getAuthHeaders(), signal: controller.signal }
+          ).then(r => r.ok ? r.json() : null).then(d => {
+            if (!d || controller.signal.aborted) return
+            setPlayCount(d.play_count || 0)
+            setLimitReached(d.limit_reached || false)
+          }).catch(() => {/* non-critical */})
+          setIsLoading(false)
+          return
+        }
+
+        // ── Cache miss: first time loading this audio item ────────────────────
 
         // 1. Fetch playback status with proper JWT auth
         const statusRes = await apiFetch(
           getApiUrl(`student/clap-items/${itemId}/playback-status?assignment_id=${assignmentId}`),
-          { headers: getAuthHeaders() }
+          { headers: getAuthHeaders(), signal: controller.signal }
         )
+        if (controller.signal.aborted) return
         if (statusRes.ok) {
           const statusData = await statusRes.json()
           setPlayCount(statusData.play_count || 0)
@@ -61,29 +91,35 @@ export default function AudioBlockPlayer({
         //    (native <audio> cannot send Authorization headers, so we pre-fetch)
         const audioRes = await apiFetch(
           getApiUrl(`student/clap-items/${itemId}/audio?assignment_id=${assignmentId}`),
-          { headers: getAuthHeaders() }
+          { headers: getAuthHeaders(), signal: controller.signal }
         )
+        if (controller.signal.aborted) return
         if (!audioRes.ok) {
           setAudioError(true)
           return
         }
         const blob = await audioRes.blob()
-        blobUrl = URL.createObjectURL(blob)
+        if (controller.signal.aborted) return
+
+        const blobUrl = URL.createObjectURL(blob)
+        // Store in module-level cache — survives Next/Previous navigation
+        _audioBlobCache.set(cacheKey, blobUrl)
         setAudioBlobUrl(blobUrl)
       } catch (error) {
+        if ((error as Error).name === 'AbortError') return
         console.error('Audio init failed', error)
         setAudioError(true)
       } finally {
-        setIsLoading(false)
+        if (!controller.signal.aborted) setIsLoading(false)
       }
     }
 
     init()
 
-    // Revoke the object URL on unmount to free memory
-    return () => {
-      if (blobUrl) URL.revokeObjectURL(blobUrl)
-    }
+    // On unmount: cancel any in-flight fetch.
+    // Do NOT revoke the blob URL — it is intentionally kept in the cache
+    // so that navigating back to this question does not trigger a re-fetch.
+    return () => { controller.abort() }
   }, [itemId, assignmentId, hasAudioFile])
 
   const handlePlayPause = async () => {
