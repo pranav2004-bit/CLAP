@@ -73,8 +73,34 @@ async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 3)
     throw lastError
 }
 
-export default function ClapTestTakingPage() {
-    const params  = useParams()
+// ── Embedded-mode props (used by the unified assessment shell) ─────────────
+// When all props are undefined (standalone route access), the component reads
+// assignment_id and type from the URL via useParams() — identical to the
+// previous behaviour. When props are provided, they override useParams().
+interface TestModuleRunnerProps {
+    assignmentId?: string
+    type?: string
+    /** When true: hub shell manages fullscreen + anti-cheat. Module skips both. */
+    externalFullscreen?: boolean
+    /** Called after a successful manual module submit (replaces router.push in unified mode). */
+    onModuleSubmitted?: (type: string) => void
+}
+
+// Named export so [assignment_id]/page.tsx can import without dynamic route paths.
+export { ClapTestTakingPage as TestModuleRunner }
+
+export default function ClapTestTakingPage({
+    assignmentId: propsAssignmentId,
+    type: propsType,
+    externalFullscreen = false,
+    onModuleSubmitted,
+}: TestModuleRunnerProps = {}) {
+    const routeParams = useParams()
+    // Stable params object — uses props when in unified mode, URL params when standalone
+    const params = {
+        assignment_id: propsAssignmentId ?? (routeParams?.assignment_id as string),
+        type: propsType ?? (routeParams?.type as string),
+    } as const
     const router  = useRouter()
     const isOnline = useNetworkStatus()
 
@@ -335,14 +361,17 @@ export default function ClapTestTakingPage() {
     // onTabSwitch calls forceSubmitRef.current() — a stable forward-ref that will
     // point to the real handleForceSubmitAll once it is defined below.
     const { requestFullscreen, exitFullscreen } = useAntiCheat({
-        enabled: !isLoading,
+        // Disable when embedded — the parent shell (hub page) owns anti-cheat
+        enabled: !externalFullscreen && !isLoading,
         onTabSwitch: handleTabSwitch,
         onFullscreenExit: handleFullscreenExit,
     })
 
     // ── Enter fullscreen when content loads ───────────────────────────────────
+    // Skipped when externalFullscreen=true — the parent shell already holds fullscreen.
     useEffect(() => {
         if (isLoading || items.length === 0) return
+        if (externalFullscreen) return  // hub shell manages fullscreen
         if (isIOS) {
             document.documentElement.classList.add('ios-test-fullscreen')
         } else {
@@ -352,7 +381,7 @@ export default function ClapTestTakingPage() {
             document.documentElement.classList.remove('ios-test-fullscreen')
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isLoading, items.length])
+    }, [isLoading, items.length, externalFullscreen])
 
     // ── Fullscreen-exit 20 s countdown tick ───────────────────────────────────
     useEffect(() => {
@@ -404,13 +433,16 @@ export default function ClapTestTakingPage() {
     // Fires when the smooth 1-second countdown reaches zero on this component page.
     // Uses hasAutoSubmittedRef to prevent double-trigger (timer expiry + server
     // is_expired response arriving concurrently).
+    // Skipped when externalFullscreen=true — the parent hub shell owns the timer
+    // auto-submit to prevent a double-overlay race condition.
     useEffect(() => {
+        if (externalFullscreen) return  // hub shell handles timer expiry
         if (globalTimeLeft !== 0 || hasAutoSubmittedRef.current) return
         // No toast — overlay appears immediately via handleAutoSubmit
         handleAutoSubmit('client_timer')
     // globalTimeLeft changes every second; only act when it hits exactly 0
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [globalTimeLeft])
+    }, [globalTimeLeft, externalFullscreen])
 
     // ── P1-5: Centralised timer cleanup on component unmount ─────────────────
     // Individual save/retry timers are cleaned up inline within their own logic
@@ -733,10 +765,14 @@ export default function ClapTestTakingPage() {
                 localStorage.setItem(storageKey, JSON.stringify([...existing, params.type as string]))
             }
 
-            toast.success('Module submitted! Return to the assessment to continue.')
+            toast.success('Module submitted!')
 
-            // 3. Navigate back to the assignment hub (NOT to /submissions)
-            router.push(`/student/clap-tests/${params.assignment_id}`)
+            // 3. Notify parent shell (unified mode) or navigate back to hub (standalone)
+            if (onModuleSubmitted) {
+                onModuleSubmitted(params.type)
+            } else {
+                router.push(`/student/clap-tests/${params.assignment_id}`)
+            }
         } catch (error) {
             toast.error('Failed to submit module. Please try again or contact support.')
             console.error(error)
@@ -831,7 +867,7 @@ export default function ClapTestTakingPage() {
             inert: blocks ALL keyboard, pointer, and focus interaction (HTML spec).
             style fallback: covers iOS Safari 15.4 and below (no inert support).  */}
         <div
-            className="h-[calc(100dvh-1.875rem)] flex flex-col bg-slate-50 overflow-x-hidden"
+            className={`${externalFullscreen ? 'h-full' : 'h-[calc(100dvh-1.875rem)]'} flex flex-col bg-slate-50 overflow-x-hidden`}
             {...(autoSubmitActive ? { inert: '' as unknown as boolean } : {})}
             style={autoSubmitActive ? { pointerEvents: 'none', userSelect: 'none' } : undefined}
         >
@@ -974,18 +1010,21 @@ export default function ClapTestTakingPage() {
             {/* ── Header ─────────────────────────────────────────────────────── */}
             <header className={`bg-white border-b px-4 sm:px-6 py-3 flex items-center justify-between shadow-sm gap-3 shrink-0 ${!isOnline ? 'mt-9' : ''}`}>
                 <div className="flex items-center gap-3 min-w-0">
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={async () => {
-                            await exitFullscreen()
-                            document.documentElement.classList.remove('ios-test-fullscreen')
-                            router.back()
-                        }}
-                    >
-                        <ChevronLeft className="w-4 h-4 mr-1" />
-                        <span className="hidden sm:inline">Quit</span>
-                    </Button>
+                    {/* Hide in unified mode — parent shell owns the exit flow */}
+                    {!externalFullscreen && (
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={async () => {
+                                await exitFullscreen()
+                                document.documentElement.classList.remove('ios-test-fullscreen')
+                                router.back()
+                            }}
+                        >
+                            <ChevronLeft className="w-4 h-4 mr-1" />
+                            <span className="hidden sm:inline">Quit</span>
+                        </Button>
+                    )}
                     <h1 className="font-bold text-base sm:text-lg capitalize truncate min-w-0">
                         {/* Mobile: show only the component name (no "Assessment") to avoid
                             truncation — "Listening", "Reading", "Writing", "V & G" etc.   */}

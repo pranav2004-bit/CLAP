@@ -12,6 +12,7 @@ import { getApiUrl, getAuthHeaders, apiFetch, silentFetch } from '@/lib/api-conf
 import { useAntiCheat } from '@/hooks/useAntiCheat'
 import { useNetworkStatus } from '@/hooks/useNetworkStatus'
 import { AutoSubmitOverlay, type AutoSubmitReason, type AutoSubmitStatus } from '@/components/AutoSubmitOverlay'
+import { TestModuleRunner } from '@/app/student/clap-tests/[assignment_id]/[type]/page'
 
 const STATUS_STEPS = [
   'PENDING',
@@ -66,6 +67,9 @@ export default function StudentClapTestDetailPage() {
 
   // Completed Components State
   const [submittedComponents, setSubmittedComponents] = useState<string[]>([])
+
+  // ── Unified shell: which test module is currently active in the center pane ──
+  const [activeTest, setActiveTest] = useState<string | null>(null)
 
   // Button loading states
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -179,6 +183,20 @@ export default function StudentClapTestDetailPage() {
               }
             }
 
+            // ── Auto-select first incomplete test for the unified shell ──────────
+            // Runs after localStorage is loaded so submittedComponents is accurate.
+            if (found.status !== 'completed') {
+              const savedComponents: string[] = (() => {
+                if (found.retest_granted && found.status === 'assigned') return []
+                try {
+                  const s = localStorage.getItem(`submitted_components_${params.assignment_id}`)
+                  return s ? JSON.parse(s) : []
+                } catch { return [] }
+              })()
+              const firstIncomplete = found.components?.find((c: any) => !savedComponents.includes(c.type))
+              setActiveTest(firstIncomplete?.type ?? found.components?.[0]?.type ?? null)
+            }
+
             // If not yet submitted, call /start to get a server-anchored start time
             if (found.status !== 'completed') {
               const startResp = await apiFetch(getApiUrl(`student/clap-assignments/${params.assignment_id}/start`), {
@@ -283,6 +301,23 @@ export default function StudentClapTestDetailPage() {
       setIsSubmitting(false)            // re-enable button on error
     }
   }, [params.assignment_id, router])
+
+  // ── handleModuleSubmitted — called by TestModuleRunner after manual submit ──
+  const handleModuleSubmitted = useCallback((type: string) => {
+    const storageKey = `submitted_components_${params.assignment_id}`
+    const existing = JSON.parse(localStorage.getItem(storageKey) || '[]') as string[]
+    if (!existing.includes(type)) {
+      const updated = [...existing, type]
+      localStorage.setItem(storageKey, JSON.stringify(updated))
+      setSubmittedComponents(updated)
+      // Auto-advance to next incomplete test
+      if (assignment) {
+        const next = assignment.components?.find((c: any) => !updated.includes(c.type))
+        if (next) setActiveTest(next.type)
+      }
+    }
+    toast.success(`${type.charAt(0).toUpperCase() + type.slice(1)} module submitted!`)
+  }, [params.assignment_id, assignment])
 
   // ── handleAutoSubmit ─────────────────────────────────────────────────────
   // Immediately paints the blocking overlay (synchronous state flush), then
@@ -693,7 +728,7 @@ export default function StudentClapTestDetailPage() {
 
       {/* Main content — made inert while overlay is active (blocks all keyboard + pointer events) */}
       <div
-        className="min-h-dvh bg-background overflow-x-hidden"
+        className="h-dvh flex flex-col bg-background overflow-hidden"
         {...(autoSubmitActive ? { inert: '' as unknown as boolean } : {})}
         style={autoSubmitActive ? { pointerEvents: 'none', userSelect: 'none' } : undefined}
       >
@@ -872,7 +907,7 @@ export default function StudentClapTestDetailPage() {
         </div>
       )}
 
-    <div className={`px-4 py-4 pb-16 sm:px-6 sm:pb-8 max-w-4xl mx-auto ${!isOnline ? 'pt-10 sm:pt-12' : ''}`}>
+    <div className={`px-4 pt-4 pb-3 sm:px-6 max-w-4xl w-full mx-auto shrink-0 ${!isOnline ? 'pt-10 sm:pt-12' : ''}`}>
       {/* Header row — context label on left, action on right */}
       <div className="flex items-center justify-between mb-3">
         <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-widest">Assessment</span>
@@ -961,126 +996,149 @@ export default function StudentClapTestDetailPage() {
 
       {/* Tab-switch warning banner */}
       {tabWarnings === 1 && (
-        <div className="bg-yellow-50 border border-yellow-300 rounded-lg px-4 py-3 flex items-start gap-3 mb-4">
+        <div className="bg-yellow-50 border border-yellow-300 rounded-lg px-4 py-3 flex items-start gap-3 mb-3">
           <AlertTriangle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
           <div>
             <p className="text-yellow-900 font-semibold text-sm">Tab switch detected (1/2)</p>
-            <p className="text-yellow-700 text-sm">One more tab switch will automatically submit your entire assessment.</p>
+            <p className="text-yellow-700 text-sm">One more will automatically submit your entire assessment.</p>
+          </div>
+        </div>
+      )}
+      </div>{/* closes the px-4 py-4 content div */}
+
+      {/* ── Post-submission screen (submission_id present) ─────────────────── */}
+      {submissionId && (
+        <div className="flex-1 flex items-center justify-center px-4 pb-8">
+          <div className="flex flex-col items-center gap-6 max-w-sm w-full">
+            <div className="text-center">
+              <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <CheckCircle className="w-8 h-8 text-green-600" />
+              </div>
+              <h2 className="text-xl font-bold text-gray-900 mb-1">Assessment Submitted</h2>
+              <p className="text-sm text-gray-500">Your assessment has been submitted for evaluation.</p>
+            </div>
+            <Button
+              size="lg"
+              disabled={isBackLoading}
+              onClick={() => {
+                if (isBackLoading) return
+                setIsBackLoading(true)
+                router.push('/student/clap-tests')
+              }}
+              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-10 py-4 rounded-xl disabled:opacity-70"
+            >
+              {isBackLoading
+                ? <><Loader2 className="w-5 h-5 mr-2 animate-spin" />Loading…</>
+                : <><ArrowLeft className="w-5 h-5 mr-2" />Exit to Dashboard</>}
+            </Button>
           </div>
         </div>
       )}
 
-      {/* ── Component list — clean, compact, Apple-style rows ──────────────── */}
-      <div className="space-y-2">
-        {assignment.components?.map((comp: any) => {
-          const Icon = getIcon(comp.type)
-          const isSubmitted = submittedComponents.includes(comp.type)
-          const isAssignmentDone = assignment.status === 'completed' || assignment.status === 'expired'
-          const isDone      = isSubmitted || isAssignmentDone || !!submissionId
-          const isDisabled  = isDone || isTestLocked
-          const isNavigating = loadingComponent === comp.type
+      {/* ── Unified assessment interface ───────────────────────────────────── */}
+      {!submissionId && (
+        <div className="flex flex-col lg:flex-row flex-1 overflow-hidden min-h-0">
 
-          return (
-            <div
-              key={comp.id}
-              onClick={() => {
-                if (!isDisabled && !loadingComponent) {
-                  setLoadingComponent(comp.type)
-                  router.push(`/student/clap-tests/${params.assignment_id}/${comp.type}`)
-                }
-              }}
-              className={`
-                bg-white rounded-2xl border overflow-hidden touch-manipulation
-                transition-all duration-150
-                ${isDone
-                  ? 'border-green-100 bg-green-50/40'
-                  : isDisabled
-                    ? 'border-gray-100 opacity-50 cursor-not-allowed'
-                    : 'border-gray-100 cursor-pointer active:scale-[0.985] active:shadow-inner hover:border-indigo-100 hover:shadow-md'}
-              `}
-            >
-              <div className="flex items-center gap-3 px-4 py-3.5">
+          {/* ── LEFT SIDEBAR (desktop) / TOP TAB BAR (mobile) ────────────── */}
+          <div className="
+            bg-white border-b lg:border-b-0 lg:border-r border-gray-100
+            flex flex-row overflow-x-auto lg:overflow-x-hidden lg:overflow-y-auto
+            lg:flex-col lg:w-56 xl:w-64 shrink-0 lg:justify-between
+          ">
+            <div className="flex flex-row lg:flex-col lg:flex-1 min-w-0">
+              {assignment.components?.map((comp: any) => {
+                const Icon = getIcon(comp.type)
+                const isAssignmentDone = assignment.status === 'completed' || assignment.status === 'expired'
+                const isSubmitted = submittedComponents.includes(comp.type) || isAssignmentDone
+                const isActive = activeTest === comp.type
 
-                {/* Icon badge */}
-                <div className={`w-10 h-10 rounded-xl flex-shrink-0 flex items-center justify-center
-                  ${isDone ? 'bg-green-100 text-green-600' : 'bg-indigo-50 text-indigo-600'}`}>
-                  {isNavigating
-                    ? <Loader2 className="w-5 h-5 animate-spin" />
-                    : <Icon className="w-5 h-5" />}
-                </div>
-
-                {/* Title */}
-                <div className="flex-1 min-w-0">
-                  <p className={`text-sm font-semibold leading-snug truncate
-                    ${isDone ? 'text-green-800' : 'text-gray-900'}`}>{getDisplayTitle(comp.type, comp.title)}</p>
-                </div>
-
-                {/* Status / action chip */}
-                {isDone ? (
-                  <div className="flex items-center gap-1.5 flex-shrink-0 text-green-600">
-                    <CheckCircle className="w-4 h-4" />
-                    <span className="text-xs font-bold">Submitted</span>
-                  </div>
-                ) : (
-                  <div className={`flex items-center gap-0.5 rounded-full px-3 py-1.5 text-[11px] font-bold flex-shrink-0 whitespace-nowrap
-                    ${isDisabled ? 'bg-gray-100 text-gray-400' : 'bg-indigo-600 text-white'}`}>
-                    {isNavigating ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <>
-                        {assignment.started_at ? 'Resume' : 'Start'}
-                        <ChevronRight className="w-3 h-3 ml-0.5" />
-                      </>
+                return (
+                  <button
+                    key={comp.id}
+                    onClick={() => { if (!isTestLocked) setActiveTest(comp.type) }}
+                    disabled={isTestLocked}
+                    className={`
+                      flex items-center gap-2.5 px-4 py-3.5 transition-all touch-manipulation
+                      shrink-0 lg:shrink-0 lg:w-full text-left whitespace-nowrap lg:whitespace-normal
+                      border-b-2 lg:border-b-0 lg:border-l-2 border-transparent
+                      disabled:cursor-not-allowed disabled:opacity-50
+                      ${isActive
+                        ? 'bg-indigo-50 text-indigo-700 border-indigo-500 font-semibold'
+                        : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}
+                    `}
+                  >
+                    {/* Submission status dot */}
+                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                      isSubmitted ? 'bg-green-500' : 'bg-gray-300'
+                    }`} />
+                    <Icon className="w-4 h-4 flex-shrink-0" />
+                    <span className="text-sm truncate lg:flex-1">
+                      {getDisplayTitle(comp.type, comp.title)}
+                    </span>
+                    {isSubmitted && (
+                      <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0 hidden lg:block" />
                     )}
-                  </div>
-                )}
-
-              </div>
+                  </button>
+                )
+              })}
             </div>
-          )
-        })}
-      </div>
 
-      {/* Exit to Dashboard — shown on the post-submission screen */}
-      {submissionId && (
-        <div className="mt-6 sm:mt-8 flex justify-center">
-          <Button
-            size="lg"
-            disabled={isBackLoading}
-            onClick={() => {
-              if (isBackLoading) return
-              setIsBackLoading(true)
-              router.push('/student/clap-tests')
-            }}
-            className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-10 py-4 rounded-xl disabled:opacity-70"
-          >
-            {isBackLoading
-              ? <><Loader2 className="w-5 h-5 mr-2 animate-spin" />Loading…</>
-              : <><ArrowLeft className="w-5 h-5 mr-2" />Exit to Dashboard</>}
-          </Button>
+            {/* Grand submit — sidebar (desktop only) */}
+            {!submissionId && assignment.status !== 'completed' && assignment.components &&
+              submittedComponents.length === assignment.components.length && (
+              <div className="hidden lg:block p-4 border-t border-gray-100 shrink-0">
+                <Button
+                  size="sm"
+                  disabled={isSubmitting}
+                  className="w-full bg-green-600 hover:bg-green-700 text-white font-bold border-b-2 border-green-800 active:border-b-0 active:translate-y-[1px] disabled:opacity-70"
+                  onClick={() => handleFinalSubmit(false)}
+                >
+                  {isSubmitting
+                    ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" />Submitting…</>
+                    : <><CheckCircle className="w-4 h-4 mr-1.5" />Final Submit</>}
+                </Button>
+              </div>
+            )}
+          </div>
+
+          {/* ── CENTER: Active test module ────────────────────────────────── */}
+          <div className="flex-1 overflow-hidden min-h-0 flex flex-col">
+            {activeTest ? (
+              <TestModuleRunner
+                key={activeTest}
+                assignmentId={params.assignment_id as string}
+                type={activeTest}
+                externalFullscreen
+                onModuleSubmitted={handleModuleSubmitted}
+              />
+            ) : (
+              <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
+                <div className="text-center">
+                  <Brain className="w-10 h-10 mx-auto mb-3 opacity-30" />
+                  <p>Select a module from the sidebar to begin.</p>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
-      {!submissionId && assignment.status !== 'completed' && assignment.components && submittedComponents.length === assignment.components.length && (
-        <div className="mt-6 sm:mt-8 flex justify-center px-0">
+      {/* Grand submit — bottom bar (mobile only, shown when all submitted) */}
+      {!submissionId && assignment.status !== 'completed' && assignment.components &&
+        submittedComponents.length === assignment.components.length && (
+        <div className="lg:hidden shrink-0 p-4 border-t border-gray-100 bg-white">
           <Button
             size="lg"
             disabled={isSubmitting}
-            className="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white font-bold text-base sm:text-lg px-8 sm:px-12 py-5 sm:py-6 rounded-xl shadow-lg border-b-4 border-green-800 active:border-b-0 active:translate-y-[4px] disabled:opacity-70 disabled:cursor-not-allowed"
+            className="w-full bg-green-600 hover:bg-green-700 text-white font-bold border-b-4 border-green-800 active:border-b-0 active:translate-y-[4px] disabled:opacity-70"
             onClick={() => handleFinalSubmit(false)}
           >
-            {isSubmitting ? (
-              <>
-                <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                Submitting...
-              </>
-            ) : (
-              'Final Submit Entire Assessment'
-            )}
+            {isSubmitting
+              ? <><Loader2 className="w-5 h-5 mr-2 animate-spin" />Submitting…</>
+              : 'Final Submit Entire Assessment'}
           </Button>
         </div>
       )}
-    </div>
       </div>
     </>
   )
