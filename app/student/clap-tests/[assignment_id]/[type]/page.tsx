@@ -1050,8 +1050,9 @@ export default function ClapTestTakingPage({
                     3 states:
                     • !timerLoaded              → --:-- skeleton (first poll pending / 429 backoff)
                     • timerLoaded & time > 0    → live countdown with colour coding
-                    • timerLoaded & time == null → hidden (no timer configured for this test)  */}
-                {(!timerLoaded || globalTimeLeft !== null) && (
+                    • timerLoaded & time == null → hidden (no timer configured for this test)
+                    Hidden when externalFullscreen=true — the parent hub top bar owns the timer. */}
+                {!externalFullscreen && (!timerLoaded || globalTimeLeft !== null) && (
                     <div className={`sm:hidden flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-mono font-bold text-sm border flex-shrink-0 transition-colors duration-500 ${
                         !timerLoaded
                             ? 'bg-gray-50 border-dashed border-gray-200 text-gray-300'
@@ -1090,8 +1091,9 @@ export default function ClapTestTakingPage({
                     </button>
 
                     {/* Global countdown timer — DESKTOP only (hidden on mobile, visible sm+).
-                        Last child of this group → sits at the rightmost edge of the header. */}
-                    {(!timerLoaded || globalTimeLeft !== null) && (
+                        Last child of this group → sits at the rightmost edge of the header.
+                        Hidden when externalFullscreen=true — the parent hub top bar owns the timer. */}
+                    {!externalFullscreen && (!timerLoaded || globalTimeLeft !== null) && (
                         <div className={`hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-mono font-bold text-sm border flex-shrink-0 transition-colors duration-500 ${
                             !timerLoaded
                                 ? 'bg-gray-50 border-dashed border-gray-200 text-gray-300'

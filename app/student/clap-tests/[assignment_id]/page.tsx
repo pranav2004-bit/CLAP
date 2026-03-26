@@ -771,7 +771,7 @@ export default function StudentClapTestDetailPage() {
 
       {/* ── Two-step exit confirmation modal ──────────────────────────────── */}
       {exitStep >= 1 && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950 px-4">
           <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
             <div className="flex items-center gap-3 mb-4">
               <AlertTriangle className="text-red-500 w-7 h-7 flex-shrink-0" />
@@ -827,7 +827,7 @@ export default function StudentClapTestDetailPage() {
 
       {/* ── Fullscreen exit warning — blocks exam until student re-enters or submits ── */}
       {showFullscreenExitWarning && !isAutoSubmitRef.current && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 px-4">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-gray-950 px-4">
           <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl text-center">
 
             {/* Strike count badge */}
@@ -910,7 +910,7 @@ export default function StudentClapTestDetailPage() {
 
       {/* ── Fullscreen prompt — must be a direct click to satisfy browser policy ── */}
       {showFullscreenPrompt && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950 px-4">
           <div className="bg-white rounded-2xl p-8 max-w-sm w-full shadow-2xl text-center">
             <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mx-auto mb-4">
               <svg className="w-8 h-8 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
