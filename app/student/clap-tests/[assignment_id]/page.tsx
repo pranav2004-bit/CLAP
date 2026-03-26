@@ -70,6 +70,8 @@ export default function StudentClapTestDetailPage() {
 
   // ── Unified shell: which test module is currently active in the center pane ──
   const [activeTest, setActiveTest] = useState<string | null>(null)
+  // Mobile module picker dropdown open/close state
+  const [isModuleDropdownOpen, setIsModuleDropdownOpen] = useState(false)
 
   // Button loading states
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -756,7 +758,7 @@ export default function StudentClapTestDetailPage() {
 
       {/* Main content — made inert while overlay is active (blocks all keyboard + pointer events) */}
       <div
-        className="h-dvh flex flex-col bg-background overflow-hidden"
+        className="h-[calc(100dvh-1.875rem)] flex flex-col bg-background overflow-hidden"
         {...(autoSubmitActive ? { inert: '' as unknown as boolean } : {})}
         style={autoSubmitActive ? { pointerEvents: 'none', userSelect: 'none' } : undefined}
       >
@@ -771,7 +773,7 @@ export default function StudentClapTestDetailPage() {
 
       {/* ── Two-step exit confirmation modal ──────────────────────────────── */}
       {exitStep >= 1 && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950 px-4">
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-gray-950 px-4">
           <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
             <div className="flex items-center gap-3 mb-4">
               <AlertTriangle className="text-red-500 w-7 h-7 flex-shrink-0" />
@@ -827,7 +829,7 @@ export default function StudentClapTestDetailPage() {
 
       {/* ── Fullscreen exit warning — blocks exam until student re-enters or submits ── */}
       {showFullscreenExitWarning && !isAutoSubmitRef.current && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-gray-950 px-4">
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-gray-950 px-4">
           <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl text-center">
 
             {/* Strike count badge */}
@@ -910,7 +912,7 @@ export default function StudentClapTestDetailPage() {
 
       {/* ── Fullscreen prompt — must be a direct click to satisfy browser policy ── */}
       {showFullscreenPrompt && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950 px-4">
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-gray-950 px-4">
           <div className="bg-white rounded-2xl p-8 max-w-sm w-full shadow-2xl text-center">
             <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mx-auto mb-4">
               <svg className="w-8 h-8 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1038,13 +1040,77 @@ export default function StudentClapTestDetailPage() {
       {!submissionId && (
         <div className="flex flex-col lg:flex-row flex-1 overflow-hidden min-h-0">
 
-          {/* ── LEFT SIDEBAR (desktop) / TOP TAB BAR (mobile) ────────────── */}
-          <div className="
-            bg-white border-b lg:border-b-0 lg:border-r border-gray-100
-            flex flex-row overflow-x-auto lg:overflow-x-hidden lg:overflow-y-auto
-            lg:flex-col lg:w-56 xl:w-64 shrink-0 lg:justify-between
-          ">
-            <div className="flex flex-row lg:flex-col lg:flex-1 min-w-0">
+          {/* ── MOBILE MODULE PICKER: compact dropdown (hidden on lg+) ──────── */}
+          <div className="lg:hidden shrink-0 relative bg-white border-b border-gray-100">
+            <button
+              onClick={() => !isTestLocked && setIsModuleDropdownOpen(o => !o)}
+              disabled={isTestLocked}
+              className="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {(() => {
+                const isAssignmentDone = assignment.status === 'completed' || assignment.status === 'expired'
+                if (activeTest) {
+                  const ActiveIcon = getIcon(activeTest)
+                  const isSubmitted = submittedComponents.includes(activeTest) || isAssignmentDone
+                  return (
+                    <>
+                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isSubmitted ? 'bg-green-500' : 'bg-indigo-500'}`} />
+                      <ActiveIcon className="w-4 h-4 text-indigo-600 flex-shrink-0" />
+                      <span className="text-sm font-semibold text-gray-800 flex-1 truncate">
+                        {getDisplayTitle(activeTest, activeTest.charAt(0).toUpperCase() + activeTest.slice(1) + ' Test')}
+                      </span>
+                    </>
+                  )
+                }
+                return <span className="text-sm text-gray-400 flex-1">Select a module…</span>
+              })()}
+              <span className="text-[11px] text-gray-400 shrink-0 font-medium">
+                {submittedComponents.length}/{assignment.components?.length ?? 0} done
+              </span>
+              <ChevronRight className={`w-4 h-4 text-gray-400 flex-shrink-0 transition-transform duration-200 ${isModuleDropdownOpen ? 'rotate-90' : ''}`} />
+            </button>
+
+            {/* Dropdown list */}
+            {isModuleDropdownOpen && (
+              <>
+                {/* Backdrop to close on outside click */}
+                <div
+                  className="fixed inset-0 z-[150]"
+                  onClick={() => setIsModuleDropdownOpen(false)}
+                />
+                <div className="absolute top-full left-0 right-0 bg-white border border-gray-200 shadow-xl z-[160] rounded-b-lg overflow-hidden">
+                  {[...(assignment.components ?? [])].sort((a: any, b: any) =>
+                    (MODULE_ORDER[a.type] ?? 99) - (MODULE_ORDER[b.type] ?? 99)
+                  ).map((comp: any) => {
+                    const Icon = getIcon(comp.type)
+                    const isAssignmentDone = assignment.status === 'completed' || assignment.status === 'expired'
+                    const isSubmitted = submittedComponents.includes(comp.type) || isAssignmentDone
+                    const isActive = activeTest === comp.type
+                    return (
+                      <button
+                        key={comp.id}
+                        onClick={() => {
+                          if (!isTestLocked) setActiveTest(comp.type)
+                          setIsModuleDropdownOpen(false)
+                        }}
+                        className={`w-full flex items-center gap-2.5 px-4 py-3 text-left transition-colors touch-manipulation
+                          ${isActive ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-gray-700 hover:bg-gray-50'}`}
+                      >
+                        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isSubmitted ? 'bg-green-500' : 'bg-gray-300'}`} />
+                        <Icon className="w-4 h-4 flex-shrink-0" />
+                        <span className="text-sm flex-1">{getDisplayTitle(comp.type, comp.title)}</span>
+                        {isSubmitted && <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />}
+                      </button>
+                    )
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* ── LEFT SIDEBAR (desktop only, lg+) ──────────────────────────── */}
+          <div className="hidden lg:flex flex-col bg-white border-r border-gray-100 overflow-y-auto w-56 xl:w-64 shrink-0 justify-between">
+            <div className="flex flex-col flex-1">
               {[...(assignment.components ?? [])].sort((a: any, b: any) =>
                 (MODULE_ORDER[a.type] ?? 99) - (MODULE_ORDER[b.type] ?? 99)
               ).map((comp: any) => {
@@ -1060,34 +1126,26 @@ export default function StudentClapTestDetailPage() {
                     disabled={isTestLocked}
                     className={`
                       flex items-center gap-2.5 px-3 py-3 transition-all touch-manipulation
-                      shrink-0 lg:w-full text-left whitespace-nowrap lg:whitespace-normal
-                      border-b-2 lg:border-b-0 lg:border-l-[3px] border-transparent
+                      w-full text-left border-l-[3px] border-transparent
                       disabled:cursor-not-allowed disabled:opacity-50
                       ${isActive
                         ? 'bg-indigo-50 text-indigo-700 border-indigo-500 font-semibold'
                         : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}
                     `}
                   >
-                    {/* Submission status dot */}
-                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                      isSubmitted ? 'bg-green-500' : 'bg-gray-300'
-                    }`} />
+                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isSubmitted ? 'bg-green-500' : 'bg-gray-300'}`} />
                     <Icon className="w-4 h-4 flex-shrink-0" />
-                    <span className="text-sm truncate lg:flex-1">
-                      {getDisplayTitle(comp.type, comp.title)}
-                    </span>
-                    {isSubmitted && (
-                      <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0 hidden lg:block" />
-                    )}
+                    <span className="text-sm flex-1">{getDisplayTitle(comp.type, comp.title)}</span>
+                    {isSubmitted && <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />}
                   </button>
                 )
               })}
             </div>
 
-            {/* Grand submit — sidebar (desktop only) */}
+            {/* Grand submit — sidebar bottom (desktop only) */}
             {!submissionId && assignment.status !== 'completed' && assignment.components &&
               submittedComponents.length === assignment.components.length && (
-              <div className="hidden lg:block p-4 border-t border-gray-100 shrink-0">
+              <div className="p-4 border-t border-gray-100 shrink-0">
                 <Button
                   size="sm"
                   disabled={isSubmitting}
