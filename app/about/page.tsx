@@ -207,17 +207,17 @@ function ProfileCard({ member, rowIndex }: { member: ProfileMember; rowIndex: nu
 
       {/* Photo or monogram — w-32 h-32 matches tech-team circles exactly */}
       {member.photo ? (
-        <div className="w-32 h-32 rounded-full overflow-hidden mx-auto mb-5 ring-2 ring-border relative">
+        <div className="w-24 h-24 sm:w-32 sm:h-32 rounded-full overflow-hidden mx-auto mb-4 sm:mb-5 ring-2 ring-border relative">
           <Image
             src={member.photo}
             alt={member.name}
             fill
-            sizes="128px"
+            sizes="(max-width: 640px) 96px, 128px"
             className="object-cover object-center"
           />
         </div>
       ) : (
-        <div className={`w-32 h-32 rounded-full ${accent.chip} flex items-center justify-center mx-auto mb-5 ring-2 ring-border`}>
+        <div className={`w-24 h-24 sm:w-32 sm:h-32 rounded-full ${accent.chip} flex items-center justify-center mx-auto mb-4 sm:mb-5 ring-2 ring-border`}>
           <span className={`text-2xl font-bold ${accent.text} select-none tracking-wide`}>
             {member.initials}
           </span>
@@ -254,7 +254,7 @@ function ProfileCard({ member, rowIndex }: { member: ProfileMember; rowIndex: nu
 function PlaceholderCard() {
   return (
     <div className="bg-white rounded-2xl border border-dashed border-gray-200 shadow-sm p-6 flex flex-col items-center text-center">
-      <div className="w-32 h-32 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-5 ring-2 ring-border">
+      <div className="w-24 h-24 sm:w-32 sm:h-32 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-4 sm:mb-5 ring-2 ring-border">
         <Users className="w-10 h-10 text-gray-300" />
       </div>
       <div className="space-y-2 mb-1">
