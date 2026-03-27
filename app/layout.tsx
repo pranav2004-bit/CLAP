@@ -58,15 +58,15 @@ export default function RootLayout({
           <div className="w-full max-w-7xl mx-auto flex items-center justify-center md:justify-between">
             <div className="hidden md:block flex-1"></div> {/* Left spacer for desktop symmetry */}
 
-            <div className="flex justify-center items-baseline gap-2 flex-none md:flex-1 w-full md:w-auto">
-              <span className="uppercase tracking-[0.15em] font-medium text-foreground opacity-70 text-[9px] md:text-[10px]">A</span>
+            <div className="flex justify-center items-center gap-2 flex-none md:flex-1 w-full md:w-auto">
+              <span className="uppercase tracking-[0.15em] font-medium text-foreground opacity-70 text-[11px] md:text-[13px]">A</span>
               <span className="font-black text-primary tracking-[0.2em] text-[11px] md:text-[13px] uppercase antialiased">SANJIVO</span>
-              <span className="tracking-[0.15em] font-medium text-foreground opacity-70 text-[9px] md:text-[10px]">Product</span>
+              <span className="tracking-[0.15em] font-medium text-foreground opacity-70 text-[11px] md:text-[13px]">Product</span>
             </div>
 
-            <div className="hidden md:flex flex-1 justify-end items-center gap-1.5 opacity-80">
-              <span className="italic font-light text-foreground opacity-70">Co-Powered by</span>
-              <span className="font-black text-primary tracking-wide">Aura-Tech-Vision</span>
+            <div className="hidden md:flex flex-1 justify-end items-center gap-1.5">
+              <span className="italic font-medium text-foreground text-[11px] md:text-[13px]">Co-Powered by</span>
+              <span className="font-black text-primary tracking-wide text-[11px] md:text-[13px]">AuraTech-Vision</span>
             </div>
           </div>
         </footer>
