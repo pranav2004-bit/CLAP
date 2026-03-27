@@ -142,9 +142,9 @@ export default function StudentDashboard() {
               <Image
                 src="/images/anits-logo.png"
                 alt="ANITS"
-                width={40}
-                height={40}
-                className="h-9 w-auto object-contain flex-shrink-0"
+                width={48}
+                height={48}
+                className="h-12 w-auto object-contain flex-shrink-0 my-0.5"
                 priority
               />
               <div className="w-px h-7 bg-border" />
