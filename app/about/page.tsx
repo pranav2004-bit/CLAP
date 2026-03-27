@@ -542,7 +542,6 @@ export default function AboutPage() {
             <div className="flex items-center gap-2">
               <Image src="/images/clap-logo.png" alt="CLAP Logo" width={32} height={32} className="rounded-lg" style={{ width: 'auto', height: 'auto' }} />
               <span className="font-semibold">CLAP</span>
-              <span className="text-sm text-muted-foreground ml-2">A SANJIVO Product</span>
             </div>
             <p className="text-sm text-muted-foreground">© 2026 CLAP. All rights reserved.</p>
           </div>

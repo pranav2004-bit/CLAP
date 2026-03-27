@@ -292,7 +292,6 @@ export default function LandingPage() {
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-2">
               <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={84} height={34} className="w-auto h-8 object-contain" style={{ width: 'auto', height: 'auto' }} />
-              <span className="text-sm text-muted-foreground ml-2">A SANJIVO Product</span>
             </div>
             <p className="text-sm text-muted-foreground">
               © 2026 CLAP. All rights reserved.

@@ -98,8 +98,7 @@ function LoginContent() {
 
         <div className="relative z-10 flex flex-col justify-center px-12 py-16">
           <Link href="/" className="block mb-12">
-            <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={172} height={70} className="w-auto h-16 object-contain mb-2 brightness-0 invert" priority style={{ width: 'auto', height: 'auto' }} />
-            <div className="text-sm text-primary-foreground/80 font-medium pl-1">A SANJIVO Product</div>
+            <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={172} height={70} className="w-auto h-16 object-contain brightness-0 invert" priority />
           </Link>
 
           <h1 className="text-4xl font-bold text-primary-foreground mb-4">
