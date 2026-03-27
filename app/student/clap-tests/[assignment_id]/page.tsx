@@ -255,7 +255,6 @@ export default function StudentClapTestDetailPage() {
 
   // ── handleFinalSubmit (stable — used by auto-submit + manual submit) ───────
   const handleFinalSubmit = useCallback(async (autoSubmit = false) => {
-    if (!autoSubmit && !confirm('Are you sure you want to submit the ENTIRE assessment? You will not be able to make changes.')) return;
     setIsSubmitting(true)
     try {
       let newSubmissionId: string
