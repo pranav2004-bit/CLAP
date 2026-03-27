@@ -539,9 +539,9 @@ export default function AboutPage() {
       <footer className="py-12 border-t border-border">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-            <div className="flex items-center gap-2">
-              <Image src="/images/clap-logo.png" alt="CLAP Logo" width={32} height={32} className="rounded-lg" style={{ width: 'auto', height: 'auto' }} />
-              <span className="font-semibold">CLAP</span>
+            <div className="flex flex-col gap-0.5">
+              <span className="text-sm font-bold tracking-wide text-foreground uppercase">Anil Neerukonda Institute of Technology &amp; Sciences</span>
+              <span className="text-xs text-muted-foreground">Continuing Language Assessment Program</span>
             </div>
             <p className="text-sm text-muted-foreground">© 2026 CLAP. All rights reserved.</p>
           </div>
