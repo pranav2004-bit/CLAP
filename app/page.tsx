@@ -90,8 +90,19 @@ export default function LandingPage() {
 
   return (
     <div className="min-h-screen bg-background">
+      {/* Institutional Header Bar */}
+      <div className="fixed top-0 left-0 right-0 z-[60] bg-white border-b border-border/50 h-10 flex items-center">
+        <div className="container mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <Image src="/images/anits-logo.png" alt="ANITS Logo" width={28} height={28} className="h-7 w-auto object-contain" />
+            <span className="text-xs font-semibold text-foreground hidden sm:block tracking-wide">Anil Neerukonda Institute of Technology &amp; Sciences</span>
+          </div>
+          <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={72} height={29} className="h-6 w-auto object-contain" />
+        </div>
+      </div>
+
       {/* Navigation */}
-      <nav className="fixed top-0 left-0 right-0 z-50 glass">
+      <nav className="fixed top-10 left-0 right-0 z-50 glass">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between">
             <div className="hidden md:flex items-center gap-8">
@@ -113,7 +124,7 @@ export default function LandingPage() {
       </nav>
 
       {/* Hero Section */}
-      <section className="relative pt-24 md:pt-32 pb-16 md:pb-20 overflow-hidden">
+      <section className="relative pt-[136px] md:pt-[168px] pb-16 md:pb-20 overflow-hidden">
         {/* Background gradient */}
         <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-background to-accent/5" />
         <div className="absolute top-20 left-1/4 w-96 h-96 bg-primary/10 rounded-full blur-3xl" />
