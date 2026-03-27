@@ -402,13 +402,13 @@ export default function StudentProfilePage() {
 
                 <div className="space-y-2">
                   <Label htmlFor="username">
-                    Username <span className="text-red-500">*</span>
+                    Full Name <span className="text-red-500">*</span>
                   </Label>
                   <Input
                     id="username"
                     value={formData.username}
                     onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                    placeholder="Enter your username"
+                    placeholder="Enter your Full Name"
                   />
                   <p className="text-xs text-gray-500">
                     This will appear on your score cards
@@ -417,7 +417,7 @@ export default function StudentProfilePage() {
 
                 <div className="space-y-2">
                   <Label htmlFor="email">
-                    Email Address <span className="text-red-500">*</span>
+                    College Email Address <span className="text-red-500">*</span>
                   </Label>
                   <div className="relative">
                     <Mail className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
@@ -426,7 +426,7 @@ export default function StudentProfilePage() {
                       type="email"
                       value={formData.email}
                       onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                      placeholder="Enter your email address"
+                      placeholder="Enter your College Email"
                       className="pl-10"
                     />
                   </div>

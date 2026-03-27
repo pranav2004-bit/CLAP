@@ -54,7 +54,7 @@ export default function RootLayout({
         </AuthProvider>
 
         {/* Company Footer Branding */}
-        <footer className="fixed bottom-0 left-0 right-0 bg-background/95 backdrop-blur-md border-t border-border/40 py-1.5 md:py-2 px-4 md:px-6 text-[10px] md:text-xs text-muted-foreground z-50 flex items-center transition-all">
+        <footer className="fixed bottom-0 left-0 right-0 bg-background border-t border-border py-1.5 md:py-2 px-4 md:px-6 text-[10px] md:text-xs text-muted-foreground z-50 flex items-center">
           <div className="w-full max-w-7xl mx-auto flex items-center justify-center md:justify-between">
             <div className="hidden md:block flex-1"></div> {/* Left spacer for desktop symmetry */}
 

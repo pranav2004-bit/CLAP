@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import Image from 'next/image'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -17,6 +18,8 @@ import {
   GraduationCap,
   ClipboardCheck,
   Building2,
+  Menu,
+  X,
 } from 'lucide-react'
 
 // ── Features ───────────────────────────────────────────────────────────────
@@ -39,8 +42,8 @@ const features = [
   },
   {
     icon: BarChart3,
-    title: 'Detailed Reports',
-    description: 'Comprehensive score breakdowns delivered automatically via email',
+    title: 'Detailed Score Card',
+    description: 'Comprehensive score card delivered automatically via email',
   },
 ]
 
@@ -65,7 +68,7 @@ const row1: ProfileMember[] = [
     initials:    'VR',
     photo:       '/images/profile_r1_1.jpg',
     role:        'Principal',
-    department:  'ANIL NEERUKONDA INSTITUTE OF TECHNOLOGY & SCIENCES',
+    department:  'ANIL NEERUKONDA INSTITUTE OF TECHNOLOGY & SCIENCES (Autonomous)',
   },
 ]
 
@@ -167,9 +170,9 @@ const techTeam = [
 
 // ── Accent palette (one per pyramid row) ───────────────────────────────────
 const ROW_ACCENTS: Record<number, { bar: string; chip: string; text: string }> = {
-  1: { bar: 'bg-violet-500', chip: 'bg-violet-50', text: 'text-violet-700' },
-  2: { bar: 'bg-blue-500',   chip: 'bg-blue-50',   text: 'text-blue-700'   },
-  3: { bar: 'bg-indigo-500', chip: 'bg-indigo-50', text: 'text-indigo-700' },
+  1: { bar: 'bg-primary',    chip: 'bg-primary/10', text: 'text-primary'   },
+  2: { bar: 'bg-primary',    chip: 'bg-primary/10', text: 'text-primary'   },
+  3: { bar: 'bg-primary',    chip: 'bg-primary/10', text: 'text-primary'   },
 }
 
 /** Deterministic avatar gradient for tech-team fallback */
@@ -209,6 +212,7 @@ function ProfileCard({ member, rowIndex }: { member: ProfileMember; rowIndex: nu
             src={member.photo}
             alt={member.name}
             fill
+            sizes="128px"
             className="object-cover object-center"
           />
         </div>
@@ -308,64 +312,100 @@ function PyramidRow({ label, members, rowIndex, maxCols }: PyramidRowProps) {
 // ── Page ───────────────────────────────────────────────────────────────────
 
 export default function AboutPage() {
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+
   return (
     <div className="min-h-screen bg-background">
 
       {/* Navigation */}
-      <nav className="sticky top-0 z-50 glass border-b border-border">
+      <nav className="fixed top-0 left-0 right-0 z-50 bg-white border-b border-border">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between">
-            <div className="flex items-center gap-8">
-              <ActionButton href="/" variant="ghost" size="sm" className="p-0 h-auto hover:bg-transparent">
-                <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={128} height={52} className="w-auto h-12 object-contain" priority style={{ width: 'auto', height: 'auto' }} />
-              </ActionButton>
-              <div className="hidden md:flex items-center gap-8">
-                <ActionButton href="/#features" variant="ghost" size="sm" className="text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-transparent transition-colors h-auto p-0">Features</ActionButton>
-                <ActionButton href="/#tests"    variant="ghost" size="sm" className="text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-transparent transition-colors h-auto p-0">Tests</ActionButton>
-                <span className="text-sm font-medium text-foreground">About</span>
+            {/* Co-brand: Institution + Product */}
+            <ActionButton href="/" variant="ghost" size="sm" className="p-0 h-auto hover:bg-transparent">
+              <div className="flex items-center gap-2 sm:gap-3">
+                <Image src="/images/anits-logo.png" alt="ANITS" width={44} height={44} className="h-9 sm:h-11 w-auto object-contain flex-shrink-0" />
+                <div className="w-px h-7 sm:h-8 bg-border" />
+                <Image src="/images/clap-logo.png?v=new" alt="CLAP" width={100} height={40} className="h-8 sm:h-10 w-auto object-contain" priority />
               </div>
+            </ActionButton>
+
+            {/* Nav links — desktop */}
+            <div className="hidden md:flex items-center gap-8">
+              <ActionButton href="/#features" variant="ghost" size="sm" className="text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-transparent transition-colors h-auto p-0">Features</ActionButton>
+              <ActionButton href="/#tests" variant="ghost" size="sm" className="text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-transparent transition-colors h-auto p-0">Tests</ActionButton>
+              <span className="text-sm font-medium text-foreground">About</span>
             </div>
-            <div className="flex items-center gap-3">
-              <ActionButton href="/login" variant="ghost" size="sm">Sign In</ActionButton>
+
+            <div className="flex items-center gap-2">
+              <ActionButton href="/login" variant="ghost" size="sm" className="hidden sm:inline-flex">Sign In</ActionButton>
               <ActionButton href="/login" size="sm">Get Started</ActionButton>
+              <button
+                className="md:hidden p-2 rounded-md hover:bg-secondary transition-colors"
+                onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+                aria-label="Toggle menu"
+              >
+                {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+              </button>
             </div>
           </div>
         </div>
+
+        {/* Mobile dropdown */}
+        {mobileMenuOpen && (
+          <div className="md:hidden border-t border-border bg-white">
+            <div className="container mx-auto px-4 py-2 flex flex-col gap-1">
+              <ActionButton href="/#features" variant="ghost" size="sm" className="justify-start text-sm font-medium text-muted-foreground py-2.5 px-3 h-auto hover:bg-secondary">Features</ActionButton>
+              <ActionButton href="/#tests" variant="ghost" size="sm" className="justify-start text-sm font-medium text-muted-foreground py-2.5 px-3 h-auto hover:bg-secondary">Tests</ActionButton>
+              <span className="text-sm font-medium text-foreground py-2.5 px-3">About</span>
+              <div className="pt-2 pb-1 border-t border-border mt-1">
+                <ActionButton href="/login" variant="ghost" size="sm" className="w-full justify-center">Sign In</ActionButton>
+              </div>
+            </div>
+          </div>
+        )}
       </nav>
 
       {/* Hero */}
-      <section className="pt-24 pb-16">
+      <section className="pt-24 pb-8 sm:pb-10">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="max-w-4xl mx-auto text-center">
-            <Badge variant="secondary" className="mb-6 px-4 py-1.5">About CLAP</Badge>
-            <h1 className="text-display-lg md:text-display-xl mb-6">
+            <span className="inline-block mb-4 sm:mb-5 px-3 sm:px-4 py-1 sm:py-1.5 rounded-lg bg-primary/15 text-primary text-xs sm:text-sm font-semibold border border-primary/25">About CLAP</span>
+            <h1 className="text-2xl sm:text-3xl lg:text-display-sm mb-3 sm:mb-4 font-bold tracking-tight text-balance">
               Empowering Language Learners with{' '}
-              <span className="gradient-text">AI Technology</span>
+              <span className="text-primary">AI Technology</span>
             </h1>
-            <p className="text-xl text-muted-foreground mb-12 max-w-3xl mx-auto">
-              CLAP (Continuing Language Assessment Program) is revolutionizing English language assessment
-              through cutting-edge artificial intelligence, making quality evaluation accessible to learners worldwide.
+            <p className="text-sm sm:text-base text-muted-foreground mb-0 max-w-2xl mx-auto leading-relaxed px-2 sm:px-0">
+              Structured English language assessment across 5 core skills – evaluated instantly with AI precision.
             </p>
           </div>
         </div>
       </section>
 
       {/* Mission */}
-      <section className="py-16 bg-secondary/30">
+      <section className="py-10">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="max-w-4xl mx-auto">
-            <h2 className="text-display-sm mb-6 text-center">Our Mission</h2>
-            <div className="max-w-3xl mx-auto space-y-6">
-              <p className="text-lg text-muted-foreground">
+          <div className="max-w-3xl mx-auto bg-white border border-border rounded-2xl shadow-sm overflow-hidden">
+            {/* Grey header with left accent — inset with white frame */}
+            <div className="p-2 sm:p-3">
+              <div className="bg-secondary/40 px-4 sm:px-8 py-4 sm:py-5 rounded-xl relative overflow-hidden">
+                <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-primary" />
+                <h2 className="text-xl sm:text-2xl lg:text-display-sm text-center font-bold tracking-tight">Our Mission</h2>
+              </div>
+            </div>
+            {/* White body */}
+            <div className="px-4 sm:px-8 py-4 sm:py-6 space-y-4">
+              <p className="text-base text-muted-foreground leading-relaxed">
                 We believe every language learner deserves access to high-quality, affordable assessment
                 that provides meaningful feedback for improvement.
               </p>
-              <p className="text-muted-foreground">
+              <p className="text-base text-muted-foreground leading-relaxed">
                 Traditional language testing is expensive, time-consuming, and often inaccessible.
                 CLAP changes this by leveraging AI to deliver instant, accurate evaluations at scale.
               </p>
-              <div className="bg-card rounded-2xl p-6 border border-border mt-8">
-                <ul className="space-y-4">
+              {/* Grey checklist */}
+              <div className="bg-secondary/40 rounded-xl p-5 border border-border">
+                <ul className="space-y-3">
                   {[
                     'Democratize access to quality language assessment',
                     'Provide immediate, actionable feedback',
@@ -373,7 +413,7 @@ export default function AboutPage() {
                   ].map(item => (
                     <li key={item} className="flex items-start gap-3">
                       <CheckCircle className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
-                      <span>{item}</span>
+                      <span className="text-sm text-foreground font-medium">{item}</span>
                     </li>
                   ))}
                 </ul>
@@ -384,15 +424,15 @@ export default function AboutPage() {
       </section>
 
       {/* Features */}
-      <section className="py-24">
+      <section className="py-12">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
-            <h2 className="text-display-sm mb-4">What Makes CLAP Different</h2>
-            <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+          <div className="text-center mb-8 sm:mb-10">
+            <h2 className="text-2xl sm:text-3xl lg:text-display-sm mb-3 sm:mb-4 font-bold tracking-tight">What Makes CLAP Different</h2>
+            <p className="text-sm sm:text-base lg:text-lg text-muted-foreground max-w-2xl mx-auto px-2 sm:px-0">
               Our unique approach combines advanced technology with educational expertise
             </p>
           </div>
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
             {features.map(feature => (
               <Card key={feature.title} className="card-hover border-0 bg-card">
                 <CardHeader>
@@ -411,13 +451,13 @@ export default function AboutPage() {
       </section>
 
       {/* ── Our People — pyramid rows 1, 2, 3 ─────────────────────────────── */}
-      <section className="pt-24 pb-14 bg-secondary/30">
+      <section className="pt-12 pb-10 bg-secondary/30">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
 
-          <div className="text-center mb-16">
-            <Badge variant="outline" className="mb-4">Our People</Badge>
-            <h2 className="text-display-sm mb-4">The Team Behind CLAP</h2>
-            <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+          <div className="text-center mb-8 sm:mb-10">
+            <Badge variant="outline" className="mb-3 sm:mb-4">Our People</Badge>
+            <h2 className="text-2xl sm:text-3xl lg:text-display-sm mb-3 sm:mb-4 font-bold tracking-tight">The Team Behind CLAP</h2>
+            <p className="text-sm sm:text-base lg:text-lg text-muted-foreground max-w-2xl mx-auto px-2 sm:px-0">
               A multidisciplinary group of educators, assessors and engineers
               committed to excellence in language assessment
             </p>
@@ -463,7 +503,7 @@ export default function AboutPage() {
       </section>
 
       {/* ── Row 4 — Build Team (tech team with photos) ─────────────────────── */}
-      <section className="pt-10 pb-24">
+      <section className="pt-6 pb-12">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-8">
             <Badge variant="outline" className="mb-4">
@@ -475,37 +515,30 @@ export default function AboutPage() {
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6 max-w-5xl mx-auto">
             {techTeam.map((member, index) => (
               <Card key={member.id} className="text-center group hover:shadow-md transition-shadow duration-200">
-                <CardHeader className="pb-3">
-                  <div className="mx-auto mb-4 relative">
+                <CardHeader className="pb-2">
+                  <div className="mx-auto mb-3 relative">
                     {member.photo ? (
-                      <div className="w-32 h-32 rounded-full overflow-hidden mx-auto ring-2 ring-border relative">
-                        <Image
-                          src={member.photo}
-                          alt={member.name}
-                          fill
-                          className="object-cover object-center"
-                        />
+                      <div className="w-28 h-28 rounded-full overflow-hidden mx-auto ring-2 ring-primary/30 relative">
+                        <Image src={member.photo} alt={member.name} fill sizes="112px" className="object-cover object-center" />
                       </div>
                     ) : (
-                      <div className={`w-32 h-32 rounded-full bg-gradient-to-br ${techAvatarGradients[index % techAvatarGradients.length]} mx-auto flex items-center justify-center ring-2 ring-border`}>
-                        <span className="text-xl font-bold text-white select-none">
-                          {getInitials(member.name)}
-                        </span>
+                      <div className={`w-28 h-28 rounded-full bg-gradient-to-br ${techAvatarGradients[index % techAvatarGradients.length]} mx-auto flex items-center justify-center ring-2 ring-primary/30`}>
+                        <span className="text-xl font-bold text-white select-none">{getInitials(member.name)}</span>
                       </div>
                     )}
                   </div>
-                  <CardTitle className="text-base leading-snug">{member.name}</CardTitle>
+                  <CardTitle className="text-sm font-semibold leading-tight">{member.name}</CardTitle>
                   {member.founder && (
-                    <div className="mt-1.5">
-                      <Badge variant="secondary" className="text-[10px] px-2 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100">
+                    <div className="mt-2">
+                      <span className="inline-block px-2.5 py-1 text-[10px] font-semibold rounded-md bg-primary/10 text-primary border border-primary/20">
                         {member.founderRole ?? (member.founder === 'SANJIVO' ? 'Co-Founder' : 'Founder')} / {member.founder}
-                      </Badge>
+                      </span>
                     </div>
                   )}
                 </CardHeader>
-                <CardContent className="pt-0">
+                <CardContent className="pt-0 pb-4">
                   <p className="text-xs font-medium text-gray-600">{member.batch}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">{member.department}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{member.department}</p>
                 </CardContent>
               </Card>
             ))}
@@ -514,20 +547,20 @@ export default function AboutPage() {
       </section>
 
       {/* CTA */}
-      <section className="py-24 bg-secondary/30">
+      <section className="py-12 bg-secondary/30">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="max-w-3xl mx-auto text-center">
-            <h2 className="text-display-sm mb-6">Ready to Transform Your Learning?</h2>
-            <p className="text-lg text-muted-foreground mb-10">
+            <h2 className="text-2xl sm:text-3xl lg:text-display-sm mb-4 sm:mb-6 font-bold tracking-tight text-balance">Ready to Transform Your Learning?</h2>
+            <p className="text-sm sm:text-base lg:text-lg text-muted-foreground mb-8 sm:mb-10 px-2 sm:px-0">
               Join thousands of learners who trust CLAP for accurate, affordable language assessment
             </p>
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-4 max-w-sm sm:max-w-none mx-auto">
               <ActionButton href="/login" variant="hero" size="xl" className="group">
                 <Users className="mr-2 w-5 h-5" />
                 Start Assessment
                 <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
               </ActionButton>
-              <ActionButton href="/#tests" variant="outline" size="xl">
+              <ActionButton href="/#tests" variant="outline" size="xl" className="border-2 border-border bg-white shadow-sm font-semibold">
                 Learn More
               </ActionButton>
             </div>
@@ -536,14 +569,14 @@ export default function AboutPage() {
       </section>
 
       {/* Footer */}
-      <footer className="py-12 border-t border-border">
+      <footer className="py-8 border-t border-border">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-3 text-center md:text-left">
             <div className="flex flex-col gap-0.5">
-              <span className="text-sm font-bold tracking-wide text-foreground uppercase">Anil Neerukonda Institute of Technology &amp; Sciences</span>
-              <span className="text-xs text-muted-foreground">Continuing Language Assessment Program</span>
+              <span className="text-xs sm:text-sm font-bold tracking-wide text-foreground uppercase leading-snug">Anil Neerukonda Institute of Technology &amp; Sciences (Autonomous)</span>
+              <span className="text-[10px] sm:text-xs text-muted-foreground">Continuing Language Assessment Program</span>
             </div>
-            <p className="text-sm text-muted-foreground">© 2026 CLAP. All rights reserved.</p>
+            <p className="text-xs sm:text-sm text-muted-foreground">© 2026 CLAP. All rights reserved.</p>
           </div>
         </div>
       </footer>

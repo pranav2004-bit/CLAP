@@ -137,19 +137,27 @@ export default function StudentDashboard() {
       <header className="sticky top-0 z-50 bg-white border-b border-border shadow-sm">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between gap-4">
-            {/* Logo — no "A SANJIVO Product" subtitle */}
-            <div className="flex items-center gap-3 shrink-0">
+            {/* Co-brand: ANITS (dominant) + CLAP */}
+            <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+              <Image
+                src="/images/anits-logo.png"
+                alt="ANITS"
+                width={40}
+                height={40}
+                className="h-9 w-auto object-contain flex-shrink-0"
+                priority
+              />
+              <div className="w-px h-7 bg-border" />
               <Image
                 src="/images/clap-logo.png?v=new"
                 alt="CLAP Logo"
-                width={113}
-                height={46}
-                className="w-auto h-10 object-contain"
+                width={90}
+                height={36}
+                className="h-8 w-auto object-contain"
                 priority
-                style={{ width: 'auto', height: 'auto' }}
               />
               <div className="hidden sm:flex flex-col justify-center h-8 border-l border-border pl-3 ml-1">
-                <p className="text-base font-semibold text-primary">Student Portal</p>
+                <p className="text-sm font-semibold text-primary">Student Portal</p>
               </div>
             </div>
 
