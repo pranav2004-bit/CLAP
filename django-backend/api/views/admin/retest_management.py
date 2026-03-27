@@ -25,6 +25,7 @@ from api.models import (
     AssessmentSubmission,
     ClapTest,
     StudentAudioResponse,
+    ComponentAttempt,
 )
 from api.utils.jwt_utils import get_user_from_request
 
@@ -83,6 +84,13 @@ def grant_retest(request, assignment_id):
 
     try:
         with transaction.atomic():
+            # --- Step 0: Delete all ComponentAttempt records for this assignment ---
+            # This is critical: without this, when the student submits a component
+            # during the retest, the all_done check in submit_component counts the
+            # stale 'completed' ComponentAttempts from the prior attempt and
+            # incorrectly triggers premature finalization.
+            component_attempts_deleted, _ = ComponentAttempt.objects.filter(assignment=assignment).delete()
+
             # --- Step 1: Wipe all responses for this assignment (both MCQ/subjective and audio) ---
             responses_deleted, _ = StudentClapResponse.objects.filter(assignment=assignment).delete()
 
@@ -138,9 +146,10 @@ def grant_retest(request, assignment_id):
 
         logger.info(
             'Retest granted: assignment=%s student=%s by_admin=%s attempt=%s '
-            'responses_wiped=%s audio_wiped=%s submissions_superseded=%s reason=%r',
+            'component_attempts_deleted=%s responses_wiped=%s audio_wiped=%s '
+            'submissions_superseded=%s reason=%r',
             assignment_id, assignment.student_id, admin.id, assignment.attempt_number,
-            responses_deleted, audio_deleted, submission_count, reason
+            component_attempts_deleted, responses_deleted, audio_deleted, submission_count, reason
         )
 
         return JsonResponse({

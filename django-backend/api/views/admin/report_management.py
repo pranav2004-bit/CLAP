@@ -47,6 +47,18 @@ def _get_logo_data_uri() -> str:
         return ''
 
 
+def _get_anits_logo_data_uri() -> str:
+    """Read the ANITS institution logo for inline embedding in PDF reports."""
+    logo_path = os.path.join(
+        os.path.dirname(__file__), '..', '..', 'templates', 'reports', 'anits-logo.png'
+    )
+    try:
+        with open(os.path.normpath(logo_path), 'rb') as f:
+            return 'data:image/png;base64,' + _base64.b64encode(f.read()).decode()
+    except Exception:
+        return ''
+
+
 TEMPLATE_CONFIG_CACHE_KEY = 'clap:report_template_config'
 TEMPLATE_CONFIG_DEFAULTS = {
     'institution_name': 'CLAP',
@@ -536,6 +548,7 @@ def report_template_preview(request):
                 'set_name':      preview_set_name,
                 'template_config': cfg,
                 'logo_data_uri': _get_logo_data_uri(),
+                'anits_logo_data_uri': _get_anits_logo_data_uri(),
             },
         )
     except Exception as exc:

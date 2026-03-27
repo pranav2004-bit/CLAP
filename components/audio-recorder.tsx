@@ -584,7 +584,7 @@ export default function AudioRecorderItem({
               className="flex-1 bg-green-600 hover:bg-green-700"
             >
               <Check className="w-4 h-4 mr-2" />
-              Submit
+              Upload
             </Button>
           </div>
         </div>

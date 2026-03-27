@@ -124,10 +124,12 @@ export default function StudentClapTestDetailPage() {
     onTabSwitch: (count) => {
       setTabWarnings(count)
       reportMalpractice('tab_switch', { strike: count })
-      if (count >= 2 && !isAutoSubmitRef.current) {
+      if (count >= 3 && !isAutoSubmitRef.current) {
         handleAutoSubmit('tab_switch')
       } else if (count === 1) {
-        toast.warning('⚠ Tab switch detected (1/2). One more will auto-submit your test.')
+        toast.warning('⚠ Tab switch detected (1/3). Two more will auto-submit your test.')
+      } else if (count === 2) {
+        toast.warning('⚠ Tab switch detected (2/3). One more will auto-submit your test.')
       }
     },
     onFullscreenExit: () => {
@@ -136,15 +138,17 @@ export default function StudentClapTestDetailPage() {
       setFullscreenExitCount(newCount)
       reportMalpractice('fullscreen_exit', { count: newCount, auto_reentry: false })
 
-      if (newCount >= 3) {
-        // 3rd strike — skip the modal, immediately show blocking overlay
+      if (newCount >= 4) {
+        // 4th strike — skip the modal, immediately show blocking overlay
         handleAutoSubmit('client_malpractice')
       } else {
-        // 1st or 2nd exit — show blocking modal with 20-second countdown
+        // 1st, 2nd, or 3rd exit — show blocking modal with 20-second countdown
         if (newCount === 1) {
-          toast.warning('1/2 reached limit of the full screen existing', { duration: 6000 })
+          toast.warning('1/3 reached limit of the full screen exiting', { duration: 6000 })
+        } else if (newCount === 2) {
+          toast.warning('2/3 reached limit of the full screen exiting', { duration: 6000 })
         } else {
-          toast.warning('2/2 reached limit of the full screen existing', { duration: 6000 })
+          toast.warning('3/3 reached limit of the full screen exiting', { duration: 6000 })
         }
         setFsExitCountdown(20)
         setShowFullscreenExitWarning(true)

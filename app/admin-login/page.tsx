@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect, Suspense } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useState, Suspense } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import Image from 'next/image'
 import { Button } from '@/components/ui/button'
@@ -11,7 +11,6 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
-  Users,
   Shield,
   Eye,
   EyeOff,
@@ -23,13 +22,11 @@ import {
 import { signIn } from '@/lib/auth'
 import { authStorage } from '@/lib/auth-storage'
 
-type UserRole = 'student' | 'admin'
-
-function LoginContent() {
+function AdminLoginContent() {
   const router = useRouter()
-
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [isBackLoading, setIsBackLoading] = useState(false)
   const [formData, setFormData] = useState({
     identifier: '',
     password: ''
@@ -51,24 +48,16 @@ function LoginContent() {
       }
 
       if (data?.user) {
-        // Store user data (tab-isolated via sessionStorage)
         authStorage.set('user_id', data.user.id)
         authStorage.set('user_email', data.user.email)
         authStorage.set('user_role', data.user.user_metadata?.role || 'student')
         authStorage.set('user_name', data.user.user_metadata?.full_name || '')
 
-        // Check if profile is completed
-        const profileCompleted = data.user.user_metadata?.profile_completed || false
-
-        // Redirect based on role and profile completion
         if (data.user.user_metadata?.role === 'admin') {
           router.push('/admin/dashboard')
         } else {
-          if (profileCompleted) {
-            router.push('/student/dashboard')
-          } else {
-            router.push('/student/profile')
-          }
+          const profileCompleted = data.user.user_metadata?.profile_completed || false
+          router.push(profileCompleted ? '/student/dashboard' : '/student/profile')
         }
       }
     } catch (err) {
@@ -85,21 +74,28 @@ function LoginContent() {
   }
 
   return (
-    <div className="min-h-screen bg-background flex">
+    <>
+    <style>{`@media (min-width: 1024px) { body { overflow: hidden; } }`}</style>
+    <div className="min-h-dvh lg:h-dvh bg-background flex lg:overflow-hidden">
       {/* Left Panel - Decorative */}
-      <div className="hidden lg:flex lg:w-1/2 bg-primary relative overflow-hidden">
+      <div className="hidden lg:flex lg:w-1/2 relative overflow-hidden" style={{backgroundColor: 'hsl(12, 72%, 40%)'}}>
         <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmYiIGZpbGwtb3BhY2l0eT0iMC4wNSI+PHBhdGggZD0iTTM2IDM0djItSDI0di0yaDEyek0zNiAyNHYySDI0di0yaDF6Ii8+PC9nPjwvZz48L3N2Zz4=')] opacity-50" />
 
-        <div className="relative z-10 flex flex-col justify-center px-12 py-16">
-          <Link href="/" className="block mb-12">
-            <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={258} height={105} className="w-auto h-24 object-contain brightness-0 invert" priority />
-          </Link>
+        <div className="relative z-10 flex flex-col justify-center px-12 py-12">
+          {/* Institutional co-brand */}
+          <div className="mb-10 flex items-center gap-3">
+            <Image src="/images/anits-logo.png" alt="ANITS" width={48} height={48} className="h-12 w-auto object-contain flex-shrink-0" />
+            <div className="w-px h-8 bg-primary-foreground/30" />
+            <Link href="/" className="bg-white/95 rounded-lg px-2 py-1 inline-flex items-center">
+              <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={120} height={48} className="h-10 w-auto object-contain" priority />
+            </Link>
+          </div>
 
           <h1 className="text-4xl font-bold text-primary-foreground mb-4">
-            Welcome Back
+            Admin Portal
           </h1>
           <p className="text-lg text-primary-foreground/80 mb-12 max-w-md">
-            Continue your English language assessment journey with our comprehensive testing platform.
+            Manage assessments, monitor student progress, and oversee the language testing platform.
           </p>
 
           <div className="space-y-4">
@@ -108,8 +104,8 @@ function LoginContent() {
                 <CheckCircle2 className="w-4 h-4 text-primary-foreground" />
               </div>
               <div>
-                <h3 className="font-medium text-primary-foreground">5 Core Skills Assessment</h3>
-                <p className="text-sm text-primary-foreground/70">Listening, Speaking, Reading, Writing, Verbal Ability</p>
+                <h3 className="font-medium text-primary-foreground">Test Management</h3>
+                <p className="text-sm text-primary-foreground/70">Create, assign, and configure assessments for student batches</p>
               </div>
             </div>
             <div className="flex items-start gap-3">
@@ -117,8 +113,8 @@ function LoginContent() {
                 <CheckCircle2 className="w-4 h-4 text-primary-foreground" />
               </div>
               <div>
-                <h3 className="font-medium text-primary-foreground">AI-Powered Evaluation</h3>
-                <p className="text-sm text-primary-foreground/70">Advanced LLM scoring for speaking and writing tasks</p>
+                <h3 className="font-medium text-primary-foreground">Score & Results</h3>
+                <p className="text-sm text-primary-foreground/70">Review AI-evaluated scores and download detailed reports</p>
               </div>
             </div>
             <div className="flex items-start gap-3">
@@ -126,8 +122,8 @@ function LoginContent() {
                 <CheckCircle2 className="w-4 h-4 text-primary-foreground" />
               </div>
               <div>
-                <h3 className="font-medium text-primary-foreground">Instant Results</h3>
-                <p className="text-sm text-primary-foreground/70">Get detailed score reports immediately after completion</p>
+                <h3 className="font-medium text-primary-foreground">Student Oversight</h3>
+                <p className="text-sm text-primary-foreground/70">Monitor attempts, grant retests, and track performance analytics</p>
               </div>
             </div>
           </div>
@@ -135,33 +131,37 @@ function LoginContent() {
       </div>
 
       {/* Right Panel - Login Form */}
-      <div className="flex-1 flex flex-col items-center justify-center px-4 sm:px-6 lg:px-8 py-12 md:py-16">
-        <div className="w-full max-w-md">
-          {/* Mobile Logo */}
-          <div className="lg:hidden flex justify-center mb-8">
-            <Link href="/" className="inline-block">
-              <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={140} height={56} className="w-auto h-10 sm:h-12 object-contain" priority style={{ width: 'auto', height: 'auto' }} />
-            </Link>
-          </div>
-
-          <Link href="/" className="inline-flex items-center text-sm font-medium text-muted-foreground hover:text-foreground mb-8 transition-colors">
-            <ArrowLeft className="w-4 h-4 mr-2" />
+      <div className="flex-1 flex flex-col relative bg-gray-50">
+        {/* Back to Home - top anchored */}
+        <div className="absolute top-6 left-6 lg:left-8 z-10">
+          <button
+            onClick={() => { if (isBackLoading) return; setIsBackLoading(true); router.push('/') }}
+            disabled={isBackLoading}
+            className="inline-flex items-center text-sm font-medium text-muted-foreground hover:text-foreground transition-colors disabled:opacity-60 disabled:cursor-not-allowed border border-border rounded-lg px-4 py-2 hover:bg-secondary bg-white"
+          >
+            {isBackLoading
+              ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              : <ArrowLeft className="w-4 h-4 mr-2" />}
             Back to Home
-          </Link>
+          </button>
+        </div>
 
-          <div className="flex gap-2 mb-8 p-1 bg-secondary rounded-lg">
-            <div
-              className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 ease-in-out bg-card text-foreground shadow-sm transform scale-105`}
-            >
-              <Shield className="w-4 h-4" />
-              Admin Portal
-            </div>
+        {/* Centered form */}
+        <div className="flex-1 flex flex-col items-center justify-center px-4 sm:px-6 lg:px-8 pt-20 pb-8 sm:py-12">
+        <div className="w-full max-w-md">
+          {/* Mobile Logo — ANITS + CLAP co-brand */}
+          <div className="lg:hidden flex items-center justify-center gap-3 mb-8">
+            <Image src="/images/anits-logo.png" alt="ANITS" width={40} height={40} className="h-10 w-auto object-contain flex-shrink-0" />
+            <div className="w-px h-7 bg-border" />
+            <Link href="/" className="inline-block">
+              <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={120} height={48} className="w-auto h-9 object-contain" priority />
+            </Link>
           </div>
 
           <Card className="border-border shadow-soft">
             <CardHeader className="space-y-1 pb-6">
               <div className="flex items-center gap-2 mb-3">
-                <Badge variant="secondary" className="bg-speaking/10 text-speaking hover:bg-speaking/20 transition-colors border-0 px-3 py-1">
+                <Badge variant="secondary" className="bg-primary/10 text-primary hover:bg-primary/20 transition-colors border-0 px-3 py-1">
                   <Shield className="w-3.5 h-3.5 mr-1.5" />
                   Admin Portal
                 </Badge>
@@ -181,14 +181,12 @@ function LoginContent() {
 
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="identifier">
-                    Email
-                  </Label>
+                  <Label htmlFor="identifier">Email</Label>
                   <Input
                     id="identifier"
                     name="identifier"
-                    type={'email'}
-                    placeholder={'admin@example.com'}
+                    type="email"
+                    placeholder="admin@example.com"
                     value={formData.identifier}
                     onChange={handleInputChange}
                     required
@@ -241,19 +239,21 @@ function LoginContent() {
             </CardContent>
           </Card>
         </div>
+        </div>
       </div>
     </div>
+    </>
   )
 }
 
-export default function LoginPage() {
+export default function AdminLoginPage() {
   return (
     <Suspense fallback={
-      <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="min-h-dvh flex items-center justify-center bg-background">
         <Loader2 className="w-10 h-10 animate-spin text-primary" />
       </div>
     }>
-      <LoginContent />
+      <AdminLoginContent />
     </Suspense>
   )
 }

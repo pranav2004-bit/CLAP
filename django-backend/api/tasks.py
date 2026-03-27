@@ -230,6 +230,16 @@ def _get_report_logo_uri() -> str:
         return ''
 
 
+def _get_anits_logo_uri() -> str:
+    """Return base64 data URI for the ANITS institution logo."""
+    logo_path = os.path.join(os.path.dirname(__file__), 'templates', 'reports', 'anits-logo.png')
+    try:
+        with open(logo_path, 'rb') as f:
+            return 'data:image/png;base64,' + _base64.b64encode(f.read()).decode()
+    except Exception:
+        return ''
+
+
 def _get_email_logo_src() -> str:
     """Return logo src for HTML emails.
 
@@ -1240,8 +1250,9 @@ def generate_report(self, submission_id):
             'max_total':     max_total,     # Decimal('50')
             'grade':         grade,         # str: 'O', 'A+', 'A', 'B+', 'B'
             'generated_at':  timezone.now(),  # datetime obj — |date filter works correctly
-            'set_name':      _set_name,
-            'logo_data_uri': _get_report_logo_uri(),
+            'set_name':           _set_name,
+            'logo_data_uri':      _get_report_logo_uri(),
+            'anits_logo_data_uri': _get_anits_logo_uri(),
         })
 
         timestamp = timezone.now().strftime('%Y%m%d%H%M%S')
