@@ -325,12 +325,9 @@ export default function LandingPage() {
       <footer className="py-6 sm:py-8 border-t border-border">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col md:flex-row items-center justify-between gap-4 text-center md:text-left">
-            <div className="flex items-center gap-3">
-              <Image src="/images/anits-logo.png" alt="ANITS" width={36} height={36} className="h-9 w-auto object-contain flex-shrink-0" />
-              <div className="flex flex-col gap-0.5">
-                <span className="text-xs font-bold tracking-wide text-foreground uppercase leading-snug">Anil Neerukonda Institute of Technology &amp; Sciences (Autonomous)</span>
-                <span className="text-[10px] text-muted-foreground">Continuing Language Assessment Program</span>
-              </div>
+            <div className="flex flex-col gap-0.5">
+              <span className="text-xs font-bold tracking-wide text-foreground uppercase leading-snug">Anil Neerukonda Institute of Technology &amp; Sciences (Autonomous)</span>
+              <span className="text-[10px] text-muted-foreground">Continuing Language Assessment Program</span>
             </div>
             <p className="text-xs sm:text-sm text-muted-foreground">
               © 2026 CLAP. All rights reserved.
