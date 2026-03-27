@@ -92,7 +92,7 @@ function LoginContent() {
 
         <div className="relative z-10 flex flex-col justify-center px-12 py-16">
           <Link href="/" className="block mb-12">
-            <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={258} height={105} className="w-auto h-24 object-contain" priority />
+            <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={258} height={105} className="w-auto h-24 object-contain brightness-0 invert" priority />
           </Link>
 
           <h1 className="text-4xl font-bold text-primary-foreground mb-4">

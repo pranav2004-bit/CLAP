@@ -226,7 +226,7 @@ function ProfileCard({ member, rowIndex }: { member: ProfileMember; rowIndex: nu
       </h3>
 
       {/* Role — single accent-coloured line, no pill wrapper */}
-      <p className={`text-xs font-semibold ${accent.text} mb-3 leading-snug`}>
+      <p className={`${rowIndex === 1 ? 'text-sm' : 'text-xs'} font-semibold ${accent.text} mb-3 leading-snug`}>
         {member.role}
       </p>
 
