@@ -90,21 +90,18 @@ export default function LandingPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Institutional Header Bar */}
-      <div className="fixed top-0 left-0 right-0 z-[60] bg-white border-b border-border/50 h-10 flex items-center">
-        <div className="container mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <Image src="/images/anits-logo.png" alt="ANITS Logo" width={28} height={28} className="h-7 w-auto object-contain" />
-            <span className="text-xs font-semibold text-foreground hidden sm:block tracking-wide">Anil Neerukonda Institute of Technology &amp; Sciences</span>
-          </div>
-          <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={72} height={29} className="h-6 w-auto object-contain" />
-        </div>
-      </div>
-
       {/* Navigation */}
-      <nav className="fixed top-10 left-0 right-0 z-50 glass">
+      <nav className="fixed top-0 left-0 right-0 z-50 glass border-b border-border/60">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between">
+            {/* Co-brand: Institution + Product */}
+            <div className="flex items-center gap-3">
+              <Image src="/images/anits-logo.png" alt="ANITS" width={36} height={36} className="h-9 w-auto object-contain flex-shrink-0" />
+              <div className="w-px h-7 bg-border" />
+              <Image src="/images/clap-logo.png?v=new" alt="CLAP" width={90} height={36} className="h-8 w-auto object-contain" />
+            </div>
+
+            {/* Nav links */}
             <div className="hidden md:flex items-center gap-8">
               <a href="#features" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Features</a>
               <a href="#tests" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Tests</a>
@@ -112,19 +109,15 @@ export default function LandingPage() {
             </div>
 
             <div className="flex items-center gap-3">
-              <ActionButton href="/login" variant="ghost" size="sm">
-                Sign In
-              </ActionButton>
-              <ActionButton href="/login" size="sm">
-                Get Started
-              </ActionButton>
+              <ActionButton href="/login" variant="ghost" size="sm">Sign In</ActionButton>
+              <ActionButton href="/login" size="sm">Get Started</ActionButton>
             </div>
           </div>
         </div>
       </nav>
 
       {/* Hero Section */}
-      <section className="relative pt-[136px] md:pt-[168px] pb-16 md:pb-20 overflow-hidden">
+      <section className="relative pt-[96px] md:pt-[112px] pb-16 md:pb-20 overflow-hidden">
         {/* Background gradient */}
         <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-background to-accent/5" />
         <div className="absolute top-20 left-1/4 w-96 h-96 bg-primary/10 rounded-full blur-3xl" />
@@ -132,8 +125,15 @@ export default function LandingPage() {
 
         <div className="container relative mx-auto px-4 sm:px-6 lg:px-8">
           <div className="max-w-5xl mx-auto flex flex-col items-center text-center">
-            <div className="mb-6 sm:mb-8 w-full flex justify-center">
-              <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={354} height={144} className="w-auto h-20 sm:h-28 object-contain" priority style={{ width: 'auto', height: 'auto' }} />
+            {/* Institutional identity block */}
+            <div className="mb-5 sm:mb-6 flex items-center gap-4 px-6 py-4 rounded-2xl border border-border/70 bg-white/80 backdrop-blur-sm shadow-md">
+              <Image src="/images/anits-logo.png" alt="ANITS" width={56} height={56} className="h-14 w-auto object-contain flex-shrink-0" />
+              <div className="w-px h-10 bg-border/60 flex-shrink-0" />
+              <div className="text-left">
+                <p className="text-[13px] sm:text-sm font-bold text-foreground tracking-wider uppercase leading-tight">Anil Neerukonda Institute of</p>
+                <p className="text-[13px] sm:text-sm font-bold text-foreground tracking-wider uppercase leading-tight">Technology &amp; Sciences</p>
+                <p className="text-[11px] sm:text-xs text-muted-foreground font-medium mt-1">Visakhapatnam, Andhra Pradesh</p>
+              </div>
             </div>
 
             <Badge variant="secondary" className="mb-6 sm:mb-8 px-4 sm:px-6 py-1.5 sm:py-2 text-xs sm:text-sm font-medium rounded-full shadow-sm border border-border/50 backdrop-blur-sm whitespace-normal text-center leading-snug">
