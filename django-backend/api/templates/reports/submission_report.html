@@ -75,15 +75,17 @@
         </td>
         <!-- Center: Institution name, program name, score card -->
         <td style="border:none;padding:0 12px;vertical-align:middle;text-align:center;">
-          <div style="font-size:12px;font-weight:800;color:#111827;letter-spacing:0.005em;line-height:1.4;">Anil Neerukonda Institute of Technology &amp; Sciences (Autonomous)</div>
-          <div style="font-size:9.5px;font-weight:500;color:#4b5563;margin-top:3px;letter-spacing:0.02em;">Continuing Language Assessment Program</div>
-          <div style="font-size:11px;font-weight:700;color:#b45309;margin-top:4px;letter-spacing:0.08em;text-transform:uppercase;">Score Card</div>
+          <div style="font-size:12.5px;font-weight:800;color:#111827;letter-spacing:0.005em;line-height:1.35;">Anil Neerukonda Institute of Technology &amp; Sciences (Autonomous)</div>
+          <div style="font-size:7.5px;font-weight:400;color:#6b7280;margin-top:2px;font-style:italic;line-height:1.4;">(Affiliated to AU, Approved by AICTE &amp; Accredited by NBA &amp; NAAC with &lsquo;A&rsquo; Grade)</div>
+          <div style="font-size:7.5px;font-weight:400;color:#6b7280;margin-top:1px;line-height:1.4;">Sangivalasa-531162, Bheemunipatnam Mandal, Visakhapatnam District</div>
+          <div style="font-size:11px;font-weight:500;color:#4b5563;margin-top:3px;letter-spacing:0.02em;">Continuing Language Assessment Program</div>
+          <div style="font-size:13px;font-weight:800;color:#b45309;margin-top:3px;letter-spacing:0.1em;text-transform:uppercase;">Score Card</div>
         </td>
-        <!-- Right: CLAP logo -->
-        <td style="border:none;padding:0;vertical-align:middle;text-align:right;width:72px;">
+        <!-- Right: CLAP logo — same height as ANITS logo (56px), wider max-width so the full logo is visible -->
+        <td style="border:none;padding:0;vertical-align:middle;text-align:right;width:130px;">
           {% if logo_data_uri %}
           <img src="{{ logo_data_uri }}" alt="CLAP"
-               style="height:56px;max-width:72px;width:auto;object-fit:contain;display:block;margin-left:auto;" />
+               style="height:56px;max-width:130px;width:auto;object-fit:contain;display:block;margin-left:auto;" />
           {% endif %}
         </td>
       </tr>
@@ -112,7 +114,7 @@
     <tbody>
       {% for s in scores %}
       <tr>
-        <td class="domain-label">{% if s.domain == 'vocabulary' %}Verbal Ability{% else %}{{ s.domain }}{% endif %}</td>
+        <td class="domain-label">{% if s.domain == 'vocabulary' or s.domain == 'vocab' %}Verbal Ability{% else %}{{ s.domain|title }}{% endif %}</td>
         <td class="score-badge">{{ s.score }}</td>
       </tr>
       {% endfor %}

@@ -490,103 +490,123 @@ export default function AudioRecorderItem({
         </div>
       )}
 
-      {status === 'stopped' && audioUrl && (
-        <div className="space-y-4">
-          {/* Custom audio player — white track, black progress, full CSS control */}
-          <div className="p-4 bg-white rounded-lg border">
-            {/* Hidden audio element — drives everything */}
-            <audio
-              ref={audioRef}
-              src={audioUrl ?? undefined}
-              onLoadedMetadata={() => {
-                const el = audioRef.current
-                if (!el) return
-                if (el.duration === Infinity) {
-                  // Fix missing WebM duration metadata
-                  el.currentTime = 1e101
-                } else {
-                  setAudioDuration(el.duration)
-                }
-              }}
-              onTimeUpdate={() => {
-                const el = audioRef.current
-                if (!el) return
-                if (el.currentTime === 1e101) {
-                  el.currentTime = 0
-                  return
-                }
+      {/* ── Shared custom audio player ──────────────────────────────────────
+           Rendered in both 'stopped' (pre-upload preview) and 'uploaded'
+           (post-upload playback) states whenever an audio URL is available.
+           Uses the 1e101 seek trick + onDurationChange so WebM blobs — which
+           MediaRecorder produces without a duration header — always show the
+           correct MM:SS total instead of 0:00 / 0:00.                       */}
+      {(status === 'stopped' || status === 'uploaded') && audioUrl && (
+        <div className="p-4 bg-white rounded-lg border">
+          {/* Hidden audio element — drives everything */}
+          <audio
+            ref={audioRef}
+            src={audioUrl ?? undefined}
+            onLoadedMetadata={() => {
+              const el = audioRef.current
+              if (!el) return
+              if (el.duration === Infinity) {
+                // WebM blobs from MediaRecorder lack duration metadata.
+                // Seeking to a huge number forces the browser to scan the
+                // full stream and recalculate the real duration.
+                el.currentTime = 1e101
+              } else {
+                setAudioDuration(el.duration)
+              }
+            }}
+            onDurationChange={() => {
+              // Fires whenever duration becomes finite (after the 1e101 seek trick).
+              const el = audioRef.current
+              if (!el) return
+              if (el.duration && el.duration !== Infinity) {
+                setAudioDuration(el.duration)
+              }
+            }}
+            onTimeUpdate={() => {
+              const el = audioRef.current
+              if (!el) return
+              if (el.currentTime === 1e101) {
+                // Capture the now-valid duration BEFORE resetting playhead to 0
                 if (el.duration && el.duration !== Infinity) {
                   setAudioDuration(el.duration)
-                  setPlayProgress(el.currentTime / el.duration)
                 }
+                el.currentTime = 0
+                return
+              }
+              if (el.duration && el.duration !== Infinity) {
+                setAudioDuration(el.duration)
+                setPlayProgress(el.currentTime / el.duration)
+              }
+            }}
+            onEnded={() => { setIsPlaying(false); setPlayProgress(1) }}
+          />
+
+          {/* Controls row */}
+          <div className="flex items-center gap-3">
+            {/* Play / Pause */}
+            <button
+              onClick={() => {
+                const el = audioRef.current
+                if (!el) return
+                if (isPlaying) { el.pause(); setIsPlaying(false) }
+                else { el.play(); setIsPlaying(true) }
               }}
-              onEnded={() => { setIsPlaying(false); setPlayProgress(1) }}
-            />
+              className="flex-shrink-0 w-9 h-9 flex items-center justify-center rounded-full bg-gray-900 text-white hover:bg-gray-700 transition-colors"
+            >
+              {isPlaying
+                ? <Pause className="w-4 h-4 fill-white" />
+                : <Play  className="w-4 h-4 fill-white ml-0.5" />}
+            </button>
 
-            {/* Controls row */}
-            <div className="flex items-center gap-3">
-              {/* Play / Pause */}
-              <button
-                onClick={() => {
-                  const el = audioRef.current
-                  if (!el) return
-                  if (isPlaying) { el.pause(); setIsPlaying(false) }
-                  else { el.play(); setIsPlaying(true) }
-                }}
-                className="flex-shrink-0 w-9 h-9 flex items-center justify-center rounded-full bg-gray-900 text-white hover:bg-gray-700 transition-colors"
-              >
-                {isPlaying
-                  ? <Pause className="w-4 h-4 fill-white" />
-                  : <Play  className="w-4 h-4 fill-white ml-0.5" />}
-              </button>
+            {/* Time — falls back to recording-timer duration until audio metadata resolves */}
+            <span className="flex-shrink-0 text-xs tabular-nums text-gray-500 w-20">
+              {formatTime(Math.floor((audioDuration || duration) * playProgress))}
+              {' / '}
+              {formatTime(Math.floor(audioDuration || duration))}
+            </span>
 
-              {/* Time */}
-              <span className="flex-shrink-0 text-xs tabular-nums text-gray-500 w-20">
-                {formatTime(Math.floor((audioDuration || duration) * playProgress))}
-                {' / '}
-                {formatTime(Math.floor(audioDuration || duration))}
-              </span>
-
-              {/* Progress track — white bg, black fill */}
+            {/* Progress track — white bg, black fill */}
+            <div
+              className="flex-1 h-1.5 bg-white border border-gray-300 rounded-full cursor-pointer relative"
+              onClick={(e) => {
+                const el = audioRef.current
+                if (!el || !el.duration || el.duration === Infinity) return
+                const rect = e.currentTarget.getBoundingClientRect()
+                const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+                el.currentTime = ratio * el.duration
+                setPlayProgress(ratio)
+              }}
+            >
               <div
-                className="flex-1 h-1.5 bg-white border border-gray-300 rounded-full cursor-pointer relative"
-                onClick={(e) => {
-                  const el = audioRef.current
-                  if (!el || !el.duration || el.duration === Infinity) return
-                  const rect = e.currentTarget.getBoundingClientRect()
-                  const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
-                  el.currentTime = ratio * el.duration
-                  setPlayProgress(ratio)
-                }}
-              >
-                <div
-                  className="absolute left-0 top-0 h-full bg-gray-900 rounded-full transition-none"
-                  style={{ width: `${playProgress * 100}%` }}
-                />
-              </div>
-
-              {/* Volume icon — visual only */}
-              <Volume2 className="flex-shrink-0 w-4 h-4 text-gray-400" />
+                className="absolute left-0 top-0 h-full bg-gray-900 rounded-full transition-none"
+                style={{ width: `${playProgress * 100}%` }}
+              />
             </div>
-          </div>
 
-          <div className="flex gap-3">
-            <Button
-              onClick={reRecord}
-              variant="outline"
-              className="flex-1"
-            >
-              <RotateCcw className="w-4 h-4 mr-2" />
-              Re-record
-            </Button>
-            <Button
-              onClick={submitAudio}
-              className="flex-1 bg-green-600 hover:bg-green-700"
-            >
-              <Check className="w-4 h-4 mr-2" />
-              Upload
-            </Button>
+            {/* Volume icon — visual only */}
+            <Volume2 className="flex-shrink-0 w-4 h-4 text-gray-400" />
           </div>
+        </div>
+      )}
+
+      {/* Re-record + Upload buttons — only shown before upload */}
+      {status === 'stopped' && audioUrl && (
+        <div className="flex gap-3">
+          <Button
+            onClick={reRecord}
+            variant="outline"
+            className="flex-1"
+          >
+            <RotateCcw className="w-4 h-4 mr-2" />
+            Re-record
+          </Button>
+          <Button
+            onClick={submitAudio}
+            className="flex-1 bg-green-600 hover:bg-green-700"
+          >
+            <Check className="w-4 h-4 mr-2" />
+            Upload
+          </Button>
         </div>
       )}
 
@@ -604,17 +624,13 @@ export default function AudioRecorderItem({
         </div>
       )}
 
+      {/* Success banner — custom player above already handles playback */}
       {status === 'uploaded' && (
-        <div className="p-4 bg-green-50 rounded-lg border-2 border-green-200">
+        <div className="p-3 bg-green-50 rounded-lg border-2 border-green-200">
           <div className="flex items-center gap-2 text-green-700">
             <Check className="w-5 h-5" />
             <span className="font-medium">Audio submitted successfully</span>
           </div>
-          {savedAudioUrl && (
-            <div className="mt-3">
-              <audio controls src={savedAudioUrl} className="w-full" />
-            </div>
-          )}
         </div>
       )}
     </div>
