@@ -65,6 +65,7 @@ const row1: ProfileMember[] = [
     initials:    'VR',
     photo:       '/images/profile_r1_1.jpg',
     role:        'Principal',
+    department:  'ANIL NEERUKONDA INSTITUTE OF TECHNOLOGY & SCIENCES',
   },
 ]
 
@@ -76,7 +77,6 @@ const row2: ProfileMember[] = [
     initials:    'PP',
     photo:       '/images/profile_r2_1.jpg',
     role:        'Dean - Training',
-    department:  'Department of Training',
   },
   {
     id:          'r2-2',
@@ -84,7 +84,6 @@ const row2: ProfileMember[] = [
     initials:    'AS',
     photo:       '/images/profile_r2_2.jpg',
     role:        'HOD - CSE (Data Science)',
-    department:  'Department of CSE (Data Science)',
   },
 ]
 
