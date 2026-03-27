@@ -66,25 +66,25 @@
   <div class="header">
     <table style="width:100%;border:none;margin:0;border-collapse:collapse;">
       <tr>
-        <!-- Left: ANITS institution logo -->
-        <td style="border:none;padding:0;vertical-align:middle;width:60px;">
+        <!-- Left: ANITS logo -->
+        <td style="border:none;padding:0;vertical-align:middle;width:56px;">
           {% if anits_logo_data_uri %}
           <img src="{{ anits_logo_data_uri }}" alt="ANITS"
-               style="height:52px;width:auto;display:block;" />
+               style="height:56px;width:56px;object-fit:contain;display:block;" />
           {% endif %}
         </td>
-        <!-- Center: Institution name -->
-        <td style="border:none;padding:0 12px;vertical-align:middle;text-align:center;">
-          <div style="font-size:13px;font-weight:700;color:#111827;letter-spacing:0.01em;">Anil Neerukonda Institute of Technology &amp; Sciences (Autonomous)</div>
-          <div style="font-size:10px;color:#6b7280;margin-top:2px;">Bheemunipatnam, Visakhapatnam, Andhra Pradesh — 531162</div>
+        <!-- Center: Institution name, program name, score card -->
+        <td style="border:none;padding:0 16px;vertical-align:middle;text-align:center;">
+          <div style="font-size:13px;font-weight:800;color:#111827;letter-spacing:0.005em;white-space:nowrap;line-height:1.3;">Anil Neerukonda Institute of Technology &amp; Sciences (Autonomous)</div>
+          <div style="font-size:10px;font-weight:500;color:#4b5563;margin-top:3px;letter-spacing:0.02em;">Continuing Language Assessment Program</div>
+          <div style="font-size:12px;font-weight:700;color:#b45309;margin-top:4px;letter-spacing:0.08em;text-transform:uppercase;">Score Card</div>
         </td>
-        <!-- Right: CLAP logo + SCORE CARD label -->
-        <td style="border:none;padding:0;vertical-align:middle;text-align:right;width:auto;white-space:nowrap;">
+        <!-- Right: CLAP logo -->
+        <td style="border:none;padding:0;vertical-align:middle;text-align:right;width:56px;">
           {% if logo_data_uri %}
           <img src="{{ logo_data_uri }}" alt="CLAP"
-               style="height:40px;width:auto;display:inline-block;vertical-align:middle;" />
+               style="height:56px;width:56px;object-fit:contain;display:block;margin-left:auto;" />
           {% endif %}
-          <div style="font-size:11px;color:#374151;letter-spacing:0.06em;text-transform:uppercase;font-weight:700;margin-top:4px;">Score Card</div>
         </td>
       </tr>
     </table>
