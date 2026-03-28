@@ -9,13 +9,11 @@
         <td style="background: #1a3c6e; padding: 16px 24px;">
           <table style="width:100%;border:none;border-collapse:collapse;margin:0;">
             <tr>
-              <!-- ANITS logo — white background box, dominant -->
+              <!-- ANITS logo — natural shape, no background -->
               <td style="border:none;padding:0;vertical-align:middle;width:80px;">
                 {% if anits_logo_data_uri %}
                 <img src="{{ anits_logo_data_uri }}" alt="ANITS"
-                     style="height:72px;width:80px;object-fit:contain;display:block;background:#ffffff;border-radius:6px;padding:4px;" />
-                {% else %}
-                <div style="height:72px;width:80px;background:#ffffff;border-radius:6px;display:inline-block;"></div>
+                     style="height:72px;width:80px;object-fit:contain;display:block;" />
                 {% endif %}
               </td>
 
@@ -28,13 +26,11 @@
               <td style="border:none;padding:0;vertical-align:middle;">
                 <table style="border:none;border-collapse:collapse;margin:0;">
                   <tr>
-                    <!-- CLAP logo — white background box -->
+                    <!-- CLAP logo — natural shape, no background -->
                     <td style="border:none;padding:0;vertical-align:middle;width:52px;">
                       {% if logo_data_uri %}
                       <img src="{{ logo_data_uri }}" alt="CLAP"
-                           style="height:52px;width:52px;object-fit:contain;display:block;background:#ffffff;border-radius:4px;padding:3px;" />
-                      {% else %}
-                      <div style="height:52px;width:52px;background:#ffffff;border-radius:4px;display:inline-block;"></div>
+                           style="height:52px;width:52px;object-fit:contain;display:block;" />
                       {% endif %}
                     </td>
                     <!-- CLAP / SCORE CARD text -->
