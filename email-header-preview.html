@@ -1,0 +1,321 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Email Header — Before vs After</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; background: #e8ecf3; padding: 24px 16px; margin: 0; }
+
+    .page-title { text-align: center; font-size: 20px; font-weight: 700; color: #1a3c6e; margin-bottom: 6px; }
+    .page-sub   { text-align: center; font-size: 12px; color: #666; margin-bottom: 32px; }
+
+    /* ── Tab switcher ── */
+    .tabs { display: flex; gap: 0; justify-content: center; margin-bottom: 24px; border-radius: 8px; overflow: hidden; border: 1px solid #c8d0e0; max-width: 420px; margin-left: auto; margin-right: auto; margin-bottom: 24px; }
+    .tab { flex: 1; padding: 10px 0; text-align: center; font-size: 13px; font-weight: 600; cursor: pointer; background: #f0f3fa; color: #555; border: none; transition: background .15s; }
+    .tab.active-before { background: #1a3c6e; color: #fff; }
+    .tab.active-after  { background: #1a7a4a; color: #fff; }
+    .tab:not(.active-before):not(.active-after):hover { background: #dde3ef; }
+
+    /* ── Panels ── */
+    .panel { display: none; }
+    .panel.visible { display: block; }
+
+    /* ── Viewport toggle ── */
+    .vp-toggle { display: flex; gap: 8px; justify-content: center; margin-bottom: 20px; }
+    .vp-btn { padding: 6px 16px; border-radius: 20px; border: 1px solid #c8d0e0; background: #fff; font-size: 12px; cursor: pointer; color: #555; font-weight: 600; }
+    .vp-btn.active { background: #1a3c6e; color: #fff; border-color: #1a3c6e; }
+
+    /* ── Email card shell ── */
+    .email-wrap { display: flex; justify-content: center; }
+    .email-card {
+      background: #fff;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid #dde3ef;
+      box-shadow: 0 2px 12px rgba(0,0,0,.1);
+      width: 100%;
+      transition: max-width .3s;
+    }
+    .email-card.desktop { max-width: 600px; }
+    .email-card.mobile  { max-width: 375px; }
+
+    /* ══ BEFORE header ══ */
+    .hdr-before {
+      background: #1a3c6e;
+      padding: 20px 28px;
+    }
+    .hdr-before-inner { display: flex; align-items: center; gap: 14px; }
+    .logo-ph {
+      width: 44px; height: 44px; flex-shrink: 0;
+      background: rgba(255,255,255,0.15); border-radius: 4px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 8px; color: rgba(255,255,255,.6); text-align: center; line-height: 1.3;
+    }
+    .hdr-before h1 { margin: 0; font-size: 18px; color: #fff; font-weight: 700; }
+    .hdr-before p  { margin: 3px 0 0; font-size: 12px; color: #b8cce4; letter-spacing: .03em; }
+
+    /* ══ AFTER header — navy bg, white logo boxes, text on navy ══ */
+    .hdr-after-desktop {
+      background: #1a3c6e;
+      padding: 16px 24px;
+    }
+    .hdr-after-desktop .row { display: flex; align-items: center; gap: 0; }
+
+    /* ANITS logo — white background box, dominant */
+    .logo-anits {
+      width: 80px; height: 80px; flex-shrink: 0;
+      background: #ffffff; border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 9px; font-weight: 700; color: #1a3c6e; text-align: center; line-height: 1.4;
+    }
+
+    /* vertical separator — lighter on navy */
+    .vdivider {
+      width: 1px; height: 70px; background: rgba(255,255,255,0.35);
+      margin: 0 20px; flex-shrink: 0;
+    }
+
+    /* right block: CLAP logo (white bg) + text on navy */
+    .right-block { display: flex; align-items: center; gap: 14px; }
+    .logo-clap-r {
+      width: 52px; height: 52px; flex-shrink: 0;
+      background: #ffffff; border-radius: 4px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 9px; font-weight: 700; color: #1a3c6e; text-align: center; line-height: 1.4;
+    }
+    .heading-block { display: flex; flex-direction: column; justify-content: center; }
+    .h-clap      { font-size: 17px; font-weight: 800; color: #ffffff; letter-spacing: .04em; line-height: 1.2; }
+    .h-scorecard { font-size: 11px; font-weight: 700; color: #fde68a; letter-spacing: .14em; text-transform: uppercase; margin-top: 4px; }
+
+    /* ══ AFTER header — mobile ══ */
+    .hdr-after-mobile {
+      background: #1a3c6e;
+      padding: 12px 16px;
+    }
+    .hdr-after-mobile .row { display: flex; align-items: center; gap: 0; }
+    .logo-anits-sm {
+      width: 60px; height: 60px; flex-shrink: 0;
+      background: #ffffff; border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 8px; font-weight: 700; color: #1a3c6e; text-align: center; line-height: 1.4;
+    }
+    .vdivider-sm { width: 1px; height: 52px; background: rgba(255,255,255,0.35); margin: 0 14px; flex-shrink: 0; }
+    .right-block-sm { display: flex; align-items: center; gap: 10px; }
+    .logo-clap-sm {
+      width: 40px; height: 40px; flex-shrink: 0;
+      background: #ffffff; border-radius: 4px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 7px; font-weight: 700; color: #1a3c6e; text-align: center; line-height: 1.4;
+    }
+    .h-clap-sm      { font-size: 14px; font-weight: 800; color: #ffffff; letter-spacing: .04em; line-height: 1.2; }
+    .h-scorecard-sm { font-size: 9px; font-weight: 700; color: #fde68a; letter-spacing: .1em; text-transform: uppercase; margin-top: 3px; }
+
+    /* ══ Email body stub ══ */
+    .email-body { padding: 18px 24px; }
+    .email-body p { margin: 0 0 10px; font-size: 14px; color: #333; }
+    .score-stub { background: #f5f7fa; border: 1px solid #dde3ef; border-radius: 4px; padding: 12px; font-size: 12px; color: #aaa; text-align: center; }
+
+    /* ══ Annotations ══ */
+    .anns { margin-top: 16px; padding: 0 4px; }
+    .ann { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 7px; font-size: 12px; color: #444; line-height: 1.4; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; margin-top: 2px; }
+    .dot-r { background: #ef4444; }
+    .dot-g { background: #22c55e; }
+    .dot-y { background: #f59e0b; }
+
+    /* ══ Mobile note banner ══ */
+    .mobile-note {
+      background: #fffbeb; border: 1px solid #fcd34d; border-radius: 6px;
+      padding: 10px 14px; margin-top: 16px; font-size: 12px; color: #78350f; line-height: 1.5;
+    }
+    .mobile-note strong { display: block; margin-bottom: 4px; font-size: 13px; }
+
+    /* ══ Code changes section ══ */
+    .code-section {
+      max-width: 700px; margin: 40px auto 0;
+      background: #fff; border-radius: 8px; padding: 24px 28px;
+      border: 1px solid #dde3ef; box-shadow: 0 2px 12px rgba(0,0,0,.06);
+    }
+    .code-section h2 { font-size: 14px; font-weight: 700; color: #1a3c6e; margin: 0 0 16px; }
+    .code-cols { display: flex; gap: 24px; flex-wrap: wrap; }
+    .code-col { flex: 1; min-width: 180px; }
+    .code-col-label { font-size: 11px; font-weight: 700; color: #555; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px; }
+    .code-col ul { margin: 0; padding-left: 16px; font-size: 12px; color: #333; line-height: 2; }
+    code { background: #f0f3fa; border-radius: 3px; padding: 1px 4px; font-size: 11px; }
+  </style>
+</head>
+<body>
+
+  <div class="page-title">Email Header — Before vs After</div>
+  <div class="page-sub">Switch tabs to compare · toggle viewport to see mobile behaviour</div>
+
+  <!-- Tab switcher -->
+  <div class="tabs">
+    <button class="tab active-before" onclick="showTab('before')">Before (current)</button>
+    <button class="tab" onclick="showTab('after')">After (proposed)</button>
+  </div>
+
+  <!-- Viewport toggle -->
+  <div class="vp-toggle">
+    <button class="vp-btn active" id="btn-desktop" onclick="setVP('desktop')">Desktop 600px</button>
+    <button class="vp-btn"        id="btn-mobile"  onclick="setVP('mobile')">Mobile 375px</button>
+  </div>
+
+  <!-- ═══ BEFORE panel ═══ -->
+  <div class="panel visible" id="panel-before">
+    <div class="email-wrap">
+      <div class="email-card desktop" id="card-before">
+
+        <div class="hdr-before">
+          <div class="hdr-before-inner">
+            <div class="logo-ph">CLAP<br>logo</div>
+            <div>
+              <h1>Score Report Ready</h1>
+              <p>Comprehensive Language Assessment Program</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="email-body">
+          <p>Hello <strong>Student Name</strong>,</p>
+          <div class="score-stub">… score table …</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="anns" style="max-width:600px;margin-left:auto;margin-right:auto;">
+      <div class="ann"><div class="dot dot-r"></div><span><strong>Only CLAP logo</strong> — institution logo absent</span></div>
+      <div class="ann"><div class="dot dot-r"></div><span><strong>No institution name</strong> shown anywhere</span></div>
+      <div class="ann"><div class="dot dot-r"></div><span>2-column layout — doesn't match the PDF report</span></div>
+    </div>
+  </div>
+
+  <!-- ═══ AFTER panel ═══ -->
+  <div class="panel" id="panel-after">
+    <div class="email-wrap">
+      <div class="email-card desktop" id="card-after">
+
+        <!-- desktop header -->
+        <div class="hdr-after-desktop" id="hdr-desktop">
+          <div class="row">
+            <div class="logo-anits">ANITS<br>logo</div>
+            <div class="vdivider"></div>
+            <div class="right-block">
+              <div class="logo-clap-r">CLAP<br>logo</div>
+              <div class="heading-block">
+                <div class="h-clap">CLAP</div>
+                <div class="h-scorecard">Score Card</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- mobile header -->
+        <div class="hdr-after-mobile" id="hdr-mobile" style="display:none;">
+          <div class="row">
+            <div class="logo-anits-sm">ANITS<br>logo</div>
+            <div class="vdivider-sm"></div>
+            <div class="right-block-sm">
+              <div class="logo-clap-sm">CLAP<br>logo</div>
+              <div class="heading-block">
+                <div class="h-clap-sm">CLAP</div>
+                <div class="h-scorecard-sm">Score Card</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="email-body">
+          <p>Hello <strong>Student Name</strong>,</p>
+          <div class="score-stub">… score table …</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- annotations swap per viewport -->
+    <div class="anns" style="max-width:600px;margin-left:auto;margin-right:auto;" id="anns-after-desktop">
+      <div class="ann"><div class="dot dot-g"></div><span><strong>White background</strong> with navy top-border — professional, matches PDF report style</span></div>
+      <div class="ann"><div class="dot dot-g"></div><span><strong>ANITS logo</strong> dominant (80px) on the left</span></div>
+      <div class="ann"><div class="dot dot-g"></div><span>Vertical separator line divides logos cleanly</span></div>
+      <div class="ann"><div class="dot dot-g"></div><span>CLAP logo + <strong>"CLAP"</strong> (navy) + <strong>"SCORE CARD"</strong> (amber) on the right</span></div>
+    </div>
+    <div class="anns" style="max-width:600px;margin-left:auto;margin-right:auto;display:none;" id="anns-after-mobile">
+      <div class="ann"><div class="dot dot-g"></div><span>Same layout scaled down — ANITS 60px, CLAP 40px, divider at 52px</span></div>
+      <div class="ann"><div class="dot dot-g"></div><span>Fits perfectly at 375px with no overflow or squishing</span></div>
+      <div class="ann"><div class="dot dot-g"></div><span>No media queries needed — single layout works at every width</span></div>
+    </div>
+  </div>
+
+  <!-- ═══ Code changes ═══ -->
+  <div class="code-section">
+    <h2>Code changes required</h2>
+    <div class="code-cols">
+      <div class="code-col">
+        <div class="code-col-label">tasks.py</div>
+        <ul>
+          <li>Add <code>_get_email_anits_logo_src()</code></li>
+          <li>Reads <code>ANITS_LOGO_PUBLIC_URL</code> env var</li>
+          <li>Falls back to base64 (same pattern as CLAP logo)</li>
+          <li>Pass <code>anits_logo_data_uri</code> to template context</li>
+        </ul>
+      </div>
+      <div class="code-col">
+        <div class="code-col-label">submission_ready.html</div>
+        <ul>
+          <li>Add <code>&lt;style&gt; @media</code> block for mobile</li>
+          <li>Desktop: 3-column header (inst logo | center | CLAP)</li>
+          <li>Mobile ≤480px: logos row + stacked text block</li>
+          <li>Institution name, affiliation, program, title</li>
+        </ul>
+      </div>
+      <div class="code-col">
+        <div class="code-col-label">What does NOT change</div>
+        <ul>
+          <li>Navy background (#1a3c6e)</li>
+          <li>All sections below the header</li>
+          <li>Score table, CTA button, footer</li>
+          <li>Gmail-safe logo strategy</li>
+          <li>Plain-text fallback email</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    var currentVP = 'desktop';
+
+    function showTab(tab) {
+      document.getElementById('panel-before').classList.remove('visible');
+      document.getElementById('panel-after').classList.remove('visible');
+      document.getElementById('panel-' + tab).classList.add('visible');
+
+      document.querySelectorAll('.tab').forEach(function(t) {
+        t.classList.remove('active-before', 'active-after');
+      });
+      var tabs = document.querySelectorAll('.tab');
+      if (tab === 'before') tabs[0].classList.add('active-before');
+      else tabs[1].classList.add('active-after');
+    }
+
+    function setVP(vp) {
+      currentVP = vp;
+      document.getElementById('btn-desktop').classList.toggle('active', vp === 'desktop');
+      document.getElementById('btn-mobile').classList.toggle('active', vp === 'mobile');
+
+      var cls = vp === 'mobile' ? 'mobile' : 'desktop';
+      document.getElementById('card-before').className = 'email-card ' + cls;
+      document.getElementById('card-after').className  = 'email-card ' + cls;
+
+      // swap after-header variant
+      document.getElementById('hdr-desktop').style.display = vp === 'mobile' ? 'none'  : 'block';
+      document.getElementById('hdr-mobile').style.display  = vp === 'mobile' ? 'block' : 'none';
+
+      // swap annotations
+      document.getElementById('anns-after-desktop').style.display = vp === 'mobile' ? 'none'  : 'block';
+      document.getElementById('anns-after-mobile').style.display  = vp === 'mobile' ? 'block' : 'none';
+    }
+  </script>
+</body>
+</html>

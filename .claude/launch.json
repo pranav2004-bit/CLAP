@@ -2,6 +2,12 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "email-header-preview",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "4444", "--directory", "C:\\Users\\pranavnath\\OneDrive\\Desktop\\CLAP\\.claude\\worktrees\\condescending-khayyam"],
+      "port": 4444
+    },
+    {
       "name": "nextjs-frontend",
       "runtimeExecutable": "node",
       "runtimeArgs": ["node_modules/.bin/next", "dev", "--port", "3000"],
