@@ -259,6 +259,21 @@ def _get_email_logo_src() -> str:
     return _get_report_logo_uri()
 
 
+def _get_email_anits_logo_src() -> str:
+    """Return ANITS institution logo src for HTML emails.
+
+    Same strategy as _get_email_logo_src(): prefer a publicly-hosted S3 URL
+    (set via ANITS_LOGO_PUBLIC_URL env var) so Gmail on Android renders it
+    correctly.  Falls back to base64 for Outlook / Apple Mail.
+
+    Production setup: set ANITS_LOGO_PUBLIC_URL=https://clap-storage-prod.s3.ap-south-1.amazonaws.com/static/anits-logo.png
+    """
+    public_url = os.environ.get('ANITS_LOGO_PUBLIC_URL', '').strip()
+    if public_url:
+        return public_url
+    return _get_anits_logo_uri()
+
+
 def _compute_grade(total: Decimal, max_total: Decimal) -> str:
     """
     Compute letter grade from total score using percentage thresholds.
@@ -1502,16 +1517,36 @@ def send_email_report(self, submission_id):
         max_total   = _SCORE_MAX_PER_DOMAIN * len(scores) if scores else _SCORE_MAX_TOTAL
         grade       = _compute_grade(total_score, max_total)
 
+        # Re-order domains for display and rename 'vocab' → 'Verbal Ability'.
+        _EMAIL_DOMAIN_ORDER = ['listening', 'speaking', 'reading', 'writing', 'vocab']
+        _EMAIL_DOMAIN_LABEL = {
+            'listening': 'Listening',
+            'speaking':  'Speaking',
+            'reading':   'Reading',
+            'writing':   'Writing',
+            'vocab':     'Verbal Ability',
+        }
+        scores_by_domain = {s.domain: s for s in scores}
+        email_scores = [
+            type('EmailScore', (), {
+                'domain': _EMAIL_DOMAIN_LABEL.get(d, d.title()),
+                'score':  scores_by_domain[d].score,
+            })()
+            for d in _EMAIL_DOMAIN_ORDER
+            if d in scores_by_domain
+        ]
+
         html_body = render_to_string(
             'emails/submission_ready.html',
             {
                 'student_name':  student_name,
-                'scores':        scores,
+                'scores':        email_scores,
                 'total_score':   total_score,
                 'max_total':     max_total,
                 'grade':         grade,
                 'report_url':    report_url,
-                'logo_data_uri': _get_email_logo_src(),
+                'logo_data_uri':       _get_email_logo_src(),
+                'anits_logo_data_uri': _get_email_anits_logo_src(),
             },
         )
 
