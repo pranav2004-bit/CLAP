@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
+import { CubeLoader } from '@/components/ui/CubeLoader'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -325,12 +326,7 @@ export function EnhancedStudentManagement({ refreshKey = 0 }: EnhancedStudentMan
   }
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center p-8">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-violet-600"></div>
-        <span className="ml-3 text-gray-600">Loading students...</span>
-      </div>
-    )
+    return <CubeLoader fullScreen={false} />
   }
 
   return (

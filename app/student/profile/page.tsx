@@ -22,6 +22,7 @@ import {
 import { getApiUrl, getAuthHeaders, apiFetch } from '@/lib/api-config'
 import { authStorage } from '@/lib/auth-storage'
 import { useNetworkStatus } from '@/hooks/useNetworkStatus'
+import { CubeLoader } from '@/components/ui/CubeLoader'
 
 interface StudentProfile {
   id: string
@@ -287,20 +288,7 @@ export default function StudentProfilePage() {
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-8">
 
       {/* ── Redirect overlay — shown while navigating to dashboard after first profile setup ── */}
-      {redirecting && (
-        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-white/95 backdrop-blur-sm">
-          <div className="flex flex-col items-center gap-6">
-            <div className="relative w-16 h-16">
-              <div className="absolute inset-0 rounded-full border-4 border-gray-100" />
-              <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-indigo-600 animate-spin" />
-            </div>
-            <div className="text-center">
-              <p className="text-lg font-semibold text-gray-900">Setting up your dashboard</p>
-              <p className="text-sm text-gray-500 mt-1">Just a moment…</p>
-            </div>
-          </div>
-        </div>
-      )}
+      {redirecting && <CubeLoader />}
 
       {/* H2: Offline banner */}
       {!isOnline && (

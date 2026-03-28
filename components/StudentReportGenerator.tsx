@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { CubeLoader } from '@/components/ui/CubeLoader'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -214,16 +215,7 @@ export function StudentReportGenerator({ studentId, onClose }: StudentReportGene
   }
 
   if (isLoading) {
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-        <Card className="w-full max-w-md">
-          <CardContent className="p-8 text-center">
-            <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-            <p className="text-muted-foreground">Generating student report...</p>
-          </CardContent>
-        </Card>
-      </div>
-    )
+    return <CubeLoader />
   }
 
   if (!reportData) {

@@ -844,7 +844,7 @@ export default function StudentClapTestDetailPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5}
                   d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
               </svg>
-              {fullscreenExitCount}/2 reached limit of full screen existing
+              {fullscreenExitCount}/3 reached limit of full screen exits
             </div>
 
             {/* Warning icon */}
@@ -860,11 +860,11 @@ export default function StudentClapTestDetailPage() {
               Return to fullscreen to resume, or submit what you have completed so far.
             </p>
 
-            {/* 2nd exit extra warning */}
-            {fullscreenExitCount === 2 && (
+            {/* 3rd exit extra warning — next exit is instant auto-submit */}
+            {fullscreenExitCount === 3 && (
               <div className="bg-orange-50 border border-orange-300 rounded-lg px-3 py-2.5 mb-4 text-left">
                 <p className="text-xs text-orange-800 font-semibold leading-relaxed">
-                  ⚠ Next time exiting fullscreen will auto grand submit all 5 component tests immediately.
+                  ⚠ Next exit from fullscreen will instantly auto-submit the entire assessment with no warning.
                 </p>
               </div>
             )}
@@ -1009,7 +1009,13 @@ export default function StudentClapTestDetailPage() {
     {tabWarnings === 1 && (
       <div className="bg-yellow-50 border-b border-yellow-200 px-4 py-2.5 flex items-center gap-2.5 shrink-0">
         <AlertTriangle className="w-4 h-4 text-yellow-600 flex-shrink-0" />
-        <p className="text-yellow-900 text-xs font-medium">Tab switch detected (1/2) — one more will auto-submit the entire assessment.</p>
+        <p className="text-yellow-900 text-xs font-medium">Tab switch detected (1/3) — two more will auto-submit the entire assessment.</p>
+      </div>
+    )}
+    {tabWarnings === 2 && (
+      <div className="bg-orange-50 border-b border-orange-300 px-4 py-2.5 flex items-center gap-2.5 shrink-0">
+        <AlertTriangle className="w-4 h-4 text-orange-600 flex-shrink-0" />
+        <p className="text-orange-900 text-xs font-medium">⚠ Tab switch detected (2/3) — one more will auto-submit the entire assessment.</p>
       </div>
     )}
 
