@@ -1581,12 +1581,19 @@ export default function ClapTestTakingPage({
                             <span className="flex items-center gap-1"><AlertCircle className="w-3 h-3 text-red-400" /> {notAnsweredCount} Remaining</span>
                             <span className="flex items-center gap-1"><Flag className="w-3 h-3 text-purple-500" /> {marked.size} Marked</span>
                         </div>
-                        <Button
-                            className="w-full bg-green-600 hover:bg-green-700 text-white font-bold touch-manipulation"
-                            onClick={handleSubmitClick}
-                        >
-                            Submit Module
-                        </Button>
+                        {readOnly ? (
+                            <div className="w-full flex items-center justify-center gap-2 py-2 px-4 rounded-md bg-green-50 border border-green-200 text-green-700 font-semibold text-sm">
+                                <CheckCircle className="w-4 h-4 text-green-600 shrink-0" />
+                                Module Submitted
+                            </div>
+                        ) : (
+                            <Button
+                                className="w-full bg-green-600 hover:bg-green-700 text-white font-bold touch-manipulation"
+                                onClick={handleSubmitClick}
+                            >
+                                Submit Module
+                            </Button>
+                        )}
                     </div>
                 </div>
             </div>

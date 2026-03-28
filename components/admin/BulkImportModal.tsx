@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useCallback } from 'react'
+import { CubeLoader } from '@/components/ui/CubeLoader'
 import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
 import { toast } from 'sonner'
 import { Upload, Download, X, AlertTriangle, CheckCircle2, RefreshCw, Users, FileText } from 'lucide-react'
@@ -302,13 +303,9 @@ export function BulkImportModal({ isOpen, onClose, onSuccess, batches }: Props) 
 
                     {/* ── UPLOADING STAGE ── */}
                     {stage === 'uploading' && (
-                        <div className="flex flex-col items-center justify-center py-16 gap-4">
-                            <div className="relative">
-                                <div className="w-16 h-16 border-4 border-indigo-100 rounded-full" />
-                                <div className="w-16 h-16 border-4 border-t-indigo-600 rounded-full animate-spin absolute inset-0" />
-                            </div>
-                            <p className="text-sm font-semibold text-gray-700">Processing your CSV...</p>
-                            <p className="text-xs text-gray-400 text-center max-w-xs">
+                        <div className="flex flex-col items-center justify-center py-8">
+                            <CubeLoader fullScreen={false} />
+                            <p className="text-xs text-gray-400 text-center max-w-xs mt-2">
                                 Validating rows, checking for duplicates, and creating accounts atomically. This may take a few seconds for large files.
                             </p>
                         </div>

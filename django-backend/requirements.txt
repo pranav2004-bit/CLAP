@@ -17,7 +17,7 @@ djangorestframework-simplejwt==5.5.1
 # cryptography is required for Phase 2.3 CloudFront signed URL generation (RSA-SHA1).
 # It is also used by PyJWT for RS256/ES256 JWT algorithms.
 # bcrypt>=4.0 no longer depends on it, so we pin it explicitly.
-cryptography==46.0.5
+cryptography==46.0.6
 
 # OpenAI Integration
 openai==1.57.0

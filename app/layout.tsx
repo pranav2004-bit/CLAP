@@ -4,6 +4,7 @@ import { Toaster } from 'sonner'
 import './globals.css'
 import { AuthProvider } from '@/contexts/AuthContext'
 import { BackendStatusBanner } from '@/components/ui/BackendStatusBanner'
+import { PWAInstallPrompt } from '@/components/ui/PWAInstallPrompt'
 
 const inter = Inter({
   subsets: ['latin'],
@@ -27,6 +28,12 @@ export const metadata: Metadata = {
   description: 'Comprehensive English language assessment platform evaluating Listening, Speaking, Reading, Writing, and Verbal Ability skills with AI-powered scoring.',
   keywords: ['English assessment', 'language test', 'CLAP', 'proficiency test', 'AI scoring'],
   authors: [{ name: 'CLAP Team' }],
+  manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'CLAP',
+  },
   openGraph: {
     title: 'CLAP - Continuing Language Assessment Program',
     description: 'Comprehensive English language assessment platform with AI-powered scoring',
@@ -51,6 +58,7 @@ export default function RootLayout({
           {children}
           <Toaster richColors position="top-right" />
           <BackendStatusBanner />
+          <PWAInstallPrompt />
         </AuthProvider>
 
         {/* Company Footer Branding */}

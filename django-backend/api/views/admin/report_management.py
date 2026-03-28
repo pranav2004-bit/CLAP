@@ -411,14 +411,22 @@ _PREVIEW_SAMPLE_SCORES = [
         'feedback_json': None,
     },
     {
-        'domain': 'reading',
-        'score': 8.0,
-        'evaluated_by': 'rule',
-        'feedback_json': None,
+        'domain': 'speaking',
+        'score': 7.8,
+        'evaluated_by': 'llm',
+        'feedback_json': {
+            'overall': 'Good fluency with natural rhythm; improve consistency of pronunciation.',
+            'breakdown': {
+                'fluency':       {'score': 8, 'maxScore': 10, 'feedback': 'Maintains good pace with few hesitations.'},
+                'pronunciation': {'score': 7, 'maxScore': 10, 'feedback': 'Mostly clear; occasional sounds need refinement.'},
+                'vocabulary':    {'score': 8, 'maxScore': 10, 'feedback': 'Varied and appropriate word choice.'},
+                'grammar':       {'score': 8, 'maxScore': 10, 'feedback': 'Minor structural errors in complex sentences.'},
+            },
+        },
     },
     {
-        'domain': 'vocabulary',
-        'score': 7.5,
+        'domain': 'reading',
+        'score': 8.0,
         'evaluated_by': 'rule',
         'feedback_json': None,
     },
@@ -437,20 +445,15 @@ _PREVIEW_SAMPLE_SCORES = [
         },
     },
     {
-        'domain': 'speaking',
-        'score': 7.8,
-        'evaluated_by': 'llm',
-        'feedback_json': {
-            'overall': 'Good fluency with natural rhythm; improve consistency of pronunciation.',
-            'breakdown': {
-                'fluency':       {'score': 8, 'maxScore': 10, 'feedback': 'Maintains good pace with few hesitations.'},
-                'pronunciation': {'score': 7, 'maxScore': 10, 'feedback': 'Mostly clear; occasional sounds need refinement.'},
-                'vocabulary':    {'score': 8, 'maxScore': 10, 'feedback': 'Varied and appropriate word choice.'},
-                'grammar':       {'score': 8, 'maxScore': 10, 'feedback': 'Minor structural errors in complex sentences.'},
-            },
-        },
+        'domain': 'vocabulary',
+        'score': 7.5,
+        'evaluated_by': 'rule',
+        'feedback_json': None,
     },
 ]
+
+# Canonical display order for domain scores in the report card.
+_DOMAIN_DISPLAY_ORDER = ['listening', 'speaking', 'reading', 'writing', 'vocab', 'vocabulary']
 
 
 @csrf_exempt
@@ -501,9 +504,10 @@ def report_template_preview(request):
             scores = list(
                 SubmissionScore.objects
                 .filter(submission=submission_obj)
-                .order_by('domain')
                 .values('domain', 'score', 'evaluated_by', 'feedback_json')
             )
+            scores.sort(key=lambda s: _DOMAIN_DISPLAY_ORDER.index(s['domain'])
+                        if s['domain'] in _DOMAIN_DISPLAY_ORDER else 99)
             # Resolve set name for this student's assignment
             try:
                 _asgn = (

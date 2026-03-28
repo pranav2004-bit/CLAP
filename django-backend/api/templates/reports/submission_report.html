@@ -6,10 +6,10 @@
   <style>
     /* Page setup — 60px bottom margin reserves space for the fixed footer on every page */
     @page { margin: 30px 30px 60px 30px; }
-    body { font-family: Arial, sans-serif; margin: 0; padding: 0; color: #1f2937; font-size: 14px; }
+    body { font-family: Arial, sans-serif; margin: 0; padding: 0; color: #1f2937; font-size: 14px; orphans: 3; widows: 3; }
     .content { padding: 30px 30px 20px 30px; }
-    h2 { font-size: 16px; margin: 24px 0 8px; color: #1f2937; border-bottom: 1px solid #d1d5db; padding-bottom: 4px; }
-    h3 { font-size: 14px; margin: 16px 0 6px; color: #374151; }
+    h2 { font-size: 16px; margin: 24px 0 8px; color: #1f2937; border-bottom: 1px solid #d1d5db; padding-bottom: 4px; page-break-after: avoid; break-after: avoid; }
+    h3 { font-size: 14px; margin: 16px 0 6px; color: #374151; page-break-after: avoid; break-after: avoid; }
     .header { border-top: 2px solid #1f2937; border-bottom: 2px solid #1f2937; padding-top: 10px; padding-bottom: 10px; margin-bottom: 0; }
     .meta { margin-bottom: 20px; background: #f9fafb; padding: 12px 16px; border-radius: 4px; border-left: 3px solid #d1d5db; }
     .meta div { margin-bottom: 4px; }
@@ -19,10 +19,10 @@
     th { background: #1f2937; color: #fff; font-weight: bold; border-bottom: none; }
     tr:nth-child(even) { background: #f9fafb; }
     .score-badge { font-weight: bold; color: #1f2937; }
-    .total-score { font-size: 16px; font-weight: bold; color: #1f2937; }
-    .feedback-overall { background: #f3f4f6; border-left: 3px solid #6b7280; padding: 10px 14px; margin: 10px 0; border-radius: 0 4px 4px 0; font-style: italic; color: #374151; }
+    .total-score { font-size: 16px; font-weight: bold; color: #1f2937; page-break-after: avoid; break-after: avoid; }
+    .feedback-overall { background: #f3f4f6; border-left: 3px solid #6b7280; padding: 10px 14px; margin: 10px 0; border-radius: 0 4px 4px 0; font-style: italic; color: #374151; page-break-inside: avoid; break-inside: avoid; }
     .breakdown-table th { background: #374151; }
-    .section-box { border: 1px solid #e5e7eb; border-radius: 6px; padding: 14px 16px; margin-bottom: 20px; }
+    .section-box { border: 1px solid #e5e7eb; border-radius: 6px; padding: 14px 16px; margin-bottom: 20px; page-break-inside: avoid; break-inside: avoid; }
     .domain-label { text-transform: capitalize; }
     .summary-row-llm td { background: #f9fafb; }
     /* Total & grade rows */

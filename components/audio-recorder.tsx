@@ -72,6 +72,10 @@ export default function AudioRecorderItem({
   // Ref so stopRecording always has the live MediaRecorder instance,
   // even when called from inside a stale setInterval closure.
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  // Tracks elapsed seconds directly in a ref so the interval callback can
+  // read/write it without going through React state — this lets us call
+  // stopRecording() safely from the interval (not inside a state updater).
+  const elapsedRef = useRef(0)
 
   // Detect supported audio format on mount
   useEffect(() => {
@@ -182,17 +186,18 @@ export default function AudioRecorderItem({
       mediaRecorderRef.current = recorder  // keep ref in sync for stopRecording
       setMediaRecorder(recorder)
       setStatus('recording')
+      elapsedRef.current = 0
       setDuration(0)
 
-      // Start timer
+      // Start timer — elapsed time is tracked in a ref so stopRecording()
+      // can be called directly from the interval without being inside a
+      // React state updater (which must be pure and cannot have side effects).
       timerRef.current = setInterval(() => {
-        setDuration(prev => {
-          const newDuration = prev + 1
-          if (newDuration >= maxDuration) {
-            stopRecording()
-          }
-          return newDuration
-        })
+        elapsedRef.current += 1
+        setDuration(elapsedRef.current)
+        if (elapsedRef.current >= maxDuration) {
+          stopRecording()
+        }
       }, 1000)
 
     } catch (err: any) {
@@ -227,13 +232,12 @@ export default function AudioRecorderItem({
           mediaRecorderRef.current = recorder  // keep ref in sync for stopRecording
           setMediaRecorder(recorder)
           setStatus('recording')
+          elapsedRef.current = 0
           setDuration(0)
           timerRef.current = setInterval(() => {
-            setDuration(prev => {
-              const n = prev + 1
-              if (n >= maxDuration) stopRecording()
-              return n
-            })
+            elapsedRef.current += 1
+            setDuration(elapsedRef.current)
+            if (elapsedRef.current >= maxDuration) stopRecording()
           }, 1000)
           toast.warning('Selected microphone disconnected — switched to default device.')
           return
@@ -269,6 +273,7 @@ export default function AudioRecorderItem({
     }
     setAudioUrl(null)
     setAudioBlob(null)
+    elapsedRef.current = 0
     setDuration(0)
     setStatus('idle')
     setError(null)

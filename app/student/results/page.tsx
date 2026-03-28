@@ -97,6 +97,12 @@ export default function StudentResultsPage() {
   const [rows, setRows]               = useState<HistoryRow[]>([])
   // Navigation loading guard — tracks which header button was clicked
   const [navLoadingId, setNavLoadingId] = useState<string | null>(null)
+  // Student display name — read from session so header matches dashboard exactly
+  const [userName, setUserName]       = useState<string>('')
+
+  useEffect(() => {
+    setUserName(authStorage.get('user_name') || '')
+  }, [])
 
   // Which submission is expanded to show domain scores
   const [expandedId, setExpandedId]   = useState<string | null>(null)
@@ -348,28 +354,39 @@ export default function StudentResultsPage() {
 
   return (
     <div className="min-h-dvh bg-background">
-      {/* Header — matches dashboard / profile header */}
+      {/* Header — identical to dashboard header */}
       <header className="sticky top-0 z-50 bg-white border-b border-border shadow-sm">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between gap-4">
-            {/* Logo */}
-            <div className="flex items-center gap-3 shrink-0">
+            {/* Co-brand: ANITS (dominant) + CLAP */}
+            <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+              <Image
+                src="/images/anits-logo.png"
+                alt="ANITS"
+                width={48}
+                height={48}
+                className="h-12 w-auto object-contain flex-shrink-0 my-0.5"
+                priority
+              />
+              <div className="w-px h-7 bg-border" />
               <Image
                 src="/images/clap-logo.png?v=new"
                 alt="CLAP Logo"
-                width={113}
-                height={46}
-                className="w-auto h-10 object-contain"
+                width={90}
+                height={36}
+                className="h-8 w-auto object-contain"
                 priority
-                style={{ width: 'auto', height: 'auto' }}
               />
               <div className="hidden sm:flex flex-col justify-center h-8 border-l border-border pl-3 ml-1">
-                <p className="text-base font-semibold text-primary">Student Portal</p>
+                <p className="text-sm font-semibold text-primary">Student Portal</p>
               </div>
             </div>
 
-            {/* Nav */}
+            {/* Nav buttons */}
             <div className="flex items-center gap-2">
+              {userName && (
+                <span className="hidden md:block text-sm font-medium text-muted-foreground mr-1 max-w-[160px] truncate">{userName}</span>
+              )}
               <Button
                 variant="outline"
                 size="sm"

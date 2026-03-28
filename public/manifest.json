@@ -1,0 +1,40 @@
+{
+  "name": "CLAP - Continuing Language Assessment Program",
+  "short_name": "CLAP",
+  "description": "Comprehensive English language assessment platform evaluating Listening, Speaking, Reading, Writing, and Verbal Ability skills with AI-powered scoring.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#ffffff",
+  "theme_color": "#1f2937",
+  "scope": "/",
+  "lang": "en",
+  "categories": ["education", "productivity"],
+  "icons": [
+    {
+      "src": "/images/clap-icon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/images/clap-icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "Dashboard",
+      "url": "/student/dashboard",
+      "description": "Go to your student dashboard"
+    },
+    {
+      "name": "My Results",
+      "url": "/student/results",
+      "description": "View your assessment results"
+    }
+  ]
+}

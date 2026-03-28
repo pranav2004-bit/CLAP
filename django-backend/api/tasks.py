@@ -212,6 +212,10 @@ def _upsert_rule_score(submission: AssessmentSubmission, domain: str, score_valu
 _REQUIRED_LLM_DOMAINS = frozenset({'writing', 'speaking'})
 _ALL_SCORED_DOMAINS   = frozenset({'listening', 'reading', 'vocab', 'writing', 'speaking'})
 
+# Canonical display order for domain scores in the PDF report card.
+# Matches the required order: Listening → Speaking → Reading → Writing → Verbal Ability
+_DOMAIN_DISPLAY_ORDER = ['listening', 'speaking', 'reading', 'writing', 'vocab', 'vocabulary']
+
 # ── Score / grade constants ───────────────────────────────────────────────────
 # Each domain is scored 0–10.  With 5 domains the maximum total is 50.
 # _SCORE_MAX_TOTAL is a Decimal so arithmetic with SubmissionScore.score
@@ -1216,7 +1220,9 @@ def generate_report(self, submission_id):
                     'submission_id': submission_id,
                 }
 
-        scores = list(SubmissionScore.objects.filter(submission=submission).order_by('domain'))
+        scores = list(SubmissionScore.objects.filter(submission=submission))
+        scores.sort(key=lambda s: _DOMAIN_DISPLAY_ORDER.index(s.domain)
+                    if s.domain in _DOMAIN_DISPLAY_ORDER else 99)
         if len(scores) < _ALL_SCORED_DOMAINS.__len__():
             # Status is LLM_COMPLETE yet < 5 scores — this is a data-consistency bug
             # (should never happen in a healthy system).  Raise so it retries / DLQs
@@ -1504,7 +1510,9 @@ def send_email_report(self, submission_id):
             expected_status=AssessmentSubmission.STATUS_REPORT_READY,
         )
 
-        scores = list(SubmissionScore.objects.filter(submission=submission).order_by('domain'))
+        scores = list(SubmissionScore.objects.filter(submission=submission))
+        scores.sort(key=lambda s: _DOMAIN_DISPLAY_ORDER.index(s.domain)
+                    if s.domain in _DOMAIN_DISPLAY_ORDER else 99)
         student_name = (
             (getattr(submission.user, 'full_name', None) or '').strip()
             or (getattr(submission.user, 'username', None) or '').strip()
