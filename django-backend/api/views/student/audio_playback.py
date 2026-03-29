@@ -1,6 +1,31 @@
 """
 Student Audio Playback Views
-Handles playback tracking and file retrieval for audio_block items
+Handles playback tracking and file retrieval for audio_block items.
+
+Set-aware audio resolution
+──────────────────────────
+When a student is assigned a set (StudentClapAssignment.assigned_set_id is set),
+audio for audio_block items is resolved in priority order:
+
+  1. Set-specific audio — AdminAudioFile.set_item FK points to the ClapSetItem
+     that belongs to the student's assigned set.  Uploaded by the admin via the
+     set editor (POST /admin/set-items/<id>/upload-audio).
+
+  2. Base/shared audio — AdminAudioFile.item FK points to the structural
+     ClapTestItem slot.  Commonly used when all sets share a single listening
+     passage (the admin uploads once at the base level).
+
+The structural ClapTestItem slot carries the StudentClapResponse FK so that
+play-count tracking is always written to one consistent row per student.
+
+Why NOT checking item.item_type
+────────────────────────────────
+The structural slot's item_type is set at creation time via _ensure_structural_slots.
+If the slot was created earlier by a DIFFERENT item type (e.g. 'mcq') and the admin
+later attached an audio_block ClapSetItem at the same order_index, get_or_create
+returns the existing slot unchanged.  Checking item.item_type would incorrectly
+block audio delivery for those slots.  AdminAudioFile existence is the authoritative
+signal that this is an audio item — no separate type gate is needed.
 """
 
 import os
@@ -10,72 +35,135 @@ from django.conf import settings
 from django.http import JsonResponse, FileResponse, StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
-from api.models import ClapTestItem, AdminAudioFile, StudentClapAssignment, StudentClapResponse
+from api.models import (
+    ClapTestItem, ClapSetItem, AdminAudioFile,
+    StudentClapAssignment, StudentClapResponse,
+)
 from api.utils.jwt_utils import get_user_from_request
 
+
+# ── Helper: set-aware audio resolution ────────────────────────────────────────
+
+def _resolve_audio_for_item(item: ClapTestItem, assignment) -> tuple:
+    """
+    Return (admin_audio: AdminAudioFile | None, effective_play_limit: int)
+    for a given structural ClapTestItem + student assignment.
+
+    Priority:
+      1. Set-specific audio (AdminAudioFile.set_item FK) — the student's
+         assigned set has its own audio clip for this slot.
+      2. Base item audio (AdminAudioFile.item FK) — audio is shared across
+         all sets (or the test was created without the sets feature).
+
+    play_limit is resolved with the same priority: set item content first,
+    base item content as fallback.  0 always means "unlimited / not configured".
+
+    Uses .filter().order_by().first() (not .get()) to survive duplicate
+    order_index data without raising MultipleObjectsReturned.
+    """
+    admin_audio = None
+    effective_play_limit = (item.content or {}).get('play_limit', 0)
+
+    # ── Priority 1: set-specific audio ────────────────────────────────────────
+    if getattr(assignment, 'assigned_set_id', None):
+        try:
+            set_item = (
+                ClapSetItem.objects
+                .filter(
+                    set_component__set_id=assignment.assigned_set_id,
+                    set_component__test_type=item.component.test_type,
+                    order_index=item.order_index,
+                )
+                .order_by('created_at')   # stable: earlier-created item wins
+                .first()
+            )
+            if set_item is not None:
+                # Override play_limit from set item if explicitly configured
+                set_play_limit = (set_item.content or {}).get('play_limit', 0)
+                if set_play_limit:
+                    effective_play_limit = set_play_limit
+
+                # Try set-specific audio file
+                try:
+                    admin_audio = AdminAudioFile.objects.get(set_item=set_item)
+                except AdminAudioFile.DoesNotExist:
+                    pass  # Fall through to base-item audio below
+
+        except Exception:
+            # Defensive: a set-lookup error must never block audio delivery.
+            # Log nothing here — callers log on 404 if both paths fail.
+            pass
+
+    # ── Priority 2: base item audio (shared / fallback) ───────────────────────
+    if admin_audio is None:
+        try:
+            admin_audio = AdminAudioFile.objects.get(item=item)
+        except AdminAudioFile.DoesNotExist:
+            pass
+
+    return admin_audio, effective_play_limit
+
+
+# ── Views ──────────────────────────────────────────────────────────────────────
 
 @csrf_exempt
 @require_http_methods(["GET"])
 def retrieve_audio_file(request, item_id):
     """
-    Retrieve audio file for audio_block item (authenticated)
+    Retrieve audio file for audio_block item (authenticated).
     GET /api/student/clap-items/{item_id}/audio?assignment_id={uuid}
+
+    Handles both base-item audio and set-specific audio transparently.
     """
-    # Authentication
+    # ── Auth ───────────────────────────────────────────────────────────────────
     user = get_user_from_request(request)
     if not user:
         return JsonResponse({'error': 'Authentication required'}, status=401)
-
     if user.role != 'student':
         return JsonResponse({'error': 'Student access required'}, status=403)
 
-    # Get assignment_id from query params
+    # ── Assignment ─────────────────────────────────────────────────────────────
     assignment_id = request.GET.get('assignment_id')
     if not assignment_id:
         return JsonResponse({'error': 'assignment_id required'}, status=400)
 
-    # Verify assignment belongs to user
     try:
         assignment = StudentClapAssignment.objects.get(id=assignment_id, student=user)
     except StudentClapAssignment.DoesNotExist:
         return JsonResponse({'error': 'Assignment not found or not yours'}, status=403)
 
-    # Verify item exists and belongs to assignment's test
+    # ── Item ───────────────────────────────────────────────────────────────────
     try:
-        item = ClapTestItem.objects.get(id=item_id)
+        item = ClapTestItem.objects.select_related('component').get(id=item_id)
     except ClapTestItem.DoesNotExist:
         return JsonResponse({'error': 'Test item not found'}, status=404)
 
-    # Verify item belongs to assignment's test
     if item.component.clap_test_id != assignment.clap_test_id:
         return JsonResponse({'error': 'Item does not belong to this assignment'}, status=403)
 
-    # Verify item is audio_block type
-    if item.item_type != 'audio_block':
-        return JsonResponse({'error': 'Item is not an audio block'}, status=400)
+    # NOTE: item.item_type is intentionally NOT checked here.
+    # See module docstring for the full reasoning.
 
-    # Get audio file
-    try:
-        admin_audio = AdminAudioFile.objects.get(item=item)
-    except AdminAudioFile.DoesNotExist:
+    # ── Resolve audio (set-specific or base) ───────────────────────────────────
+    admin_audio, effective_play_limit = _resolve_audio_for_item(item, assignment)
+
+    if admin_audio is None:
         return JsonResponse({'error': 'Audio file not found'}, status=404)
 
-    # Check playback limit.
-    # play_limit=0 means "not configured / unlimited" — never block in that case.
-    # The old code lacked this guard: 0 >= 0 is True, so every audio fetch on an
-    # unconfigured item returned 403 "Playback limit reached".
-    play_limit = item.content.get('play_limit', 0)
-    if play_limit > 0:
+    # ── Play-limit enforcement (0 = unlimited — skip check) ───────────────────
+    if effective_play_limit > 0:
         try:
-            response = StudentClapResponse.objects.get(assignment=assignment, item=item)
-            play_count = response.response_data.get('play_count', 0) if response.response_data else 0
-            if play_count >= play_limit:
-                return JsonResponse({'error': 'Playback limit reached', 'code': 'PLAY_LIMIT_REACHED'}, status=403)
+            resp = StudentClapResponse.objects.get(assignment=assignment, item=item)
+            play_count = resp.response_data.get('play_count', 0) if resp.response_data else 0
+            if play_count >= effective_play_limit:
+                return JsonResponse(
+                    {'error': 'Playback limit reached', 'code': 'PLAY_LIMIT_REACHED'},
+                    status=403,
+                )
         except StudentClapResponse.DoesNotExist:
-            # No response yet — playback allowed
-            pass
+            pass  # No plays recorded yet — allow
 
-    # Serve file — route based on storage backend
+    # ── Serve audio file ───────────────────────────────────────────────────────
     if admin_audio.file_path.startswith('s3://'):
         # Stream through Django instead of redirecting to S3.
         # A browser fetch() follows the 302 redirect to S3, but S3 presigned
@@ -83,7 +171,6 @@ def retrieve_audio_file(request, item_id):
         # explicit AllowedOrigins CORS rule for every frontend domain.
         # Streaming through Django sidesteps S3 CORS entirely — the browser
         # only ever talks to the Django origin it already trusts.
-        # Auth checks (assignment ownership, play-limit) already ran above.
         from api.utils.storage import get_s3_client
         client = get_s3_client()
         if not client:
@@ -103,11 +190,7 @@ def retrieve_audio_file(request, item_id):
             # CDN/nginx can cache the response.  Previously 'no-store' forced every
             # page-refresh to re-stream the blob through a sync Gunicorn worker,
             # causing worker saturation when a whole class started simultaneously.
-            # The response originates from the Django origin (not S3 directly) so
-            # there is no cross-origin concern with caching here.
             response['Cache-Control'] = 'public, max-age=86400'
-            # Surface the file size so browsers can show correct progress bars and
-            # CDN/nginx can buffer properly without holding the Django worker open.
             content_length = s3_obj.get('ContentLength')
             if content_length:
                 response['Content-Length'] = str(content_length)
@@ -115,8 +198,7 @@ def retrieve_audio_file(request, item_id):
         except Exception as exc:
             return JsonResponse({'error': f'Failed to fetch audio: {exc}'}, status=500)
 
-    # Local filesystem audio — shared listening asset, safe to cache publicly.
-    # A2: explicit file handle management — close on exception to prevent FD leak.
+    # Local filesystem — A2: explicit file handle management, close on exception.
     file_path = os.path.join(settings.MEDIA_ROOT, admin_audio.file_path)
     if not os.path.exists(file_path):
         return JsonResponse({'error': 'Audio file not found on server'}, status=404)
@@ -126,15 +208,11 @@ def retrieve_audio_file(request, item_id):
         fh = open(file_path, 'rb')
         response = FileResponse(fh, content_type=admin_audio.mime_type)
         response['Content-Disposition'] = 'inline'
-        # Phase 2.2: admin listening audio is the same bytes for every student;
-        # browsers may cache it for 24 h.  CacheControlMiddleware's /api/ no-store
-        # default is skipped because we explicitly set the header here.
         response['Cache-Control'] = 'public, max-age=86400'
-        # Django closes fh when streaming is complete; we hand ownership to FileResponse
         return response
     except Exception as exc:
         if fh is not None:
-            fh.close()  # Close explicitly so FD is not leaked on error path
+            fh.close()
         return JsonResponse({'error': f'Failed to serve file: {exc}'}, status=500)
 
 
@@ -142,19 +220,16 @@ def retrieve_audio_file(request, item_id):
 @require_http_methods(["POST"])
 def track_playback(request, item_id):
     """
-    Track audio playback completion and increment counter
+    Track audio playback completion and increment counter.
     POST /api/student/clap-items/{item_id}/track-playback
     Body: {"assignment_id": "uuid", "playback_completed": true}
     """
-    # Authentication
     user = get_user_from_request(request)
     if not user:
         return JsonResponse({'error': 'Authentication required'}, status=401)
-
     if user.role != 'student':
         return JsonResponse({'error': 'Student access required'}, status=403)
 
-    # Parse request body
     try:
         body = json.loads(request.body)
         assignment_id = body.get('assignment_id')
@@ -164,63 +239,65 @@ def track_playback(request, item_id):
 
     if not assignment_id:
         return JsonResponse({'error': 'assignment_id required'}, status=400)
-
     if not playback_completed:
         return JsonResponse({'error': 'playback_completed must be true'}, status=400)
 
-    # Verify assignment belongs to user
     try:
         assignment = StudentClapAssignment.objects.get(id=assignment_id, student=user)
     except StudentClapAssignment.DoesNotExist:
         return JsonResponse({'error': 'Assignment not found or not yours'}, status=403)
 
-    # Verify item exists and belongs to assignment's test
     try:
-        item = ClapTestItem.objects.get(id=item_id)
+        item = ClapTestItem.objects.select_related('component').get(id=item_id)
     except ClapTestItem.DoesNotExist:
         return JsonResponse({'error': 'Test item not found'}, status=404)
 
     if item.component.clap_test_id != assignment.clap_test_id:
         return JsonResponse({'error': 'Item does not belong to this assignment'}, status=403)
 
-    # Get play limit
-    play_limit = item.content.get('play_limit', 0)
-    if play_limit < 1:
-        return JsonResponse({'error': 'Play limit not configured'}, status=400)
+    # Resolve effective play_limit from set item content or base item content.
+    _, effective_play_limit = _resolve_audio_for_item(item, assignment)
 
-    # Get or create response
-    response, created = StudentClapResponse.objects.get_or_create(
+    # Play limit = 0 means "unlimited / not configured" — tracking is a no-op.
+    # Return a success response so the frontend does not log a spurious error.
+    if effective_play_limit < 1:
+        return JsonResponse({
+            'success': True,
+            'play_count': 0,
+            'play_limit': 0,
+            'limit_reached': False,
+            'remaining_plays': 0,
+        })
+
+    play_limit = effective_play_limit
+
+    # Get or create response record (always keyed to structural ClapTestItem)
+    response, _created = StudentClapResponse.objects.get_or_create(
         assignment=assignment,
         item=item,
         defaults={'response_data': {}}
     )
 
-    # Initialize response_data if needed
     if not response.response_data:
         response.response_data = {}
 
-    # Get current play count
     play_count = response.response_data.get('play_count', 0)
 
-    # Check if limit already reached
     if play_count >= play_limit:
         return JsonResponse({'error': 'Playback limit already reached'}, status=403)
 
-    # Increment counter
     response.response_data['play_count'] = play_count + 1
     response.response_data['last_played_at'] = datetime.now().isoformat()
     response.response_data['limit_reached'] = (response.response_data['play_count'] >= play_limit)
     response.response_data['type'] = 'audio_playback'
-
     response.save()
 
-    # Return updated status
     return JsonResponse({
         'success': True,
         'play_count': response.response_data['play_count'],
         'play_limit': play_limit,
         'limit_reached': response.response_data['limit_reached'],
-        'remaining_plays': max(0, play_limit - response.response_data['play_count'])
+        'remaining_plays': max(0, play_limit - response.response_data['play_count']),
     }, status=200)
 
 
@@ -228,43 +305,41 @@ def track_playback(request, item_id):
 @require_http_methods(["GET"])
 def get_playback_status(request, item_id):
     """
-    Get current playback status for student
+    Get current playback status for student.
     GET /api/student/clap-items/{item_id}/playback-status?assignment_id={uuid}
     """
-    # Authentication
     user = get_user_from_request(request)
     if not user:
         return JsonResponse({'error': 'Authentication required'}, status=401)
-
     if user.role != 'student':
         return JsonResponse({'error': 'Student access required'}, status=403)
 
-    # Get assignment_id from query params
     assignment_id = request.GET.get('assignment_id')
     if not assignment_id:
         return JsonResponse({'error': 'assignment_id required'}, status=400)
 
-    # Verify assignment belongs to user
     try:
         assignment = StudentClapAssignment.objects.get(id=assignment_id, student=user)
     except StudentClapAssignment.DoesNotExist:
         return JsonResponse({'error': 'Assignment not found or not yours'}, status=403)
 
-    # Verify item exists
     try:
-        item = ClapTestItem.objects.get(id=item_id)
+        item = ClapTestItem.objects.select_related('component').get(id=item_id)
     except ClapTestItem.DoesNotExist:
         return JsonResponse({'error': 'Test item not found'}, status=404)
 
-    # Get play limit
-    play_limit = item.content.get('play_limit', 0)
+    # Resolve effective play_limit from set item content or base item content.
+    _, effective_play_limit = _resolve_audio_for_item(item, assignment)
+    play_limit = effective_play_limit
 
-    # Get response if exists
     try:
         response = StudentClapResponse.objects.get(assignment=assignment, item=item)
         play_count = response.response_data.get('play_count', 0) if response.response_data else 0
         last_played_at = response.response_data.get('last_played_at') if response.response_data else None
-        limit_reached = play_count >= play_limit
+        # limit_reached is only meaningful when a play limit is configured.
+        # When play_limit=0 (unlimited), never report limit_reached=True even
+        # if play_count > 0 (which would happen after any completed play).
+        limit_reached = (play_count >= play_limit) if play_limit > 0 else False
     except StudentClapResponse.DoesNotExist:
         play_count = 0
         last_played_at = None
@@ -274,6 +349,6 @@ def get_playback_status(request, item_id):
         'play_count': play_count,
         'play_limit': play_limit,
         'limit_reached': limit_reached,
-        'remaining_plays': max(0, play_limit - play_count),
-        'last_played_at': last_played_at
+        'remaining_plays': max(0, play_limit - play_count) if play_limit > 0 else 0,
+        'last_played_at': last_played_at,
     }, status=200)

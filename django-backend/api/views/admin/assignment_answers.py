@@ -2,8 +2,24 @@
 Admin Assignment Answers Preview
 GET /api/admin/clap-tests/<test_id>/assignments/<assignment_id>/answers
 
-Returns a student's submitted answers for all 5 test components,
-including the correct answer key so the admin can cross-check.
+Returns a student's submitted answers for all test components, including
+the correct answer key so the admin can cross-check.
+
+Set-aware content resolution
+────────────────────────────
+For students assigned to a set, every item's question text, options list,
+item_type, and points come from the ClapSetItem — NOT the structural
+ClapTestItem slot.  The structural slot intentionally stores content={}
+(it is only a positional placeholder that carries the FK for StudentClapResponse).
+
+Without this resolution, the preview would show '—' for every question and
+an empty options list for every MCQ item, even when the student submitted
+correct answers, because the structural slot's content is always empty.
+
+Priority (mirrors student_test_items and score_rule_based):
+  1. ClapSetItem.content  (student's assigned set — question text, options,
+                           correct_option, points, item_type)
+  2. ClapTestItem.content (base/master editor — legacy tests without sets)
 
 For MCQ (Listening / Reading / Vocabulary):
   - question text, all options, student's selected index,
@@ -13,6 +29,12 @@ For MCQ (Listening / Reading / Vocabulary):
 For Writing / Speaking:
   - question prompt, student's text response (or audio transcription),
     LLM feedback if available
+
+SUPERSEDED submissions
+──────────────────────
+After a retest is granted, the original submission is marked SUPERSEDED_xxx.
+The LLM feedback query excludes SUPERSEDED entries so the preview always
+shows the feedback for the student's CURRENT (latest active) attempt.
 """
 
 import logging
@@ -55,11 +77,19 @@ def assignment_answers(request, test_id, assignment_id):
     student = assignment.student
 
     # ── Fetch LLM feedback from SubmissionScore ───────────────────────────────
+    # Exclude SUPERSEDED submissions (created by retest grant) so the preview
+    # always shows the latest active attempt's feedback, not a prior attempt.
     llm_feedback: dict[str, dict] = {}   # domain → {score, feedback_json}
-    sub = AssessmentSubmission.objects.filter(
-        user_id=assignment.student_id,
-        assessment_id=test_id,
-    ).order_by('-created_at').first()
+    sub = (
+        AssessmentSubmission.objects
+        .filter(
+            user_id=assignment.student_id,
+            assessment_id=test_id,
+        )
+        .exclude(status__startswith='SUPERSEDED_')
+        .order_by('-created_at')
+        .first()
+    )
 
     if sub:
         for sc in SubmissionScore.objects.filter(submission=sub):
@@ -74,19 +104,18 @@ def assignment_answers(request, test_id, assignment_id):
     ).select_related('item__component')
     response_map = {str(r.item_id): r for r in responses_qs}
 
-    # ── Build set-item answer map if student has an assigned set ──────────────
-    # Primary key: (test_type, order_index) → ClapSetItem
-    # This is the same lookup key used by score_rule_based and submit_response,
-    # ensuring the admin preview always shows the same answer key that was used
-    # for scoring — no divergence between what the admin sees and what was scored.
+    # ── Build set-item map if student has an assigned set ─────────────────────
+    # Key: (test_type, order_index) → ClapSetItem
+    # This is the same lookup key used by score_rule_based and student_test_items,
+    # ensuring the admin preview always shows the same question content and answer
+    # key that the student actually saw and that was used for scoring.
     set_item_map: dict[tuple, 'ClapSetItem'] = {}
     if assignment.assigned_set_id:
         for si in ClapSetItem.objects.filter(
             set_component__set_id=assignment.assigned_set_id
         ).select_related('set_component'):
             key = (si.set_component.test_type, si.order_index)
-            # Last write wins on collision (shouldn't happen with clean data,
-            # but avoids KeyError in edge-cases with duplicate order_index rows).
+            # Last write wins on collision (duplicate order_index edge case).
             set_item_map[key] = si
 
     # ── Per-component answers ─────────────────────────────────────────────────
@@ -95,18 +124,45 @@ def assignment_answers(request, test_id, assignment_id):
         items_data = []
         for item in ClapTestItem.objects.filter(component=comp).order_by('order_index'):
             resp = response_map.get(str(item.id))
-            content = item.content or {}
 
-            # Correct option: prefer set-specific answer key
+            # ── Content resolution: set item takes priority over base item ────
+            #
+            # The structural ClapTestItem slot ALWAYS has content={} for set-based
+            # tests — it is an empty positional placeholder, not a real question.
+            # All question text, options, correct_option, points, and item_type live
+            # in ClapSetItem.content.  Using item.content here (the old behaviour)
+            # means every question shows '—' and every MCQ options list is empty.
+            #
             set_item = set_item_map.get((comp.test_type, item.order_index))
-            if set_item and 'correct_option' in (set_item.content or {}):
-                correct_option_idx = set_item.content['correct_option']
-                answer_source = 'set'
+
+            if set_item:
+                # Set-based flow — get everything from the student's assigned set
+                raw_content        = (set_item.content or {}).copy()
+                effective_item_type = set_item.item_type or item.item_type
+                effective_points    = set_item.points if set_item.points is not None else item.points
             else:
-                correct_option_idx = content.get('correct_option')
+                # Base/legacy flow — content lives directly on ClapTestItem
+                raw_content        = (item.content or {}).copy()
+                effective_item_type = item.item_type
+                effective_points    = item.points
+
+            # ── Correct answer key (MCQ) ──────────────────────────────────────
+            # Pop correct_option from raw_content so it is never sent to the
+            # frontend as part of the plain content dict.  We expose it only
+            # through the explicit 'correct_option_index' field below.
+            correct_option_idx = raw_content.pop('correct_option', None)
+            answer_source = 'base'
+
+            if set_item and correct_option_idx is not None:
+                # Correct option came from the set item → answer_source = 'set'
+                answer_source = 'set'
+            elif set_item and correct_option_idx is None:
+                # Set item exists but doesn't carry a correct_option
+                # (e.g. subjective/text_block) — fall back to base item if any
+                correct_option_idx = (item.content or {}).get('correct_option')
                 answer_source = 'base'
 
-            # Student's selected answer
+            # ── Student's selected answer ─────────────────────────────────────
             # Parse response_data → integer option index.
             # Mirrors _reevaluate_mcq_responses in tasks.py: handles both
             # dict {"selected_option": N} and bare int N, plus a try/int()
@@ -127,33 +183,33 @@ def assignment_answers(request, test_id, assignment_id):
                     except (TypeError, ValueError):
                         selected_option_idx = None
 
-            # Strip correct_option from the content copy shown (keep options list)
-            display_content = {k: v for k, v in content.items() if k != 'correct_option'}
+            # display_content no longer contains correct_option (already popped).
+            # For set-based tests this is the REAL content (question + options).
+            # For base tests this is the base item content as before.
+            display_content = raw_content
 
             item_row = {
-                'item_id':              str(item.id),
-                'order_index':          item.order_index,
-                'item_type':            item.item_type,
-                'points':               item.points,
-                'content':              display_content,
+                'item_id':               str(item.id),
+                'order_index':           item.order_index,
+                'item_type':             effective_item_type,  # set item type takes priority
+                'points':                effective_points,      # set item points take priority
+                'content':               display_content,       # real content, not empty {}
                 # MCQ-specific
-                'correct_option_index': correct_option_idx,
-                'answer_source':        answer_source,   # 'set' or 'base'
+                'correct_option_index':  correct_option_idx,
+                'answer_source':         answer_source,   # 'set' or 'base'
                 'selected_option_index': selected_option_idx,
                 # True when a StudentClapResponse record exists for this item.
-                # Used by the admin preview to distinguish "student didn't answer"
-                # from "student answered but response_data couldn't be parsed".
-                # Always use this field — NOT selected_option_index — to decide
-                # whether to show a "Not answered" warning.
-                'has_response':         resp is not None,
+                # Use this — NOT selected_option_index — to distinguish "not answered"
+                # from "answered but couldn't parse".
+                'has_response':          resp is not None,
                 # For MCQ items: unanswered = 0 marks (shows "0/N" in preview).
                 # For W/S items: None = pending LLM evaluation (shows nothing).
-                'is_correct':           resp.is_correct if resp else (False if item.item_type == 'mcq' else None),
+                'is_correct':           resp.is_correct if resp else (False if effective_item_type == 'mcq' else None),
                 'marks_awarded':        (
                     float(resp.marks_awarded) if resp and resp.marks_awarded is not None
-                    else (0.0 if item.item_type == 'mcq' else None)
+                    else (0.0 if effective_item_type == 'mcq' else None)
                 ),
-                # Subjective / speaking
+                # Subjective / speaking text
                 'response_text':        resp.response_data if resp and isinstance(resp.response_data, str) else None,
             }
             items_data.append(item_row)

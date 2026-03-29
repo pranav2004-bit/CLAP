@@ -266,29 +266,50 @@ def distribute_sets(request, test_id):
     # Concurrency safety
     # ──────────────────
     # SELECT FOR UPDATE on the ClapTest row serialises concurrent distribution
-    # requests.  A second admin clicking "Distribute" simultaneously blocks
-    # here until the first transaction commits, then operates on
-    # already-updated data (assignments_to_update will be empty → no-op).
+    # requests AND concurrent assign_clap_test calls (both lock the ClapTest
+    # row, so they queue behind each other).
     #
-    # Collect only the assignments that actually need updating, then issue a
-    # single bulk_update instead of N individual UPDATEs (critical for 3000+
-    # students).  We use the FK attname 'assigned_set_id' explicitly — this
-    # is the column Django writes to and is unambiguous regardless of Django
-    # version or ORM FK resolution behaviour.
+    # We RE-FETCH assignments under the lock (select_for_update on both
+    # ClapTest and StudentClapAssignment rows) so that any students added by
+    # a concurrent assign_clap_test call between our pre-flight load and
+    # the commit are included.  Without this re-fetch, late-added students
+    # would silently stay Unassigned even though the response said "success".
+    #
+    # Round-robin fallback is applied to students who appear inside the lock
+    # but were not in the original distribution plan (i.e., newly enrolled
+    # after dist_map was computed).  This guarantees 100 % coverage.
     with transaction.atomic():
-        # Acquire row-level lock — blocks concurrent distributions for this test
+        # Acquire row-level lock on test — blocks concurrent distributions
         ClapTest.objects.select_for_update().get(id=clap_test.id)
 
+        # Re-fetch all assignments under row-lock so we have a consistent
+        # view that reflects any rows added by concurrent assign_clap_test.
+        locked_assignments = list(
+            StudentClapAssignment.objects.select_for_update().filter(
+                clap_test=clap_test
+            )
+        )
+        locked_map = {str(a.student_id): a for a in locked_assignments}
+
+        # Students present in the lock view but absent from dist_map were
+        # added after the distribution plan was built.  Assign round-robin.
+        n_sets = len(sets)
+        fallback_index = 0
+        for sid in locked_map:
+            if sid not in dist_map:
+                dist_map[sid] = sets[fallback_index % n_sets]
+                fallback_index += 1
+
         assignments_to_update = []
-        for student in students:
-            sid = str(student.id)
-            assigned_set = dist_map[sid]
-            a = assignment_by_student[sid]
+        for sid, a in locked_map.items():
+            assigned_set = dist_map.get(sid)
+            if assigned_set is None:
+                continue  # Defensive: should never happen after fallback above
 
             # str(None) → 'None'; str(UUID) → 'xxxxxxxx-...' — never equal,
             # so first-time distribution always adds every assignment.
             if str(a.assigned_set_id) != str(assigned_set.id):
-                a.assigned_set_id = assigned_set.id   # FK attname — direct, no ORM lookup
+                a.assigned_set_id = assigned_set.id   # FK attname — direct UUID write
                 a.assigned_set_label = assigned_set.label
                 assignments_to_update.append(a)
 
@@ -302,36 +323,39 @@ def distribute_sets(request, test_id):
             )
 
         # ── Post-commit verification ───────────────────────────────────────
-        # Re-query inside the same transaction to confirm every expected row
-        # was written.  If Aurora silently failed any UPDATE (e.g. constraint
-        # violation, partial write), this catch prevents a false-success response.
-        expected_distributed = len(students)  # ALL students should have a set
+        # Count ALL assignments for this test (we just locked every one of
+        # them above), then confirm that every single row now has a set.
+        # The check uses the locked total rather than the pre-flight len(students)
+        # so that late-enrolled students are included in the expected count.
+        total_assignments = len(locked_assignments)
         actual_distributed = StudentClapAssignment.objects.filter(
             clap_test=clap_test,
             assigned_set_id__isnull=False,
         ).count()
 
-        if actual_distributed < expected_distributed:
-            # Roll back and report — admin can retry
+        if actual_distributed < total_assignments:
+            # Roll back and report — admin can retry cleanly
+            shortfall = total_assignments - actual_distributed
             raise ValueError(
-                f'Distribution verification failed: expected {expected_distributed} '
-                f'assigned students, found {actual_distributed} in DB. '
+                f'Distribution verification failed: {shortfall} student assignment(s) '
+                f'still have no set after the write (expected {total_assignments}, '
+                f'found {actual_distributed} with a set). '
                 f'Transaction will be rolled back. Please retry.'
             )
 
     logger.info(
         "Admin %s distributed sets for test %s using %s strategy. "
-        "Students=%d, Sets=%d, Updated=%d, Collisions=%d",
+        "Total=%d, Sets=%d, Updated=%d, Collisions=%d",
         user.id, test_id, strategy,
-        len(students), len(sets), updated_count, collision_count,
+        total_assignments, len(sets), updated_count, collision_count,
     )
 
     return JsonResponse({
         'message': f'Sets distributed successfully using {strategy} strategy.',
         'strategy': strategy,
-        'student_count': len(students),
-        'updated_count': updated_count,      # rows actually written this run
-        'already_correct': len(students) - updated_count,  # idempotent skips
+        'student_count': total_assignments,   # reflects any late-enrolled students
+        'updated_count': updated_count,       # rows actually written this run
+        'already_correct': total_assignments - updated_count,  # idempotent skips
         'set_distribution': set_counts,
         'sequential_collisions': collision_count,
         'collisions_note': (
