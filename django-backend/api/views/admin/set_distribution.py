@@ -242,17 +242,23 @@ def distribute_sets(request, test_id):
         })
 
     # ── Commit to database ─────────────────────────────────────────────────
-    with transaction.atomic():
-        for student in students:
-            sid = str(student.id)
-            assigned_set = dist_map[sid]
-            assignment = assignment_by_student[sid]
+    # Collect only the assignments that actually change, then issue a single
+    # bulk_update instead of N individual UPDATEs (critical for 3000+ students).
+    assignments_to_update = []
+    for student in students:
+        sid = str(student.id)
+        assigned_set = dist_map[sid]
+        a = assignment_by_student[sid]
+        if str(a.assigned_set_id) != str(assigned_set.id):
+            a.assigned_set = assigned_set
+            a.assigned_set_label = assigned_set.label
+            assignments_to_update.append(a)
 
-            # Only update if set changed (avoid unnecessary writes)
-            if str(assignment.assigned_set_id) != str(assigned_set.id):
-                assignment.assigned_set = assigned_set
-                assignment.assigned_set_label = assigned_set.label
-                assignment.save(update_fields=['assigned_set_id', 'assigned_set_label'])
+    if assignments_to_update:
+        with transaction.atomic():
+            StudentClapAssignment.objects.bulk_update(
+                assignments_to_update, ['assigned_set', 'assigned_set_label']
+            )
 
     logger.info(
         f"Admin {user.id} distributed sets for test {test_id} "

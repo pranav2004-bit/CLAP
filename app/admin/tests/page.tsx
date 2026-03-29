@@ -34,7 +34,6 @@ import {
   CheckCircle2,
   XCircle,
   ChevronRight,
-  Download,
   Search,
 } from 'lucide-react'
 import { getApiUrl, getAuthHeaders, apiFetch } from '@/lib/api-config'
@@ -100,10 +99,6 @@ export default function AdminTestsPage() {
   const [creatingSet, setCreatingSet] = useState(false)
   const [cloneSourceSetId, setCloneSourceSetId] = useState('')
 
-  // --- Import from Components State ---
-  const [importPreview, setImportPreview] = useState<any>(null)
-  const [importing, setImporting] = useState(false)
-  const [importDryRunLoading, setImportDryRunLoading] = useState(false)
 
   // --- Retest Pagination (server-side) ---
   const [retestPage, setRetestPage] = useState(1)
@@ -367,54 +362,6 @@ export default function AdminTestsPage() {
     }
   }
 
-  /**
-   * Import the existing ClapTestComponents as Set A.
-   * Step 1 (dry_run=true):  fetch preview → show breakdown to admin.
-   * Step 2 (dry_run=false): commit on admin confirmation.
-   * All guards are enforced server-side; we surface the error messages verbatim.
-   */
-  const handleImportFromComponents = async (dryRun: boolean) => {
-    if (!selectedClapTest) return
-    if (dryRun) {
-      setImportDryRunLoading(true)
-    } else {
-      setImporting(true)
-    }
-    try {
-      const res = await fetch(
-        getApiUrl(`admin/clap-tests/${selectedClapTest.id}/sets/import-from-components`),
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-          body: JSON.stringify({ dry_run: dryRun }),
-        }
-      )
-      const data = await res.json()
-      if (!res.ok) {
-        toast.error(data.error || 'Import failed')
-        return
-      }
-      if (dryRun) {
-        // Show the preview panel — admin must confirm before committing
-        setImportPreview(data.will_create)
-        toast.info(
-          `Preview ready: ${data.will_create.components} components, ` +
-          `${data.will_create.total_items} questions will be imported as Set A.`
-        )
-      } else {
-        // Committed — refresh sets list and clear preview
-        toast.success(data.message)
-        setImportPreview(null)
-        fetchSets(selectedClapTest.id)
-        fetchDistributionStatus(selectedClapTest.id)
-      }
-    } catch (_e) {
-      toast.error('Network error during import. No data was written.')
-    } finally {
-      setImportDryRunLoading(false)
-      setImporting(false)
-    }
-  }
 
   const handleDistribute = async (dryRun = false) => {
     if (!selectedClapTest) return
@@ -1020,178 +967,8 @@ export default function AdminTestsPage() {
             {/* Tab Content */}
             <div className="mt-6">
               {activeDetailTab === 'question-papers' && (() => {
-                const COMPONENTS = [
-                  { name: 'Listening', type: 'listening', icon: Headphones, color: 'blue' },
-                  { name: 'Speaking', type: 'speaking', icon: Mic, color: 'purple' },
-                  { name: 'Reading', type: 'reading', icon: BookOpen, color: 'green' },
-                  { name: 'Writing', type: 'writing', icon: PenTool, color: 'orange' },
-                  { name: 'Verbal Ability', type: 'vocabulary', icon: Brain, color: 'indigo' },
-                ];
-                const testMap: Record<string, any> = {};
-                for (const t of (selectedClapTest.tests || [])) testMap[t.type] = t;
-
-                // Readiness counters
-                const configured = COMPONENTS.filter(c => testMap[c.type]).length;
-                const ready = COMPONENTS.filter(c => (testMap[c.type]?.item_count || 0) > 0).length;
-                const allReady = ready === COMPONENTS.length;
-
                 return (
                   <div className="space-y-6">
-                    {/* ── Enterprise Global Template Header ────────────── */}
-                    <div className="flex items-center gap-4 p-4 rounded-xl bg-gradient-to-r from-slate-800 to-slate-700 text-white border border-slate-600 shadow-md">
-                      <div className="p-2 bg-white/10 rounded-lg shrink-0">
-                        <ShieldAlert className="w-5 h-5 text-white" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-bold text-sm tracking-wide">Master Paper Template</p>
-                        <p className="text-xs text-slate-300 mt-0.5">
-                          Global blueprint — all question paper sets inherit this structure. Edits here define the canonical content base for the entire assessment.
-                        </p>
-                      </div>
-                      <div className="shrink-0 text-center bg-white/10 px-4 py-2 rounded-lg border border-white/20">
-                        {setsLoading ? (
-                          <Loader2 className="w-5 h-5 animate-spin text-slate-300 mx-auto" />
-                        ) : (
-                          <>
-                            <span className="text-2xl font-bold leading-none">{sets.length}</span>
-                            <p className="text-[10px] text-slate-300 mt-0.5 uppercase tracking-wide">
-                              {sets.length === 1 ? 'Set Active' : 'Sets Active'}
-                            </p>
-                          </>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* ── Top Summary Bar ──────────────────────────────── */}
-                    <div className={`rounded-xl border px-5 py-4 flex items-center justify-between gap-4 ${allReady
-                      ? 'bg-green-50 border-green-200'
-                      : ready > 0
-                        ? 'bg-amber-50 border-amber-200'
-                        : 'bg-gray-50 border-gray-200'
-                      }`}>
-                      <div className="flex items-center gap-3">
-                        <div className={`w-9 h-9 rounded-lg flex items-center justify-center text-lg ${allReady ? 'bg-green-100' : ready > 0 ? 'bg-amber-100' : 'bg-gray-100'
-                          }`}>
-                          {allReady ? '✅' : ready > 0 ? '⚠️' : '⏳'}
-                        </div>
-                        <div>
-                          <p className={`font-semibold text-sm ${allReady ? 'text-green-800' : ready > 0 ? 'text-amber-800' : 'text-gray-700'}`}>
-                            {allReady
-                              ? 'All components ready — global blueprint complete'
-                              : ready > 0
-                                ? `${ready} of ${COMPONENTS.length} master components have questions`
-                                : 'No questions added yet — build the master paper (all sets inherit this)'}
-                          </p>
-                          <p className={`text-xs mt-0.5 ${allReady ? 'text-green-600' : ready > 0 ? 'text-amber-600' : 'text-gray-500'}`}>
-                            {configured} configured · {ready} ready · {COMPONENTS.length - ready} incomplete
-                            {sets.length > 0 && ` · propagates to ${sets.length} ${sets.length === 1 ? 'set' : 'sets'}`}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <div className="text-xs text-right">
-                          <span className={`font-bold text-lg ${allReady ? 'text-green-700' : 'text-amber-600'}`}>{ready}</span>
-                          <span className="text-gray-400">/{COMPONENTS.length}</span>
-                        </div>
-                        {/* Mini progress bar */}
-                        <div className="w-20 h-2 bg-gray-200 rounded-full overflow-hidden">
-                          <div
-                            className={`h-full rounded-full transition-all ${allReady ? 'bg-green-500' : 'bg-amber-400'}`}
-                            style={{ width: `${(ready / COMPONENTS.length) * 100}%` }}
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* ── Component Cards Grid ─────────────────────────── */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                      {COMPONENTS.map((comp) => {
-                        const stats = testMap[comp.type];
-                        const itemCount: number = stats?.item_count ?? 0;
-                        const isConfigured = !!stats;
-                        const isReady = itemCount > 0;
-
-                        // Badge colour & label
-                        const badge = isReady
-                          ? { label: 'Ready', cls: 'bg-green-100 text-green-700 border-green-200' }
-                          : isConfigured
-                            ? { label: 'No Questions', cls: 'bg-amber-100 text-amber-700 border-amber-200' }
-                            : { label: 'Not Configured', cls: 'bg-gray-100 text-gray-500 border-gray-200' };
-
-                        return (
-                          <Card
-                            key={comp.type}
-                            className={`hover:shadow-md transition-all ${!isConfigured ? 'opacity-60' : ''}`}
-                          >
-                            <CardHeader className="pb-2">
-                              <div className="flex items-center justify-between">
-                                <div className={`p-2 rounded-lg bg-${comp.color}-100`}>
-                                  <comp.icon className={`w-5 h-5 text-${comp.color}-600`} />
-                                </div>
-                                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${badge.cls}`}>
-                                  {badge.label}
-                                </span>
-                              </div>
-                              <CardTitle className="text-lg mt-3">{comp.name} Test</CardTitle>
-                            </CardHeader>
-
-                            <CardContent>
-                              <div className="space-y-2 text-sm text-gray-600">
-                                {/* Questions count */}
-                                <div className="flex justify-between items-center">
-                                  <span className="flex items-center gap-1">
-                                    Master Questions
-                                  </span>
-                                  <span className={`font-bold tabular-nums ${isReady ? 'text-green-700' : isConfigured ? 'text-amber-600' : 'text-gray-400'
-                                    }`}>
-                                    {isConfigured ? itemCount : '—'}
-                                  </span>
-                                </div>
-                                <div className="flex justify-between">
-                                  <span>Max Marks</span>
-                                  <span className="font-medium">{stats?.max_marks ?? '—'}</span>
-                                </div>
-                              </div>
-
-                              <div className="flex gap-2 mt-4">
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="flex-1 text-indigo-600 hover:bg-indigo-50 border border-indigo-100"
-                                  disabled={!isConfigured}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handlePreviewComponent(comp.type);
-                                  }}
-                                >
-                                  <Play className="w-3.5 h-3.5 mr-1" />
-                                  Preview
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  disabled={navigatingTo === `qp-${comp.type}`}
-                                  className="flex-1 border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800 disabled:opacity-50"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setNavigatingTo(`qp-${comp.type}`);
-                                    router.push(`/admin/dashboard/clap-tests/${selectedClapTest.id}/${comp.type}`);
-                                  }}
-                                >
-                                  {navigatingTo === `qp-${comp.type}` ? (
-                                    <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
-                                  ) : (
-                                    <Edit className="w-3.5 h-3.5 mr-1" />
-                                  )}
-                                  {navigatingTo === `qp-${comp.type}` ? 'Loading...' : isReady ? 'Edit' : 'Add Questions'}
-                                </Button>
-                              </div>
-                            </CardContent>
-                          </Card>
-                        );
-                      })}
-                    </div>
-
                     {/* ── Question Paper Sets Section ───────────────────── */}
                     <div className="border-t-2 border-dashed border-gray-200 pt-6 space-y-6">
 
@@ -1214,18 +991,6 @@ export default function AdminTestsPage() {
                             <TrendingUp className="w-4 h-4 mr-1.5" /> Validate Sets
                           </Button>
                           <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleImportFromComponents(true)}
-                            disabled={importDryRunLoading || importing || sets.length >= 26}
-                            className="border-indigo-200 text-indigo-700 hover:bg-indigo-50"
-                          >
-                            {importDryRunLoading
-                              ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
-                              : <Download className="w-4 h-4 mr-1.5" />}
-                            Import Set
-                          </Button>
-                          <Button
                             size="sm"
                             onClick={() => handleCreateSet()}
                             disabled={creatingSet || sets.length >= 26}
@@ -1236,39 +1001,6 @@ export default function AdminTestsPage() {
                         </div>
                       </div>
 
-                      {/* ── Import preview confirmation banner ───────────── */}
-                      {importPreview && (
-                        <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 flex items-start justify-between gap-4">
-                          <div className="flex gap-3">
-                            <Download className="w-5 h-5 text-indigo-600 shrink-0 mt-0.5" />
-                            <div className="text-sm">
-                              <p className="font-semibold text-indigo-900">Ready to import as a new set</p>
-                              <p className="mt-0.5 text-indigo-700">
-                                {importPreview.components} component{importPreview.components !== 1 ? 's' : ''},{' '}
-                                {importPreview.total_items} question{importPreview.total_items !== 1 ? 's' : ''} will be copied from the master question bank.
-                              </p>
-                            </div>
-                          </div>
-                          <div className="flex gap-2 shrink-0">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => setImportPreview(null)}
-                              className="text-gray-600 border-gray-300 hover:bg-gray-50"
-                            >
-                              Cancel
-                            </Button>
-                            <Button
-                              size="sm"
-                              onClick={() => handleImportFromComponents(false)}
-                              disabled={importing}
-                              className="bg-indigo-600 hover:bg-indigo-700 text-white"
-                            >
-                              {importing ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" />Importing...</> : 'Confirm Import'}
-                            </Button>
-                          </div>
-                        </div>
-                      )}
 
                       {/* ── Minimum 2 sets info banner ───────────────────── */}
                       {sets.length > 0 && sets.length < 2 && (
@@ -1374,9 +1106,20 @@ export default function AdminTestsPage() {
                                     </div>
                                   ))
                                 ) : (
-                                  <p className="text-xs text-amber-600 bg-amber-50 rounded px-2 py-1">
-                                    ⚠ No components yet — use Clone to populate this set
-                                  </p>
+                                  /* Empty set: show edit links so admin can add items directly */
+                                  (['listening', 'speaking', 'reading', 'writing', 'vocabulary'] as const).map((type) => (
+                                    <div
+                                      key={type}
+                                      className="flex justify-between items-center hover:bg-blue-50 p-1.5 rounded transition-colors cursor-pointer group"
+                                      onClick={() => router.push(`/admin/dashboard/clap-tests/${selectedClapTest?.id}/sets/${s.id}/${type}`)}
+                                    >
+                                      <span className="text-xs font-medium text-gray-700">{type === 'vocabulary' ? 'Verbal Ability' : type.charAt(0).toUpperCase() + type.slice(1)}</span>
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">0 items</span>
+                                        <span className="text-[10px] text-blue-600 font-medium px-1.5 group-hover:underline">Edit →</span>
+                                      </div>
+                                    </div>
+                                  ))
                                 )}
                               </div>
                             </div>

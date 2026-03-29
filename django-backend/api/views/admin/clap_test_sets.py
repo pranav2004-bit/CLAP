@@ -1,13 +1,15 @@
 """
 Admin CLAP Test Sets Views
-Enterprise-grade management of question-paper sets (Set A, Set B, ...) 
+Enterprise-grade management of question-paper sets (Set A, Set B, ...)
 for a single CLAP exam. Supports full CRUD, clone, and item management.
 
 All edge cases handled:
- - Cannot create set on a published/active test-in-progress
  - Cannot delete a set that has active student assignments
  - Clone validates source set has questions before copying
  - Detects incomplete sets before distribution is allowed
+ - Structural ClapTestComponent/ClapTestItem slots are auto-created alongside
+   ClapSetComponent/ClapSetItem so StudentClapResponse FKs remain stable
+   without a schema migration.
 """
 
 from django.http import JsonResponse
@@ -15,6 +17,7 @@ from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
 from django.db import transaction
+from django.db.models import Count, Q
 import json
 import uuid
 import logging
@@ -28,6 +31,16 @@ from api.utils import error_response
 from api.utils.jwt_utils import get_user_from_request
 
 logger = logging.getLogger(__name__)
+
+# Default component definitions used for both ClapSetComponent stubs and
+# structural ClapTestComponent stubs created alongside empty new sets.
+_DEFAULT_COMPONENT_DEFS = [
+    ('listening',  'Listening',      30, 10),
+    ('speaking',   'Speaking',       20, 10),
+    ('reading',    'Reading',        30, 10),
+    ('writing',    'Writing',        30, 10),
+    ('vocabulary', 'Verbal Ability', 20, 10),
+]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
@@ -106,6 +119,78 @@ def _item_to_dict(i: ClapSetItem) -> dict:
     }
 
 
+def _ensure_structural_slots(set_item: ClapSetItem) -> None:
+    """
+    Guarantee a ClapTestComponent + ClapTestItem structural slot exists for
+    the given ClapSetItem.
+
+    Why structural slots exist
+    ──────────────────────────
+    StudentClapResponse.item is a non-null FK to ClapTestItem.  In the pure-set
+    workflow (admin builds questions only via ClapSetItem editors) there are no
+    master ClapTestItems.  Rather than performing a schema migration we
+    auto-create lightweight "slot" records that carry the position metadata
+    (test_type, order_index, item_type, points) but hold no question content
+    (content = {}).  The real question content is always served from ClapSetItem.
+
+    Concurrency safety
+    ──────────────────
+    get_or_create is safe under concurrent writes because both ClapTestComponent
+    and ClapTestItem have unique_together constraints that produce an IntegrityError
+    on collision; Django's get_or_create catches and retries internally.
+    This function must be called inside the same atomic() block as the
+    ClapSetItem INSERT so partial states cannot persist.
+    """
+    set_comp = set_item.set_component
+    clap_test = set_comp.set.clap_test
+
+    # 1. Ensure a structural ClapTestComponent exists for this test_type.
+    structural_comp, _ = ClapTestComponent.objects.get_or_create(
+        clap_test=clap_test,
+        test_type=set_comp.test_type,
+        defaults={
+            'title': set_comp.title,
+            'max_marks': set_comp.max_marks,
+            'duration_minutes': set_comp.duration_minutes,
+            'timer_enabled': set_comp.timer_enabled,
+        },
+    )
+
+    # 2. Ensure a structural ClapTestItem slot exists at this order_index.
+    #    Content is intentionally empty — the real content is in ClapSetItem.
+    ClapTestItem.objects.get_or_create(
+        component=structural_comp,
+        order_index=set_item.order_index,
+        defaults={
+            'item_type': set_item.item_type,
+            'points': set_item.points,
+            'content': {},
+        },
+    )
+
+
+def _sync_structural_component(set_comp: ClapSetComponent) -> None:
+    """
+    Propagate ClapSetComponent metadata (title, max_marks, duration_minutes,
+    timer_enabled) to the structural ClapTestComponent slot for the same
+    test_type, if one exists.
+
+    Called after any admin update to a ClapSetComponent so that the student-
+    facing deadline (ComponentAttempt) reflects the latest set settings.
+    No-op if no structural component exists yet (slots are created lazily
+    when the first ClapSetItem is added).
+    """
+    ClapTestComponent.objects.filter(
+        clap_test=set_comp.set.clap_test,
+        test_type=set_comp.test_type,
+    ).update(
+        title=set_comp.title,
+        max_marks=set_comp.max_marks,
+        duration_minutes=set_comp.duration_minutes,
+        timer_enabled=set_comp.timer_enabled,
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. LIST / CREATE SETS  —  GET / POST /admin/clap-tests/<id>/sets
 # ─────────────────────────────────────────────────────────────────────────────
@@ -129,9 +214,23 @@ def sets_handler(request, test_id):
 
 def _list_sets(clap_test: ClapTest):
     # Deep prefetch: components AND their items in two queries (not N+1)
-    sets = ClapTestSet.objects.filter(clap_test=clap_test).prefetch_related(
-        'components__items'
-    ).order_by('set_number')
+    sets = list(
+        ClapTestSet.objects.filter(clap_test=clap_test)
+        .prefetch_related('components__items')
+        .order_by('set_number')
+    )
+
+    # Bulk-fetch active assignment counts in ONE query (avoids N COUNT queries).
+    set_ids = [s.id for s in sets]
+    active_counts: dict = {}
+    if set_ids:
+        active_counts = dict(
+            StudentClapAssignment.objects.filter(
+                assigned_set_id__in=set_ids,
+                status__in=['assigned', 'started'],
+            ).values('assigned_set_id').annotate(c=Count('id')).values_list('assigned_set_id', 'c')
+        )
+
     result = []
     for s in sets:
         # Use the prefetch cache — avoids the bypass caused by chaining
@@ -145,14 +244,11 @@ def _list_sets(clap_test: ClapTest):
             'created_at': s.created_at.isoformat(),
             'components': [_component_to_dict(c) for c in comps],
         }
-        # item counts are now also served from the prefetch cache
+        # item counts served from the prefetch cache
         total_items = sum(len(list(c.items.all())) for c in comps)
         d['total_item_count'] = total_items
         d['component_count'] = len(comps)
-        # Count active student assignments for this set
-        d['assigned_student_count'] = StudentClapAssignment.objects.filter(
-            assigned_set=s, status__in=['assigned', 'started']
-        ).count()
+        d['assigned_student_count'] = active_counts.get(s.id, 0)
         result.append(d)
 
     return JsonResponse({
@@ -171,15 +267,25 @@ def _create_set(request, clap_test: ClapTest, user: User):
 
     clone_from_set_id = body.get('clone_from_set_id')  # Optional
 
-    # Guard: Max 26 sets
-    existing_count = ClapTestSet.objects.filter(clap_test=clap_test).count()
-    if existing_count >= 26:
+    # Optimistic early guard (avoids acquiring a lock when clearly at limit).
+    if ClapTestSet.objects.filter(clap_test=clap_test).count() >= 26:
         return error_response('Maximum 26 sets (A–Z) allowed per CLAP test.', status=400)
 
-    next_number = existing_count + 1
-    next_label = LABEL_SEQUENCE[existing_count]  # 'A', 'B', ...
-
     with transaction.atomic():
+        # Acquire a write lock on the ClapTest row to serialize concurrent
+        # "New Set" clicks for the same test.  Without this lock two admins
+        # clicking simultaneously both read count=N, both compute next_label=N+1,
+        # and both succeed — producing two sets with the same label and number.
+        ClapTest.objects.select_for_update().get(id=clap_test.id)
+
+        # Definitive count inside the lock — guaranteed accurate.
+        existing_count = ClapTestSet.objects.filter(clap_test=clap_test).count()
+        if existing_count >= 26:
+            return error_response('Maximum 26 sets (A–Z) allowed per CLAP test.', status=400)
+
+        next_number = existing_count + 1
+        next_label = LABEL_SEQUENCE[existing_count]  # 'A', 'B', ...
+
         new_set = ClapTestSet.objects.create(
             clap_test=clap_test,
             label=next_label,
@@ -194,7 +300,10 @@ def _create_set(request, clap_test: ClapTest, user: User):
                     'components__items'
                 ).get(id=clone_from_set_id, clap_test=clap_test)
             except ClapTestSet.DoesNotExist:
-                raise ValueError(f'Source set {clone_from_set_id} not found in this test.')
+                return error_response(
+                    f'Source set {clone_from_set_id} not found in this test.',
+                    status=404,
+                )
 
             for src_comp in source_set.components.all():
                 new_comp = ClapSetComponent.objects.create(
@@ -218,12 +327,65 @@ def _create_set(request, clap_test: ClapTest, user: User):
                 ]
                 ClapSetItem.objects.bulk_create(items_to_create)
 
+                # Ensure structural ClapTestItem slots exist for every cloned item.
+                # get_or_create is idempotent — if the slot already exists from the
+                # source set, this is a no-op SELECT (no INSERT).  Required so that
+                # StudentClapResponse.item (non-null FK) remains valid for students
+                # assigned to this cloned set.
+                structural_comp, _ = ClapTestComponent.objects.get_or_create(
+                    clap_test=clap_test,
+                    test_type=new_comp.test_type,
+                    defaults={
+                        'title': new_comp.title,
+                        'max_marks': new_comp.max_marks,
+                        'duration_minutes': new_comp.duration_minutes,
+                        'timer_enabled': new_comp.timer_enabled,
+                    },
+                )
+                for item in items_to_create:
+                    ClapTestItem.objects.get_or_create(
+                        component=structural_comp,
+                        order_index=item.order_index,
+                        defaults={
+                            'item_type': item.item_type,
+                            'points': item.points,
+                            'content': {},
+                        },
+                    )
+
             logger.info(
                 f"Admin {user.id} cloned Set {source_set.label} → Set {next_label} "
                 f"for test {clap_test.id}"
             )
         else:
-            # Create empty set — admin must add questions manually
+            # Create empty set with stub ClapSetComponents (UI-facing) AND
+            # structural ClapTestComponent stubs (student-facing, for
+            # StudentClapResponse FK stability).  Both are created atomically.
+            ClapSetComponent.objects.bulk_create([
+                ClapSetComponent(
+                    set=new_set,
+                    test_type=tt,
+                    title=title,
+                    duration_minutes=duration,
+                    max_marks=marks,
+                    timer_enabled=True,
+                )
+                for tt, title, duration, marks in _DEFAULT_COMPONENT_DEFS
+            ])
+            # get_or_create is safe even on concurrent set creation: the
+            # unique_together (clap_test, test_type) on ClapTestComponent
+            # prevents duplicates.
+            for tt, title, duration, marks in _DEFAULT_COMPONENT_DEFS:
+                ClapTestComponent.objects.get_or_create(
+                    clap_test=clap_test,
+                    test_type=tt,
+                    defaults={
+                        'title': title,
+                        'max_marks': marks,
+                        'duration_minutes': duration,
+                        'timer_enabled': True,
+                    },
+                )
             logger.info(f"Admin {user.id} created empty Set {next_label} for test {clap_test.id}")
 
     return JsonResponse(_set_to_dict(new_set, include_components=True), status=201)
@@ -357,6 +519,10 @@ def set_component_detail_handler(request, component_id):
         if field in body:
             setattr(comp, field, body[field])
     comp.save()
+
+    # Keep structural slot in sync so student deadlines reflect latest settings.
+    _sync_structural_component(comp)
+
     return JsonResponse(_component_to_dict(comp, include_items=True))
 
 
@@ -372,7 +538,10 @@ def set_items_handler(request, component_id):
         return error_response('Unauthorized', status=401)
 
     try:
-        comp = ClapSetComponent.objects.get(id=component_id)
+        # select_related pre-loads the FK chain needed by _ensure_structural_slots
+        # (set_component → set → clap_test) so no extra queries are issued inside
+        # the atomic block when creating a structural ClapTestItem slot.
+        comp = ClapSetComponent.objects.select_related('set__clap_test').get(id=component_id)
     except ClapSetComponent.DoesNotExist:
         return error_response('Component not found', status=404)
 
@@ -394,13 +563,19 @@ def set_items_handler(request, component_id):
     max_index = comp.items.order_by('-order_index').values_list('order_index', flat=True).first()
     next_index = (max_index or 0) + 1
 
-    item = ClapSetItem.objects.create(
-        set_component=comp,
-        item_type=item_type,
-        order_index=body.get('order_index', next_index),
-        points=int(body.get('points', 0)),
-        content=body.get('content', {}),
-    )
+    with transaction.atomic():
+        item = ClapSetItem.objects.create(
+            set_component=comp,
+            item_type=item_type,
+            order_index=body.get('order_index', next_index),
+            points=int(body.get('points', 0)),
+            content=body.get('content', {}),
+        )
+        # Auto-create structural ClapTestComponent/ClapTestItem slots so that
+        # StudentClapResponse can maintain its FK to ClapTestItem without a
+        # schema migration.  This is idempotent and concurrent-safe.
+        _ensure_structural_slots(item)
+
     return JsonResponse({'item': _item_to_dict(item)}, status=201)
 
 
@@ -464,10 +639,19 @@ def set_reorder_items_handler(request, component_id):
     if len(items) != len(item_ids):
         return error_response('Some items were not found or do not belong to this component', status=400)
 
-    # Bulk update order
+    # Assign new order indices in the caller-specified order, then bulk-update
+    # in a single statement instead of N individual UPDATEs.
+    item_id_to_obj = {str(item.id): item for item in items}
+    now = timezone.now()
+    ordered_items = []
+    for i, item_id in enumerate(item_ids):
+        obj = item_id_to_obj[item_id]
+        obj.order_index = i + 1
+        obj.updated_at = now
+        ordered_items.append(obj)
+
     with transaction.atomic():
-        for i, item_id in enumerate(item_ids):
-            ClapSetItem.objects.filter(id=item_id).update(order_index=i + 1, updated_at=timezone.now())
+        ClapSetItem.objects.bulk_update(ordered_items, ['order_index', 'updated_at'])
 
     return JsonResponse({'message': 'Items reordered successfully'})
 
@@ -499,16 +683,19 @@ def validate_sets(request, test_id):
         })
 
     issues = []
-    # Build a reference: test_type → item_count from Set A
+    # Build a reference: test_type → item_count from Set A.
+    # len(list(comp.items.all())) uses the prefetch cache populated by
+    # prefetch_related('components__items') above — no extra DB queries.
+    # comp.items.count() would bypass the prefetch and issue a COUNT(*) per call.
     reference = {}
     ref_set = sets[0]
     for comp in ref_set.components.all():
-        reference[comp.test_type] = comp.items.count()
+        reference[comp.test_type] = len(list(comp.items.all()))
 
     for s in sets[1:]:
         for comp in s.components.all():
             expected = reference.get(comp.test_type, 0)
-            actual = comp.items.count()
+            actual = len(list(comp.items.all()))
             if actual != expected:
                 issues.append({
                     'set_label': s.label,
@@ -531,215 +718,3 @@ def validate_sets(request, test_id):
         'issues': issues,
         'sets_checked': len(sets),
     })
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 8. IMPORT FROM EXISTING COMPONENTS  —  POST /admin/clap-tests/<id>/sets/import-from-components
-#
-# Creates Set A by deep-copying the test's existing ClapTestComponents +
-# ClapTestItems into the Sets hierarchy. This bridges the legacy single-paper
-# workflow with the new multi-set workflow.
-#
-# Guards (in order):
-#   G1. Admin-only
-#   G2. Test must exist
-#   G3. Sets already exist → conflict (idempotency: won't create duplicates)
-#   G4. Active/started student assignments exist → block import (data integrity)
-#   G5. No components exist on the test → nothing to import
-#   G6. Every component must have at least one item (partial paper guard)
-#   G7. Atomic transaction: all-or-nothing write
-#   G8. Dry-run mode: caller can preview what will be imported without writing
-#   G9. Audit logging of every import with item counts
-# ─────────────────────────────────────────────────────────────────────────────
-
-@csrf_exempt
-@require_http_methods(['POST'])
-def import_from_components(request, test_id):
-    """
-    Import the test's existing ClapTestComponents + ClapTestItems as Set A.
-
-    Optional JSON body:
-        { "dry_run": true }   → returns a preview without writing to the database.
-    """
-    # ── G1: Admin auth ───────────────────────────────────────────────────────
-    user = get_user_from_request(request)
-    if not user or user.role != 'admin':
-        return error_response('Unauthorized', status=401)
-
-    # ── G2: Test existence ───────────────────────────────────────────────────
-    try:
-        clap_test = ClapTest.objects.get(id=test_id)
-    except ClapTest.DoesNotExist:
-        return error_response('CLAP test not found', status=404)
-
-    # Parse optional body
-    try:
-        body = json.loads(request.body) if request.body else {}
-    except json.JSONDecodeError:
-        return error_response('Invalid JSON body', status=400)
-    dry_run = bool(body.get('dry_run', False))
-
-    # ── G3: Idempotency — sets already exist ─────────────────────────────────
-    existing_sets_count = ClapTestSet.objects.filter(clap_test=clap_test).count()
-    if existing_sets_count > 0:
-        return error_response(
-            f'This test already has {existing_sets_count} set(s). '
-            'Import is only allowed when no sets exist yet. '
-            'Use Clone on an existing set to create additional variants.',
-            status=409
-        )
-
-    # ── G4: Active student guard ──────────────────────────────────────────────
-    # Block if any student has already started the test. We cannot retroactively
-    # assign them to Set A after they began with the legacy flow.
-    active_assignments = StudentClapAssignment.objects.filter(
-        clap_test=clap_test,
-        status__in=['started']
-    ).count()
-    if active_assignments > 0:
-        return error_response(
-            f'Cannot import while {active_assignments} student(s) are actively taking this test. '
-            'Wait until all active sessions complete before importing.',
-            status=409
-        )
-
-    # ── G5: Empty test guard ──────────────────────────────────────────────────
-    components = list(
-        ClapTestComponent.objects.prefetch_related('items')
-        .filter(clap_test=clap_test)
-        .order_by('test_type')
-    )
-    if not components:
-        return error_response(
-            'This CLAP test has no configured components yet. '
-            'Build the test in the Configure tab first, then return here to import it as Set A.',
-            status=422
-        )
-
-    # ── G6: Partial paper guard ───────────────────────────────────────────────
-    # Every component must have at least one item. An empty component means
-    # Set A would be incomplete, causing unequal paper lengths later.
-    empty_components = []
-    total_items = 0
-    component_summary = []
-    for comp in components:
-        item_count = comp.items.count()
-        total_items += item_count
-        component_summary.append({
-            'test_type': comp.test_type,
-            'title': comp.title,
-            'item_count': item_count,
-            'max_marks': comp.max_marks,
-            'duration_minutes': comp.duration_minutes,
-            'timer_enabled': comp.timer_enabled,
-        })
-        if item_count == 0:
-            empty_components.append(comp.test_type)
-
-    if empty_components:
-        return error_response(
-            f'The following component(s) have no questions and cannot be imported: '
-            f'{", ".join(sorted(empty_components))}. '
-            'Add at least one question to every component in the Configure tab before importing.',
-            status=422
-        )
-
-    # ── Dry Run: return preview without touching DB ───────────────────────────
-    if dry_run:
-        logger.info(
-            f"Admin {user.id} ran dry-run import preview for test {clap_test.id} "
-            f"({len(components)} components, {total_items} items total)"
-        )
-        return JsonResponse({
-            'dry_run': True,
-            'will_create': {
-                'set_label': 'A',
-                'components': len(components),
-                'total_items': total_items,
-                'component_breakdown': component_summary,
-            },
-            'message': (
-                f'Dry run complete. Importing will create Set A with '
-                f'{len(components)} components and {total_items} questions. '
-                f'No data was written.'
-            ),
-        })
-
-    # ── G7: Atomic write ─────────────────────────────────────────────────────
-    try:
-        with transaction.atomic():
-            # Create Set A
-            new_set = ClapTestSet.objects.create(
-                clap_test=clap_test,
-                label='A',
-                set_number=1,
-                created_by=user,
-            )
-
-            items_created_total = 0
-            for comp in components:
-                # Migrate each ClapTestComponent → ClapSetComponent
-                set_comp = ClapSetComponent.objects.create(
-                    set=new_set,
-                    test_type=comp.test_type,
-                    title=comp.title,
-                    description=comp.description,
-                    max_marks=comp.max_marks,
-                    duration_minutes=comp.duration_minutes,
-                    timer_enabled=comp.timer_enabled,
-                )
-
-                # Bulk-create ClapSetItems from ClapTestItems (O(N) for performance)
-                source_items = list(comp.items.order_by('order_index'))
-                set_items = [
-                    ClapSetItem(
-                        set_component=set_comp,
-                        item_type=item.item_type,
-                        order_index=item.order_index,
-                        points=item.points,
-                        # Deep copy content JSON to prevent shared mutation
-                        content=dict(item.content) if item.content else {},
-                    )
-                    for item in source_items
-                ]
-                ClapSetItem.objects.bulk_create(set_items)
-                items_created_total += len(set_items)
-
-    except Exception as exc:
-        logger.error(
-            f"Import from components failed for test {clap_test.id} by admin {user.id}: {exc}",
-            exc_info=True
-        )
-        return error_response(
-            'An unexpected error occurred during import. No data was written. '
-            'Please try again or contact support if the problem persists.',
-            status=500
-        )
-
-    # ── G9: Audit log ─────────────────────────────────────────────────────────
-    logger.info(
-        f"[IMPORT] Admin {user.id} ({user.email}) imported test {clap_test.id} "
-        f"('{clap_test.name}') as Set A: "
-        f"{len(components)} components, {items_created_total} items. "
-        f"New set id={new_set.id}"
-    )
-
-    # Return the full newly-created set so the frontend can render it immediately
-    set_dict = _set_to_dict(new_set, include_components=True)
-    set_dict['total_item_count'] = items_created_total
-    set_dict['component_count'] = len(components)
-    set_dict['assigned_student_count'] = 0
-
-    return JsonResponse({
-        'set': set_dict,
-        'imported': {
-            'components': len(components),
-            'total_items': items_created_total,
-            'component_breakdown': component_summary,
-        },
-        'message': (
-            f'Successfully imported {len(components)} components and '
-            f'{items_created_total} questions as Set A. '
-            f'You can now clone Set A to create Set B, C, etc.'
-        ),
-    }, status=201)

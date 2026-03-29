@@ -7,7 +7,7 @@ from django.db.models import Prefetch
 import json
 import logging
 from api.models import (
-    User, ClapTest, ClapTestComponent, StudentClapAssignment,
+    User, ClapTest, ClapTestComponent, ClapSetComponent, StudentClapAssignment,
     ClapTestItem, ClapSetItem, StudentClapResponse, ComponentAttempt, MalpracticeEvent,
     AssessmentSubmission,
 )
@@ -28,7 +28,10 @@ def list_assigned_tests(request):
     try:
         assignments = list(StudentClapAssignment.objects.filter(
             student=user
-        ).select_related('clap_test').prefetch_related('clap_test__components').order_by('-assigned_at'))
+        ).select_related('clap_test', 'assigned_set').prefetch_related(
+            'clap_test__components',
+            'assigned_set__components',   # ClapSetComponents for set-specific timings
+        ).order_by('-assigned_at'))
 
         # ── Fresh deadline lookup ──────────────────────────────────────────────
         # Issue a separate direct SELECT on clap_tests for global_deadline.
@@ -41,23 +44,30 @@ def list_assigned_tests(request):
             ).values_list('id', 'global_deadline')
         } if test_ids else {}
 
-        # DEBUG: log so we can confirm the new code is running and see DB values
-        logger.info(
-            f"[TIMER_DEBUG v2] student={user.id} "
-            f"test_ids={test_ids} "
-            f"fresh_deadlines={fresh_deadlines}"
+        logger.debug(
+            "[TIMER_DEBUG] student=%s test_ids=%s fresh_deadlines=%s",
+            user.id, test_ids, fresh_deadlines,
         )
 
         data = []
         for assignment in assignments:
+            # Build a map of test_type → ClapSetComponent for the student's set.
+            # This lets us return set-specific duration and timer settings so the
+            # student's countdown reflects the actual paper they were assigned.
+            set_comp_map: dict = {}
+            if assignment.assigned_set_id and assignment.assigned_set:
+                for sc in assignment.assigned_set.components.all():
+                    set_comp_map[sc.test_type] = sc
+
             components = []
             for comp in assignment.clap_test.components.all():
+                sc = set_comp_map.get(comp.test_type)
                 components.append({
-                    'id': str(comp.id),
+                    'id': str(comp.id),          # structural ClapTestComponent ID (routing)
                     'type': comp.test_type,
-                    'title': comp.title,
-                    'duration': comp.duration_minutes,
-                    'timer_enabled': comp.timer_enabled,
+                    'title': sc.title if sc else comp.title,
+                    'duration': sc.duration_minutes if sc else comp.duration_minutes,
+                    'timer_enabled': sc.timer_enabled if sc else comp.timer_enabled,
                 })
 
             # Use the freshly-queried deadline (str-keyed to avoid UUID mismatch)
@@ -132,10 +142,17 @@ def start_assignment(request, assignment_id):
         assignment.status = 'started'
         assignment.save(update_fields=['started_at', 'status'])
 
-    # Effective duration: global_duration_minutes > sum of component durations
+    # Effective duration: global_duration_minutes > set components > structural slots.
+    # Using the student's assigned set ensures each set's individual timing is
+    # respected even when sets have different durations.
     test = assignment.clap_test
     if test.global_duration_minutes:
         total_duration = test.global_duration_minutes
+    elif assignment.assigned_set_id:
+        total_duration = sum(
+            c.duration_minutes or 0
+            for c in ClapSetComponent.objects.filter(set_id=assignment.assigned_set_id)
+        ) or None
     else:
         total_duration = sum(
             c.duration_minutes or 0
@@ -183,29 +200,41 @@ def student_test_items(request, assignment_id, component_id):
         assignment.status = 'started'
         assignment.save()
 
-    # Create or retrieve ComponentAttempt — this is the server-issued deadline
+    # Resolve the student's set-specific component settings (duration, timer).
+    # This ensures each set's deadline matches its own configuration, not the
+    # structural slot which may have been created from a different set's defaults.
+    effective_duration = component.duration_minutes
+    effective_title = component.title
+    if assignment.assigned_set_id:
+        set_comp_meta = ClapSetComponent.objects.filter(
+            set_id=assignment.assigned_set_id,
+            test_type=component.test_type,
+        ).values('duration_minutes', 'title').first()
+        if set_comp_meta:
+            effective_duration = set_comp_meta['duration_minutes']
+            effective_title = set_comp_meta['title']
+
+    # Create or retrieve ComponentAttempt — this is the server-issued deadline.
+    # The deadline uses the student's set-specific duration, not the structural
+    # slot's default, so different sets can have different component time limits.
     now = timezone.now()
     attempt, attempt_created = ComponentAttempt.objects.get_or_create(
         assignment=assignment,
         component=component,
         defaults={
             'started_at': now,
-            'deadline': now + timezone.timedelta(minutes=component.duration_minutes),
+            'deadline': now + timezone.timedelta(minutes=effective_duration),
             'status': 'active',
         }
     )
     server_deadline_iso = attempt.deadline.isoformat()
     attempt_is_expired = attempt.is_expired()
 
-    # Get base items for this component (used for item_id, item_type, and points;
-    # content may be overridden per-set below).
-    items = list(ClapTestItem.objects.filter(component=component).order_by('order_index'))
-
-    # Build set-item content map: order_index → ClapSetItem
-    # When the student has an assigned set, we serve their set's question content
-    # (question text, options) instead of the base content.  The item_id returned
-    # to the frontend is still the ClapTestItem.id so StudentClapResponse links
-    # correctly.  correct_option is NEVER sent to the frontend regardless of source.
+    # Build set-item content map: order_index → ClapSetItem row.
+    # When the student has an assigned set, serve their set's question content.
+    # The item_id returned to the frontend is still the structural ClapTestItem.id
+    # so StudentClapResponse FKs remain valid without a schema migration.
+    # correct_option is NEVER sent to the frontend regardless of source.
     set_content_map: dict[int, dict] = {}
     if assignment.assigned_set_id:
         for si in ClapSetItem.objects.filter(
@@ -213,6 +242,14 @@ def student_test_items(request, assignment_id, component_id):
             set_component__test_type=component.test_type,
         ).values('order_index', 'content', 'points', 'item_type'):
             set_content_map[si['order_index']] = si
+
+    # Fetch structural slot items for this component.
+    # For set-assigned students: restrict to positions that exist in their set
+    # so students never see empty placeholder slots from other sets that may
+    # have a different item count.
+    items = list(ClapTestItem.objects.filter(component=component).order_by('order_index'))
+    if assignment.assigned_set_id and set_content_map:
+        items = [item for item in items if item.order_index in set_content_map]
 
     # Get existing responses for this component
     responses = StudentClapResponse.objects.filter(
@@ -225,10 +262,10 @@ def student_test_items(request, assignment_id, component_id):
     for item in items:
         set_si = set_content_map.get(item.order_index)
 
-        # Choose content source: set-specific first, then base
+        # Content source: set-specific first (pure-set flow), then structural
+        # slot content (legacy / fallback for tests migrated from old flow).
         if set_si:
             raw_content = (set_si['content'] or {}).copy()
-            # Use set item points if provided and > 0, else fall back to base
             effective_points = set_si['points'] if set_si['points'] else item.points
             effective_type = set_si['item_type'] or item.item_type
         else:
@@ -240,7 +277,7 @@ def student_test_items(request, assignment_id, component_id):
         raw_content.pop('correct_option', None)
 
         items_data.append({
-            'id': str(item.id),       # Always ClapTestItem.id (response FK target)
+            'id': str(item.id),       # structural ClapTestItem.id (StudentClapResponse FK)
             'item_type': effective_type,
             'order_index': item.order_index,
             'points': effective_points,
@@ -251,8 +288,8 @@ def student_test_items(request, assignment_id, component_id):
     return JsonResponse({
         'component': {
             'id': str(component.id),
-            'title': component.title,
-            'duration_minutes': component.duration_minutes,
+            'title': effective_title,
+            'duration_minutes': effective_duration,
             'server_deadline': server_deadline_iso,
             'attempt_started_at': attempt.started_at.isoformat(),
             'is_expired': attempt_is_expired,
