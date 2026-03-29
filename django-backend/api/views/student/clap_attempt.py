@@ -849,10 +849,23 @@ def _finalize_and_dispatch(assignment, reason: str):
         )
 
         # ── get_or_create submission (dedup guard) ────────────────────────────
-        # idempotency_key is deterministic and scoped to this assignment so:
-        #   - Concurrent callers collide on the unique constraint → one wins
-        #   - Retests (new assignment_id) always generate a fresh submission
-        idempotency_key = f'auto:{locked.id}'
+        # idempotency_key is deterministic and scoped to this assignment +
+        # attempt_number so that:
+        #   - Concurrent callers (client beacon + Beat task arriving together)
+        #     collide on the unique constraint → one wins, one is a no-op
+        #   - Retests get a FRESH submission on every attempt — grant_retest
+        #     increments attempt_number on the assignment row BEFORE the student
+        #     can start, so the key is guaranteed unique per attempt regardless
+        #     of how many retests have been granted.
+        #   - First-attempt key:   auto:<assignment-uuid>:1
+        #   - First retest key:    auto:<assignment-uuid>:2
+        #   - N-th retest key:     auto:<assignment-uuid>:N+1
+        #
+        # IMPORTANT: getattr guard handles the case where attempt_number is None
+        # (legacy rows created before the field was added) or 0 (impossible but
+        # defensive). Both fall back to 1, matching the first-attempt key.
+        attempt_number = getattr(locked, 'attempt_number', 1) or 1
+        idempotency_key = f'auto:{locked.id}:{attempt_number}'
         submission, sub_created = AssessmentSubmission.objects.get_or_create(
             idempotency_key=idempotency_key,
             defaults={

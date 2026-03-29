@@ -1249,20 +1249,29 @@ def generate_report(self, submission_id):
         max_total   = _SCORE_MAX_PER_DOMAIN * len(scores)   # Decimal('50')
         grade       = _compute_grade(total_score, max_total)
 
-        # Resolve set name — shown on the report if the student was assigned a set.
+        # Resolve set name and attempt_number from the student's assignment.
+        # Both are shown on the PDF report:
+        #   - set_name    → "Set A" / "Set B" — distinguishes paper variants
+        #   - attempt_number → 1 for first attempt, 2+ for retests — the report
+        #     clearly labels retest reports so students/admins know which attempt
+        #     the scores refer to.
+        # .only() lists every field accessed below to avoid deferred-field
+        # surprises on attempt_number (added in a later migration).
         _set_name = None
+        _attempt_number = 1
         try:
             _asgn = (
                 StudentClapAssignment.objects
                 .filter(student=submission.user, clap_test=submission.assessment)
                 .select_related('assigned_set')
-                .only('assigned_set')
+                .only('id', 'attempt_number', 'assigned_set')
                 .first()
             )
             if _asgn and _asgn.assigned_set:
                 _set_name = f'Set {_asgn.assigned_set.label}'
+            _attempt_number = getattr(_asgn, 'attempt_number', 1) or 1
         except Exception:
-            pass  # set_name stays None — template omits the field gracefully
+            pass  # set_name/attempt_number stay at defaults — template handles gracefully
 
         html = render_to_string('reports/submission_report.html', {
             'submission':    submission,
@@ -1272,6 +1281,7 @@ def generate_report(self, submission_id):
             'grade':         grade,         # str: 'O', 'A+', 'A', 'B+', 'B'
             'generated_at':  timezone.now(),  # datetime obj — |date filter works correctly
             'set_name':           _set_name,
+            'attempt_number':     _attempt_number,   # 1 for first attempt, 2+ for retests
             'logo_data_uri':      _get_report_logo_uri(),
             'anits_logo_data_uri': _get_anits_logo_uri(),
         })
@@ -1525,6 +1535,23 @@ def send_email_report(self, submission_id):
         max_total   = _SCORE_MAX_PER_DOMAIN * len(scores) if scores else _SCORE_MAX_TOTAL
         grade       = _compute_grade(total_score, max_total)
 
+        # ── Resolve attempt_number for retest-aware subject / body ────────────
+        # Fetch from the assignment row — .only() keeps the query minimal.
+        # Falls back to 1 (first attempt) if the field is absent or None (legacy).
+        _email_attempt_number = 1
+        try:
+            _email_asgn = (
+                StudentClapAssignment.objects
+                .filter(student=submission.user, clap_test=submission.assessment)
+                .only('id', 'attempt_number')
+                .first()
+            )
+            _email_attempt_number = getattr(_email_asgn, 'attempt_number', 1) or 1
+        except Exception:
+            pass  # keep default 1 — email still sends correctly
+
+        _is_retest = _email_attempt_number > 1
+
         # Re-order domains for display and rename 'vocab' → 'Verbal Ability'.
         _EMAIL_DOMAIN_ORDER = ['listening', 'speaking', 'reading', 'writing', 'vocab']
         _EMAIL_DOMAIN_LABEL = {
@@ -1547,20 +1574,31 @@ def send_email_report(self, submission_id):
         html_body = render_to_string(
             'emails/submission_ready.html',
             {
-                'student_name':  student_name,
-                'scores':        email_scores,
-                'total_score':   total_score,
-                'max_total':     max_total,
-                'grade':         grade,
-                'report_url':    report_url,
+                'student_name':   student_name,
+                'scores':         email_scores,
+                'total_score':    total_score,
+                'max_total':      max_total,
+                'grade':          grade,
+                'report_url':     report_url,
+                # Retest-aware context — template uses is_retest to personalise
+                # the greeting and attempt_number to show "Attempt 2" etc.
+                'attempt_number': _email_attempt_number,
+                'is_retest':      _is_retest,
                 'logo_data_uri':       _get_email_logo_src(),
                 'anits_logo_data_uri': _get_email_anits_logo_src(),
             },
         )
 
+        # Subject is personalised for retests so students clearly understand
+        # which attempt the email refers to without opening the attachment.
+        if _is_retest:
+            email_subject = f'Your CLAP Re-attempt {_email_attempt_number} Results Are Ready'
+        else:
+            email_subject = 'Your CLAP Assessment Results Are Ready'
+
         try:
             message = EmailMultiAlternatives(
-                subject='Your CLAP Assessment Results Are Ready',
+                subject=email_subject,
                 body=f'Your CLAP report is ready. Download: {report_url}',
                 from_email=getattr(settings, 'FROM_EMAIL', None),
                 to=[submission.user.email],

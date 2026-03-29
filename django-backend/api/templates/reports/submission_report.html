@@ -98,6 +98,7 @@
     <div><strong>Student ID:</strong> {{ submission.user.student_id|default:"—" }}</div>
     <div><strong>Email ID:</strong> {{ submission.user.email }}</div>
     {% if set_name %}<div><strong>Set:</strong> {{ set_name }}</div>{% endif %}
+    {% if attempt_number and attempt_number > 1 %}<div><strong>Attempt:</strong> {{ attempt_number }} (Re-attempt)</div>{% endif %}
     <div><strong>Assessment:</strong> {{ submission.assessment.name }}</div>
     <div><strong>Submission ID:</strong> {{ submission.id }}</div>
   </div>

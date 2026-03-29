@@ -213,11 +213,16 @@ def create_submission(request):
     # If the Beat task or client auto-submit endpoint already created a submission
     # for this assignment via _finalize_and_dispatch(), return it rather than
     # creating a duplicate pipeline run.
-    # The auto-submit idempotency key is deterministic: f'auto:{assignment_id}'.
+    #
+    # The auto-submit idempotency key is: f'auto:{assignment_id}:{attempt_number}'
+    # attempt_number is incremented by grant_retest for each retest, so the key
+    # is unique per attempt.  We must read the CURRENT attempt_number from the
+    # assignment row (not assume 1) so retests resolve to their own submission.
     _assignment_for_dedup = serializer.validated_data.get('assignment')
     if _assignment_for_dedup:
+        _attempt_number = getattr(_assignment_for_dedup, 'attempt_number', 1) or 1
         _existing_auto = AssessmentSubmission.objects.filter(
-            idempotency_key=f'auto:{_assignment_for_dedup.id}'
+            idempotency_key=f'auto:{_assignment_for_dedup.id}:{_attempt_number}'
         ).first()
         if _existing_auto:
             if redis_client:
@@ -349,9 +354,13 @@ def submission_history(request):
     # fired 1 + (50×2) = 101 DB queries for a 50-row history page.
     qs = (
         AssessmentSubmission.objects
+        .filter(user_id=user.id)
+        # Exclude superseded submissions (invalidated when a retest was granted).
+        # Students should only see their current attempt's submissions, not the
+        # historical records from attempts that were wiped and restarted.
+        .exclude(status__startswith='SUPERSEDED_')
         .select_related('assessment')
         .prefetch_related('scores')
-        .filter(user_id=user.id)
         .order_by('-created_at')
     )
 

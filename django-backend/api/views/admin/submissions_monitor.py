@@ -69,9 +69,15 @@ def submission_status_overview(request):
     if err:
         return err
 
+    # Exclude SUPERSEDED submissions (invalidated on retest grant) from all
+    # dashboard counts.  Superseded rows are audit-trail-only: including them
+    # in totals would inflate "total submissions" and contaminate "failed" /
+    # "pending" counts with historical data that is no longer actionable.
+    active_qs = AssessmentSubmission.objects.exclude(status__startswith='SUPERSEDED_')
+
     status_counts = {
         row['status']: row['count']
-        for row in AssessmentSubmission.objects.values('status').annotate(count=Count('id'))
+        for row in active_qs.values('status').annotate(count=Count('id'))
     }
     for status, _ in AssessmentSubmission.STATUS_CHOICES:
         status_counts.setdefault(status, 0)
@@ -111,7 +117,12 @@ def submission_list(request):
     if err:
         return err
 
+    # By default show only active (non-superseded) submissions.
+    # Pass ?include_superseded=true to see invalidated retest history (admin debugging only).
+    include_superseded = request.GET.get('include_superseded', '').lower() in ('true', '1', 'yes')
     qs = AssessmentSubmission.objects.select_related('user', 'assessment', 'user__batch').order_by('-created_at')
+    if not include_superseded:
+        qs = qs.exclude(status__startswith='SUPERSEDED_')
 
     status = request.GET.get('status')
     if status:

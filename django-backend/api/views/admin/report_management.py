@@ -325,7 +325,9 @@ def bulk_report_download(request):
     if not batch_id and not assessment_id:
         return JsonResponse({'error': 'Provide batch_id or assessment_id'}, status=400)
 
-    qs = AssessmentSubmission.objects.filter(report_url__isnull=False)
+    qs = AssessmentSubmission.objects.filter(
+        report_url__isnull=False
+    ).exclude(status__startswith='SUPERSEDED_')
     if batch_id:
         qs = qs.filter(user__batch_id=batch_id)
     if assessment_id:
@@ -574,10 +576,13 @@ def report_list(request):
     # Include submissions that have a report OR are currently being regenerated.
     # Without the REPORT_GENERATING clause, records disappear from the list while
     # Celery is working and never reappear if the task fails — confusing for admins.
+    # SUPERSEDED submissions (invalidated on retest grant) are excluded — their
+    # report_url may still point to a prior attempt's PDF, which would confuse
+    # the admin into thinking the old report is the current one.
     qs = AssessmentSubmission.objects.filter(
         _Q(report_url__isnull=False) |
         _Q(status=AssessmentSubmission.STATUS_REPORT_GENERATING)
-    ).order_by('-updated_at')
+    ).exclude(status__startswith='SUPERSEDED_').order_by('-updated_at')
 
     status = request.GET.get('status')
     if status:

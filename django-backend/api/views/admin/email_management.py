@@ -232,8 +232,13 @@ def email_delivery_status(request):
     student_id_filter      = (request.GET.get('student_id') or '').strip()
 
     # ── Base queryset ─────────────────────────────────────────────────────
+    # Exclude SUPERSEDED submissions (invalidated on retest grant).
+    # A retest student's prior submission has email_sent_at set for the old
+    # attempt — including it would make the admin think they already received
+    # the retest report email when the retest pipeline hasn't run yet.
     qs = (
         AssessmentSubmission.objects
+        .exclude(status__startswith='SUPERSEDED_')
         .select_related('user', 'assessment')
         .order_by('-updated_at')
     )
@@ -488,9 +493,9 @@ def bulk_resend_email(request):
     only_failed = bool(payload.get('only_failed', False))
     dry_run     = bool(payload.get('dry_run', True))   # default safe
 
-    qs = AssessmentSubmission.objects.select_related('user').filter(
+    qs = AssessmentSubmission.objects.filter(
         report_url__isnull=False
-    )
+    ).exclude(status__startswith='SUPERSEDED_').select_related('user')
     if batch_id:
         qs = qs.filter(user__batch_id=batch_id)
     if assessment_id:

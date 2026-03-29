@@ -51,7 +51,11 @@
         <td style="padding: 24px 28px 8px;">
           <p style="margin: 0; font-size: 15px;">Hello <strong>{{ student_name|escape }}</strong>,</p>
           <p style="margin: 10px 0 0; font-size: 14px; color: #444;">
+            {% if is_retest %}
+            Your CLAP re-attempt (Attempt {{ attempt_number }}) has been evaluated and your report is now ready.
+            {% else %}
             Your CLAP assessment has been evaluated and your report is now ready.
+            {% endif %}
             A summary of your scores is shown below.
           </p>
         </td>

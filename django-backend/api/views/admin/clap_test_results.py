@@ -97,10 +97,21 @@ def clap_test_results_handler(request, test_id):
         # Keyed by user_id (str) → { domain: float_score, 'submission_id': ...,
         #                             'submission_status': ... }
         # Multiple submissions per user are possible (retests); take latest.
+        #
+        # SUPERSEDED submissions (status starts with 'SUPERSEDED_') are
+        # EXCLUDED because:
+        #   1. Their domain scores belong to an invalidated attempt and must
+        #      not contaminate the current attempt's result row.
+        #   2. Including them could surface stale writing/speaking scores from
+        #      attempt N-1 mixed with fresh MCQ scores from attempt N if the
+        #      LLM pipeline hasn't completed for the retest yet.
+        #   3. The admin results table should always show the student's CURRENT
+        #      attempt — not historical data that was wiped by grant_retest.
         submission_score_map: dict[str, dict] = {}
         for sub in (
             AssessmentSubmission.objects
             .filter(assessment_id=test_id)
+            .exclude(status__startswith='SUPERSEDED_')
             .prefetch_related('scores')
             .order_by('created_at')   # ascending → latest wins
         ):
@@ -287,6 +298,10 @@ def clap_test_results_handler(request, test_id):
                 'submission_status':     sub_data.get('submission_status'),
                 # assignment id — needed for the Answers Preview endpoint
                 'assignment_id':         str(assignment.id),
+                # Retest tracking — shown in the admin results table so the
+                # admin can distinguish first-attempt results from retest results.
+                'attempt_number':        getattr(assignment, 'attempt_number', 1) or 1,
+                'retest_granted':        getattr(assignment, 'retest_granted', False),
             })
 
         avg_score_val = summary_agg['avg_score']

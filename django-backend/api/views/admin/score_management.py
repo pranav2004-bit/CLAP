@@ -80,13 +80,19 @@ def _submission_rows_from_qs(qs):
 
 
 def _base_submission_qs():
-    """Base queryset with all necessary relations prefetched — reused across all search modes."""
+    """Base queryset with all necessary relations prefetched — reused across all search modes.
+
+    Excludes SUPERSEDED submissions (invalidated when a retest was granted).
+    These are audit-trail rows only; they must not appear in score search results
+    or export data since they belong to a wiped attempt that is no longer current.
+    """
     scores_prefetch = Prefetch(
         'scores',
         queryset=SubmissionScore.objects.all(),
     )
     return (
         AssessmentSubmission.objects
+        .exclude(status__startswith='SUPERSEDED_')
         .select_related('user', 'assessment')
         .prefetch_related(scores_prefetch)
     )
@@ -174,7 +180,9 @@ def scores_by_batch(request, batch_id):
             {'domain': row['domain'], 'avg_score': float(row['avg_score'] or 0)}
             for row in aggregates
         ],
-        'submissions_count': AssessmentSubmission.objects.filter(user__batch_id=batch_id).count(),
+        'submissions_count': AssessmentSubmission.objects.filter(
+            user__batch_id=batch_id
+        ).exclude(status__startswith='SUPERSEDED_').count(),
     })
 
 
@@ -187,8 +195,9 @@ def scores_by_assessment(request, assessment_id):
 
     subs = (
         AssessmentSubmission.objects
-        .select_related('user')
         .filter(assessment_id=assessment_id)
+        .exclude(status__startswith='SUPERSEDED_')
+        .select_related('user')
         .order_by('-created_at')
     )
     rows = []
