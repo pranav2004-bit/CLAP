@@ -873,6 +873,35 @@ export default function ClapTestTakingPage({
         return <CubeLoader />
     }
 
+    // ── No questions available — set assigned but component not populated ────
+    // Backend returns items=[] (HTTP 200) when the student's assigned set has no
+    // questions for this component type yet.  Show a clear admin-contact message
+    // rather than a blank "0 of 0 answered" interface.
+    if (!loadError && !isLoading && items.length === 0) {
+        return (
+            <div className={`flex flex-col items-center justify-center px-6 text-center gap-6 ${externalFullscreen ? 'flex-1 min-h-0' : 'h-[calc(100dvh-1.875rem)]'} bg-slate-50`}>
+                <div className="w-16 h-16 rounded-full flex items-center justify-center bg-amber-50">
+                    <AlertTriangle className="w-8 h-8 text-amber-500" />
+                </div>
+                <div>
+                    <h2 className="text-xl font-bold text-gray-900 mb-2">No Questions Available</h2>
+                    <p className="text-sm text-gray-600 max-w-sm leading-relaxed">
+                        Questions for this section have not been set up yet.
+                        <br /><br />
+                        Please <strong>contact your exam administrator</strong> — they need to add questions to your assigned test set before you can proceed.
+                    </p>
+                </div>
+                {/* Timer still shown so student can see time passing */}
+                {globalTimeLeft !== null && timerLoaded && (
+                    <p className="text-sm font-semibold text-amber-600 flex items-center gap-1.5">
+                        <Clock className="w-4 h-4" />
+                        Time remaining: {formatTime(globalTimeLeft)}
+                    </p>
+                )}
+            </div>
+        )
+    }
+
     // ── Load error — questions could not be fetched after all retries ─────────
     // Shows a recoverable full-page error instead of a blank "0 of 0 answered"
     // interface. The student can click Retry to re-run the full fetch chain with

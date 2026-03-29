@@ -244,12 +244,30 @@ def student_test_items(request, assignment_id, component_id):
             set_content_map[si['order_index']] = si
 
     # Fetch structural slot items for this component.
-    # For set-assigned students: restrict to positions that exist in their set
-    # so students never see empty placeholder slots from other sets that may
-    # have a different item count.
+    #
+    # Three cases:
+    #
+    #  A) Student has a set AND set_content_map is populated (the normal pure-set
+    #     flow): fetch structural slots, then filter to only the order_indices that
+    #     exist in the student's set.  Content is overlaid from ClapSetItem below.
+    #
+    #  B) Student has a set BUT set_content_map is EMPTY: the admin assigned this
+    #     student a set that has no questions for this component yet.  Return an
+    #     empty list — DO NOT fall back to structural slots that were created by
+    #     another set and hold no content (content={}), which would render as
+    #     completely blank questions in the UI.
+    #
+    #  C) Student has NO set (assigned_set_id is None): legacy / base-editor flow.
+    #     Serve structural ClapTestItem directly (content was added via the master
+    #     test editor, not the set editor).
     items = list(ClapTestItem.objects.filter(component=component).order_by('order_index'))
-    if assignment.assigned_set_id and set_content_map:
-        items = [item for item in items if item.order_index in set_content_map]
+    if assignment.assigned_set_id:
+        if set_content_map:
+            # Case A — filter to positions that exist in the student's set
+            items = [item for item in items if item.order_index in set_content_map]
+        else:
+            # Case B — set assigned but no questions in this component; return empty
+            items = []
 
     # Get existing responses for this component
     responses = StudentClapResponse.objects.filter(
