@@ -209,8 +209,23 @@ def assignment_answers(request, test_id, assignment_id):
                     float(resp.marks_awarded) if resp and resp.marks_awarded is not None
                     else (0.0 if effective_item_type == 'mcq' else None)
                 ),
-                # Subjective / speaking text
-                'response_text':        resp.response_data if resp and isinstance(resp.response_data, str) else None,
+                # Subjective / speaking text response.
+                # response_data can be stored as:
+                #   str  — plain text (most common for writing/speaking)
+                #   dict — {"text": "...", ...} or {"selected_option": ...}
+                # We extract the text regardless of storage format so the admin
+                # preview never shows blank for a question that was answered.
+                'response_text':        (
+                    resp.response_data
+                    if resp and isinstance(resp.response_data, str)
+                    else (
+                        resp.response_data.get('text')
+                        or resp.response_data.get('response')
+                        or resp.response_data.get('transcription')
+                        if resp and isinstance(resp.response_data, dict)
+                        else None
+                    )
+                ),
             }
             items_data.append(item_row)
 

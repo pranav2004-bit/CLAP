@@ -271,26 +271,46 @@ def track_playback(request, item_id):
 
     play_limit = effective_play_limit
 
-    # Get or create response record (always keyed to structural ClapTestItem)
-    response, _created = StudentClapResponse.objects.get_or_create(
-        assignment=assignment,
-        item=item,
-        defaults={'response_data': {}}
-    )
+    # Get or create response record (always keyed to structural ClapTestItem).
+    # select_for_update() acquires a row-level write lock before we read
+    # play_count and increment it.  Without the lock, two concurrent requests
+    # (e.g. two browser tabs or a network retry) can both pass the
+    # play_count >= play_limit check and increment simultaneously, allowing
+    # the student to exceed their allowed plays.  The lock serialises the
+    # read-increment-write cycle so only one request wins at a time.
+    # get_or_create is NOT used here because it cannot hold a lock on the
+    # newly-inserted row in the same transaction; we use get_or_create only
+    # for the initial creation, then immediately re-fetch under lock.
+    from django.db import transaction as _tx
+    with _tx.atomic():
+        # Ensure the row exists first (idempotent)
+        StudentClapResponse.objects.get_or_create(
+            assignment=assignment,
+            item=item,
+            defaults={'response_data': {'play_count': 0, 'type': 'audio_playback'}},
+        )
+        # Now lock the row so no concurrent request can read stale play_count
+        try:
+            response = StudentClapResponse.objects.select_for_update().get(
+                assignment=assignment, item=item
+            )
+        except StudentClapResponse.DoesNotExist:
+            # Should never happen — we just created it above — defensive only
+            return JsonResponse({'error': 'Internal error tracking playback'}, status=500)
 
-    if not response.response_data:
-        response.response_data = {}
+        if not response.response_data:
+            response.response_data = {}
 
-    play_count = response.response_data.get('play_count', 0)
+        play_count = response.response_data.get('play_count', 0)
 
-    if play_count >= play_limit:
-        return JsonResponse({'error': 'Playback limit already reached'}, status=403)
+        if play_count >= play_limit:
+            return JsonResponse({'error': 'Playback limit already reached'}, status=403)
 
-    response.response_data['play_count'] = play_count + 1
-    response.response_data['last_played_at'] = datetime.now().isoformat()
-    response.response_data['limit_reached'] = (response.response_data['play_count'] >= play_limit)
-    response.response_data['type'] = 'audio_playback'
-    response.save()
+        response.response_data['play_count'] = play_count + 1
+        response.response_data['last_played_at'] = datetime.now().isoformat()
+        response.response_data['limit_reached'] = (response.response_data['play_count'] >= play_limit)
+        response.response_data['type'] = 'audio_playback'
+        response.save()
 
     return JsonResponse({
         'success': True,
