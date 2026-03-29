@@ -47,7 +47,7 @@ const ADD_MENU_ITEMS = [
 
 const isQuestion = (t: string) => t === 'mcq' || t === 'subjective'
 
-type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
+type SaveStatus = 'idle' | 'unsaved' | 'saving' | 'saved' | 'error'
 
 // ─── Default content per item type ────────────────────────────────────────────
 
@@ -241,8 +241,30 @@ function SetEditorContent() {
     }
   }
 
+  // ── Persist a single item to the server (extracted for reuse by saveNow) ──
+
+  const persistItem = useCallback(async (itemId: string) => {
+    const current = itemsRef.current.find(i => i?.id === itemId)
+    if (!current) return
+
+    const res = await apiFetch(getApiUrl(`admin/set-items/${itemId}`), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+      body: JSON.stringify({
+        content: current.content,
+        points:  current.points,
+      }),
+    })
+
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}))
+      throw new Error(d.error || 'Save failed')
+    }
+  }, [])
+
   // ── Auto-save (debounced 500 ms) ───────────────────────────────────────────
-  // Always saves FULL content + points from latest ref — no stale closure risk.
+  // Shows 'unsaved' immediately on change, 'saving' when the debounce fires,
+  // then 'saved' or 'error' when the API responds.
 
   const handleUpdateItem = useCallback((itemId: string, updates: { points?: number; content?: Record<string, any> }) => {
     // 1. Optimistic state update
@@ -257,35 +279,21 @@ function SetEditorContent() {
       }
     }))
 
-    // 2. Clear any pending timer for this item
+    // 2. Clear any pending timer for this item and mark as unsaved immediately
     if (saveTimers.current[itemId]) clearTimeout(saveTimers.current[itemId])
-
-    setSaveStatus('saving')
+    setSaveStatus('unsaved')
     pendingSaves.current += 1
 
     // 3. Debounced persist — reads from ref so it always has latest merged state
     saveTimers.current[itemId] = setTimeout(async () => {
+      setSaveStatus('saving')
       try {
-        const current = itemsRef.current.find(i => i?.id === itemId)
-        if (!current) return
-
-        const res = await apiFetch(getApiUrl(`admin/set-items/${itemId}`), {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-          body: JSON.stringify({
-            content: current.content, // always send full merged content
-            points:  current.points,
-          }),
-        })
-
-        if (!res.ok) {
-          const d = await res.json().catch(() => ({}))
-          throw new Error(d.error || 'Save failed')
-        }
+        await persistItem(itemId)
       } catch (err: any) {
         toast.error(err.message || 'Auto-save failed — check connection')
         setSaveStatus('error')
       } finally {
+        delete saveTimers.current[itemId]
         pendingSaves.current = Math.max(0, pendingSaves.current - 1)
         if (pendingSaves.current === 0) {
           setSaveStatus(s => (s === 'error' ? 'error' : 'saved'))
@@ -293,7 +301,33 @@ function SetEditorContent() {
         }
       }
     }, 500)
-  }, []) // stable — all state accessed via refs
+  }, [persistItem])
+
+  // ── Save Now — flush all pending debounced saves immediately ───────────────
+
+  const saveNow = useCallback(async () => {
+    const pendingIds = Object.keys(saveTimers.current)
+    if (pendingIds.length === 0 && pendingSaves.current === 0) {
+      toast.success('All changes are saved')
+      return
+    }
+    // Cancel all pending debounce timers and fire saves immediately
+    pendingIds.forEach(itemId => {
+      clearTimeout(saveTimers.current[itemId])
+      delete saveTimers.current[itemId]
+    })
+    setSaveStatus('saving')
+    try {
+      await Promise.all(pendingIds.map(itemId => persistItem(itemId)))
+      setSaveStatus('saved')
+      setTimeout(() => setSaveStatus(s => s === 'saved' ? 'idle' : s), 3000)
+    } catch (err: any) {
+      toast.error(err.message || 'Save failed — please retry')
+      setSaveStatus('error')
+    } finally {
+      pendingSaves.current = 0
+    }
+  }, [persistItem])
 
   // ── Audio upload ───────────────────────────────────────────────────────────
 
@@ -404,22 +438,47 @@ function SetEditorContent() {
             </div>
           </div>
 
-          {/* Right: save status + preview */}
-          <div className="flex items-center gap-3 shrink-0">
-            <div className="flex items-center gap-1.5 text-xs min-w-[80px] justify-end">
+          {/* Right: save status indicator + save button + preview */}
+          <div className="flex items-center gap-2 shrink-0">
+
+            {/* Live save-status pill */}
+            <div className="flex items-center gap-1.5 text-xs min-w-[90px] justify-end">
+              {saveStatus === 'unsaved' && <>
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse shrink-0" />
+                <span className="text-amber-600 font-medium">Unsaved</span>
+              </>}
               {saveStatus === 'saving' && <>
-                <Loader2 className="w-3 h-3 animate-spin text-gray-400" />
+                <Loader2 className="w-3 h-3 animate-spin text-gray-400 shrink-0" />
                 <span className="text-gray-400">Saving…</span>
               </>}
               {saveStatus === 'saved' && <>
-                <Check className="w-3 h-3 text-green-500" />
+                <Check className="w-3 h-3 text-green-500 shrink-0" />
                 <span className="text-green-600 font-medium">Saved</span>
               </>}
               {saveStatus === 'error' && <>
-                <AlertCircle className="w-3 h-3 text-red-500" />
-                <span className="text-red-600 font-medium">Save failed</span>
+                <AlertCircle className="w-3 h-3 text-red-500 shrink-0" />
+                <span className="text-red-600 font-medium">Not saved</span>
               </>}
             </div>
+
+            {/* Save button — flushes pending debounce; shown when changes are pending or failed */}
+            <Button
+              size="sm"
+              variant={saveStatus === 'error' ? 'destructive' : saveStatus === 'unsaved' ? 'default' : 'outline'}
+              className={
+                saveStatus === 'unsaved' ? 'bg-indigo-600 hover:bg-indigo-700 text-white' :
+                saveStatus === 'saved'   ? 'text-green-600 border-green-200 hover:bg-green-50' : ''
+              }
+              onClick={saveNow}
+              disabled={saveStatus === 'saving'}
+            >
+              {saveStatus === 'saving'  && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}
+              {saveStatus === 'saved'   && <Check   className="w-3.5 h-3.5 mr-1.5" />}
+              {saveStatus === 'saving'  ? 'Saving…' :
+               saveStatus === 'saved'   ? 'Saved'   :
+               saveStatus === 'error'   ? 'Retry'   : 'Save'}
+            </Button>
+
             <Button size="sm" variant="outline" onClick={() => setShowPreview(true)}>
               <Eye className="w-4 h-4 mr-2" /> Preview
             </Button>
@@ -596,9 +655,32 @@ function TextBlockEditor({ item, onUpdate }: { item: any; onUpdate: any }) {
 function MCQEditor({ item, onUpdate }: { item: any; onUpdate: any }) {
   const options: string[] = item.content?.options || []
   const correct: number   = item.content?.correct_option ?? 0
+  const MAX_OPTIONS = 6
 
   const setOption = (i: number, val: string) => {
     const next = [...options]; next[i] = val
+    onUpdate(item.id, { content: { options: next } })
+  }
+
+  // Multi-line paste: split clipboard lines and fill consecutive options.
+  // Only intercepts pastes with 2+ non-empty lines — single-line paste is unchanged.
+  // Example: paste "Paris\nLondon\nBerlin" into Option A → fills A, B, C.
+  const handleOptionPaste = (e: React.ClipboardEvent<HTMLInputElement>, startIdx: number) => {
+    const pasted = e.clipboardData.getData('text')
+    const lines  = pasted.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0)
+    if (lines.length <= 1) return // single line — let browser handle normally
+
+    e.preventDefault()
+    const next = [...options]
+    lines.forEach((line, offset) => {
+      const targetIdx = startIdx + offset
+      if (targetIdx >= MAX_OPTIONS) return
+      if (targetIdx < next.length) {
+        next[targetIdx] = line
+      } else {
+        next.push(line)
+      }
+    })
     onUpdate(item.id, { content: { options: next } })
   }
 
@@ -652,10 +734,11 @@ function MCQEditor({ item, onUpdate }: { item: any; onUpdate: any }) {
               <span className={`text-xs font-bold w-4 shrink-0 ${correct === i ? 'text-green-600' : 'text-gray-400'}`}>
                 {String.fromCharCode(65 + i)}
               </span>
-              {/* Option text */}
+              {/* Option text — onPaste handles multi-line distribution */}
               <Input
                 value={opt}
                 onChange={e => setOption(i, e.target.value)}
+                onPaste={e => handleOptionPaste(e, i)}
                 placeholder={`Option ${String.fromCharCode(65 + i)}`}
                 className={`flex-1 h-8 text-sm ${correct === i ? 'border-green-200 bg-transparent' : ''}`}
               />
@@ -670,7 +753,7 @@ function MCQEditor({ item, onUpdate }: { item: any; onUpdate: any }) {
           ))}
         </div>
 
-        {options.length < 6 && (
+        {options.length < MAX_OPTIONS && (
           <Button variant="link" size="sm" className="pl-0 mt-2 h-7 text-indigo-600" onClick={addOption}>
             + Add option
           </Button>

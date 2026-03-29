@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, Suspense } from 'react'
+import { useState, useEffect, useRef, Suspense } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -42,6 +42,8 @@ function ClapTestEditorContent() {
     const [items, setItems] = useState<any[]>([])
     const [showAddMenu, setShowAddMenu] = useState(false)
     const [showPreview, setShowPreview] = useState(false)
+    const [saveStatus, setSaveStatus] = useState<'idle' | 'unsaved' | 'saving' | 'saved' | 'error'>('idle')
+    const pendingSaves = useRef(0)
 
     // Initialize and fetch data
     useEffect(() => {
@@ -182,51 +184,38 @@ function ClapTestEditorContent() {
     }
 
     const handleUpdateItem = async (itemId: string, updates: any) => {
-        // Find the current item to merge content correctly
         const currentItem = items.find(i => i.id === itemId)
         if (!currentItem) return
 
-        // Calculate the new content by merging existing content with the updates
-        const newContent = {
-            ...currentItem.content,
-            ...(updates.content || {})
-        }
+        const newContent = { ...currentItem.content, ...(updates.content || {}) }
+        const payload    = { ...updates, content: updates.content ? newContent : undefined }
+        if (updates.content) payload.content = newContent
 
-        // Prepare the payload. If we are updating content, we must send the FULL object
-        const payload = {
-            ...updates,
-            content: updates.content ? newContent : undefined
-        }
-
-        // If content is undefined in payload (only updating points etc), delete it specificially if we want pure partial,
-        // but easier to just spread updates.
-        // Actually, cleanest way:
-        if (updates.content) {
-            payload.content = newContent
-        }
-
-        // Optimistic update
-        setItems(items.map(item => item.id === itemId ? {
-            ...item,
-            ...updates,
-            content: newContent
-        } : item))
+        // Optimistic update + immediate unsaved indicator
+        setItems(items.map(item => item.id === itemId ? { ...item, ...updates, content: newContent } : item))
+        setSaveStatus('unsaved')
+        pendingSaves.current += 1
 
         try {
-            // Debounce logic could be added here, but for now simple save on change/blur
+            setSaveStatus('saving')
             const response = await apiFetch(getApiUrl(`admin/clap-items/${itemId}`), {
                 method: 'PATCH',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...getAuthHeaders()
-                },
+                headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
                 body: JSON.stringify(payload)
             })
-
-            if (!response.ok) toast.error('Failed to save changes')
+            if (!response.ok) {
+                setSaveStatus('error')
+                toast.error('Failed to save changes')
+            }
         } catch (error) {
-            // Revert on error?
+            setSaveStatus('error')
             console.error(error)
+        } finally {
+            pendingSaves.current = Math.max(0, pendingSaves.current - 1)
+            if (pendingSaves.current === 0) {
+                setSaveStatus(s => s === 'error' ? 'error' : 'saved')
+                setTimeout(() => setSaveStatus(s => s === 'saved' ? 'idle' : s), 3000)
+            }
         }
     }
 
@@ -338,12 +327,49 @@ function ClapTestEditorContent() {
                         <p className="text-xs text-gray-400">{items.length} items • {items.filter(item => item && isQuestion(item.item_type)).length} questions • {component?.title}</p>
                     </div>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex items-center gap-2">
+                    {/* Live save-status pill */}
+                    <div className="flex items-center gap-1.5 text-xs min-w-[90px] justify-end">
+                        {saveStatus === 'unsaved' && <>
+                            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse shrink-0" />
+                            <span className="text-amber-600 font-medium">Unsaved</span>
+                        </>}
+                        {saveStatus === 'saving' && <>
+                            <Loader2 className="w-3 h-3 animate-spin text-gray-400 shrink-0" />
+                            <span className="text-gray-400">Saving…</span>
+                        </>}
+                        {saveStatus === 'saved' && <>
+                            <Check className="w-3 h-3 text-green-500 shrink-0" />
+                            <span className="text-green-600 font-medium">Saved</span>
+                        </>}
+                        {saveStatus === 'error' && <>
+                            <X className="w-3 h-3 text-red-500 shrink-0" />
+                            <span className="text-red-600 font-medium">Not saved</span>
+                        </>}
+                    </div>
+
+                    {/* Save button */}
+                    <Button
+                        size="sm"
+                        variant={saveStatus === 'error' ? 'destructive' : saveStatus === 'unsaved' ? 'default' : 'outline'}
+                        className={
+                            saveStatus === 'unsaved' ? 'bg-indigo-600 hover:bg-indigo-700 text-white' :
+                            saveStatus === 'saved'   ? 'text-green-600 border-green-200 hover:bg-green-50' : ''
+                        }
+                        disabled={saveStatus === 'saving' || saveStatus === 'idle'}
+                        onClick={() => toast.info('Changes are saved automatically as you edit')}
+                    >
+                        {saveStatus === 'saving' && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}
+                        {saveStatus === 'saved'  && <Check   className="w-3.5 h-3.5 mr-1.5" />}
+                        {saveStatus === 'saving' ? 'Saving…' :
+                         saveStatus === 'saved'  ? 'Saved'   :
+                         saveStatus === 'error'  ? 'Error'   : 'Save'}
+                    </Button>
+
                     <Button size="sm" variant="outline" onClick={() => setShowPreview(true)}>
                         <Eye className="w-4 h-4 mr-2" />
                         Preview
                     </Button>
-                    <Button size="sm" onClick={() => toast.success('All changes saved')}>Saved</Button>
                 </div>
             </header>
 
@@ -424,7 +450,29 @@ function ClapTestEditorContent() {
                                     />
                                 )}
 
-                                {item.item_type === 'mcq' && (
+                                {item.item_type === 'mcq' && (() => {
+                                    const MAX_MCQ_OPTIONS = 6
+                                    // Multi-line paste: distribute clipboard lines across consecutive options.
+                                    // Only intercepts pastes with 2+ lines — single-line paste is unchanged.
+                                    const handleMcqOptionPaste = (
+                                        e: React.ClipboardEvent<HTMLInputElement>,
+                                        startIdx: number,
+                                        currentOptions: string[]
+                                    ) => {
+                                        const pasted = e.clipboardData.getData('text')
+                                        const lines  = pasted.split(/\r?\n/).map((l: string) => l.trim()).filter((l: string) => l.length > 0)
+                                        if (lines.length <= 1) return
+                                        e.preventDefault()
+                                        const next = [...currentOptions]
+                                        lines.forEach((line: string, offset: number) => {
+                                            const targetIdx = startIdx + offset
+                                            if (targetIdx >= MAX_MCQ_OPTIONS) return
+                                            if (targetIdx < next.length) { next[targetIdx] = line }
+                                            else { next.push(line) }
+                                        })
+                                        handleUpdateItem(item.id, { content: { options: next } })
+                                    }
+                                    return (
                                     <div className="space-y-4">
                                         <Textarea
                                             value={item.content.question}
@@ -451,8 +499,9 @@ function ClapTestEditorContent() {
                                                             newOptions[optIndex] = e.target.value;
                                                             handleUpdateItem(item.id, { content: { options: newOptions } });
                                                         }}
+                                                        onPaste={(e) => handleMcqOptionPaste(e, optIndex, item.content.options || [])}
                                                         className="flex-1 h-9"
-                                                        placeholder={`Option ${optIndex + 1}`}
+                                                        placeholder={`Option ${String.fromCharCode(65 + optIndex)}`}
                                                     />
                                                     <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => {
                                                         const newOptions = item.content.options.filter((_: any, i: number) => i !== optIndex);
@@ -462,15 +511,18 @@ function ClapTestEditorContent() {
                                                     </Button>
                                                 </div>
                                             ))}
+                                            {(item.content.options || []).length < MAX_MCQ_OPTIONS && (
                                             <Button variant="link" size="sm" className="pl-0 text-indigo-600" onClick={() => {
                                                 const currentOptions = item.content.options || [];
-                                                handleUpdateItem(item.id, { content: { options: [...currentOptions, `Option ${currentOptions.length + 1}`] } });
+                                                handleUpdateItem(item.id, { content: { options: [...currentOptions, ''] } });
                                             }}>
                                                 + Add Option
                                             </Button>
+                                            )}
                                         </div>
                                     </div>
-                                )}
+                                    )
+                                })()}
 
                                 {item.item_type === 'subjective' && (
                                     <div className="space-y-4">
