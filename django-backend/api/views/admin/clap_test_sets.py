@@ -591,7 +591,11 @@ def set_item_detail_handler(request, item_id):
         return error_response('Unauthorized', status=401)
 
     try:
-        item = ClapSetItem.objects.get(id=item_id)
+        # select_related pre-loads the FK chain required by _ensure_structural_slots
+        # so that PUT/PATCH can call it without extra DB round-trips.
+        item = ClapSetItem.objects.select_related(
+            'set_component__set__clap_test'
+        ).get(id=item_id)
     except ClapSetItem.DoesNotExist:
         return error_response('Item not found', status=404)
 
@@ -608,11 +612,26 @@ def set_item_detail_handler(request, item_id):
     except json.JSONDecodeError:
         return error_response('Invalid JSON', status=400)
 
+    # Track whether order_index is changing — if so, we must ensure a
+    # structural ClapTestItem slot exists at the NEW position.  Without this,
+    # the item at the new order_index would be silently dropped from every
+    # student's test because student_test_items filters by order_index
+    # membership in the structural ClapTestItem table.
+    order_index_changed = 'order_index' in body and body['order_index'] != item.order_index
+
     for field in ['order_index', 'points', 'content', 'item_type']:
         if field in body:
             setattr(item, field, body[field])
     item.updated_at = timezone.now()
-    item.save()
+
+    with transaction.atomic():
+        item.save()
+        # Guarantee a structural slot at the (possibly new) order_index.
+        # This is idempotent — if the slot already exists, get_or_create is
+        # a single SELECT with no INSERT.  Calling unconditionally (not just
+        # when order_index_changed) catches any previously missed slots.
+        _ensure_structural_slots(item)
+
     return JsonResponse(_item_to_dict(item))
 
 

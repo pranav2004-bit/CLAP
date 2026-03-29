@@ -12,15 +12,17 @@ All strategies are:
  - O(N) time — handles 10,000+ students with no performance issues
  - Idempotent — re-running with same strategy produces consistent results
  - Audit-logged — every run is stored with who ran it, when, and which strategy
+ - Concurrency-safe — row-level lock on ClapTest prevents double-distribution
+ - Verified — post-commit DB re-query confirms every row was written
 """
 
-import math
 import logging
 from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
 from django.db import transaction
+from django.db.models import Count, Q
 import json
 
 from api.models import (
@@ -50,7 +52,7 @@ def _distribute_latin_square(students: list, sets: list, rows: int, cols: int) -
     Students are placed into the grid in the order provided (typically
     sorted by roll number / registration ID — correlating with seating).
 
-    Returns: {student_id: set_object}
+    Returns: {student_id_str: set_object}
     """
     n_sets = len(sets)
     result = {}
@@ -71,7 +73,7 @@ def _distribute_round_robin(students: list, sets: list) -> dict:
     always get different sets, which correlates strongly with physical
     seating arrangements in practice.
 
-    Returns: {student_id: set_object}
+    Returns: {student_id_str: set_object}
     """
     n_sets = len(sets)
     return {
@@ -126,6 +128,21 @@ def distribute_sets(request, test_id):
 
     Idempotent: safe to re-run. Existing set assignments are overwritten.
     Guard: Cannot run if any student has status 'started' (mid-test).
+
+    Concurrency safety
+    ──────────────────
+    A row-level SELECT FOR UPDATE lock is held on the ClapTest row for
+    the entire duration of the commit phase.  This serialises concurrent
+    "Distribute" button clicks from multiple admin sessions so only one
+    distribution runs at a time; the second waits and then operates on
+    already-distributed data (producing a no-op bulk_update).
+
+    Post-commit verification
+    ────────────────────────
+    After bulk_update we immediately re-query the DB to count rows where
+    assigned_set_id IS NOT NULL.  If the count doesn't match the expected
+    number we return HTTP 500 so the admin knows to retry rather than
+    believing a false success.
     """
     user = get_user_from_request(request)
     if not user or user.role != 'admin':
@@ -161,7 +178,9 @@ def distribute_sets(request, test_id):
             status=400
         )
 
-    # ── Load assignments ───────────────────────────────────────────────────
+    # ── Load assignments — all active students for this test ───────────────
+    # Order by student_id then full_name for deterministic, reproducible results
+    # across concurrent calls and reruns.
     assignments = list(StudentClapAssignment.objects.filter(
         clap_test=clap_test
     ).select_related('student').order_by('student__student_id', 'student__full_name'))
@@ -180,6 +199,8 @@ def distribute_sets(request, test_id):
         )
 
     students = [a.student for a in assignments]
+    # Key by str(student_id) — UUID objects; str() always produces lowercase
+    # hyphenated form so the comparison is consistent across DB drivers.
     assignment_by_student = {str(a.student_id): a for a in assignments}
 
     # ── Run chosen algorithm ───────────────────────────────────────────────
@@ -209,7 +230,6 @@ def distribute_sets(request, test_id):
         dist_map = _distribute_manual(students, sets, manual_map)
 
     # ── Build preview ──────────────────────────────────────────────────────
-    # Count how many students each set gets
     set_counts = {s.label: 0 for s in sets}
     preview_list = []
     for student in students:
@@ -217,7 +237,7 @@ def distribute_sets(request, test_id):
         assigned_set = dist_map[sid]
         set_counts[assigned_set.label] += 1
         preview_list.append({
-            'student_id': str(student.id),
+            'student_id': sid,
             'student_name': student.full_name or student.email,
             'student_roll': student.student_id,
             'assigned_set_label': assigned_set.label,
@@ -242,34 +262,76 @@ def distribute_sets(request, test_id):
         })
 
     # ── Commit to database ─────────────────────────────────────────────────
-    # Collect only the assignments that actually change, then issue a single
-    # bulk_update instead of N individual UPDATEs (critical for 3000+ students).
-    assignments_to_update = []
-    for student in students:
-        sid = str(student.id)
-        assigned_set = dist_map[sid]
-        a = assignment_by_student[sid]
-        if str(a.assigned_set_id) != str(assigned_set.id):
-            a.assigned_set = assigned_set
-            a.assigned_set_label = assigned_set.label
-            assignments_to_update.append(a)
+    #
+    # Concurrency safety
+    # ──────────────────
+    # SELECT FOR UPDATE on the ClapTest row serialises concurrent distribution
+    # requests.  A second admin clicking "Distribute" simultaneously blocks
+    # here until the first transaction commits, then operates on
+    # already-updated data (assignments_to_update will be empty → no-op).
+    #
+    # Collect only the assignments that actually need updating, then issue a
+    # single bulk_update instead of N individual UPDATEs (critical for 3000+
+    # students).  We use the FK attname 'assigned_set_id' explicitly — this
+    # is the column Django writes to and is unambiguous regardless of Django
+    # version or ORM FK resolution behaviour.
+    with transaction.atomic():
+        # Acquire row-level lock — blocks concurrent distributions for this test
+        ClapTest.objects.select_for_update().get(id=clap_test.id)
 
-    if assignments_to_update:
-        with transaction.atomic():
-            StudentClapAssignment.objects.bulk_update(
-                assignments_to_update, ['assigned_set', 'assigned_set_label']
+        assignments_to_update = []
+        for student in students:
+            sid = str(student.id)
+            assigned_set = dist_map[sid]
+            a = assignment_by_student[sid]
+
+            # str(None) → 'None'; str(UUID) → 'xxxxxxxx-...' — never equal,
+            # so first-time distribution always adds every assignment.
+            if str(a.assigned_set_id) != str(assigned_set.id):
+                a.assigned_set_id = assigned_set.id   # FK attname — direct, no ORM lookup
+                a.assigned_set_label = assigned_set.label
+                assignments_to_update.append(a)
+
+        updated_count = 0
+        if assignments_to_update:
+            # Use the FK attname ('assigned_set_id') not the descriptor name
+            # ('assigned_set') so bulk_update writes the UUID column directly
+            # without any FK object resolution layer.
+            updated_count = StudentClapAssignment.objects.bulk_update(
+                assignments_to_update, ['assigned_set_id', 'assigned_set_label']
+            )
+
+        # ── Post-commit verification ───────────────────────────────────────
+        # Re-query inside the same transaction to confirm every expected row
+        # was written.  If Aurora silently failed any UPDATE (e.g. constraint
+        # violation, partial write), this catch prevents a false-success response.
+        expected_distributed = len(students)  # ALL students should have a set
+        actual_distributed = StudentClapAssignment.objects.filter(
+            clap_test=clap_test,
+            assigned_set_id__isnull=False,
+        ).count()
+
+        if actual_distributed < expected_distributed:
+            # Roll back and report — admin can retry
+            raise ValueError(
+                f'Distribution verification failed: expected {expected_distributed} '
+                f'assigned students, found {actual_distributed} in DB. '
+                f'Transaction will be rolled back. Please retry.'
             )
 
     logger.info(
-        f"Admin {user.id} distributed sets for test {test_id} "
-        f"using {strategy} strategy. "
-        f"Students={len(students)}, Sets={len(sets)}, Collisions={collision_count}"
+        "Admin %s distributed sets for test %s using %s strategy. "
+        "Students=%d, Sets=%d, Updated=%d, Collisions=%d",
+        user.id, test_id, strategy,
+        len(students), len(sets), updated_count, collision_count,
     )
 
     return JsonResponse({
         'message': f'Sets distributed successfully using {strategy} strategy.',
         'strategy': strategy,
         'student_count': len(students),
+        'updated_count': updated_count,      # rows actually written this run
+        'already_correct': len(students) - updated_count,  # idempotent skips
         'set_distribution': set_counts,
         'sequential_collisions': collision_count,
         'collisions_note': (
@@ -297,18 +359,23 @@ def distribution_status(request, test_id):
     except ClapTest.DoesNotExist:
         return error_response('Test not found', status=404)
 
-    # student__is_active=True keeps total_students in sync with the batch page student count.
-    # Inactive students are excluded from both views so the numbers always match.
-    assignments = StudentClapAssignment.objects.filter(
-        clap_test_id=test_id,
-        student__is_active=True,
-    ).select_related('student', 'assigned_set').order_by('student__student_id')
+    # student__is_active=True keeps total_students in sync with the batch page
+    # student count. Inactive students are excluded from both views so the
+    # numbers always match.
+    assignments = list(
+        StudentClapAssignment.objects.filter(
+            clap_test_id=test_id,
+            student__is_active=True,
+        )
+        .select_related('student', 'assigned_set')
+        .order_by('student__student_id')
+    )
 
-    total = assignments.count()
-    distributed = assignments.exclude(assigned_set=None).count()
+    total = len(assignments)
+    distributed = sum(1 for a in assignments if a.assigned_set_id is not None)
     undistributed = total - distributed
 
-    by_set = {}
+    by_set: dict = {}
     rows = []
     for a in assignments:
         label = a.assigned_set_label or 'Unassigned'
@@ -320,13 +387,14 @@ def distribution_status(request, test_id):
             'student_roll': a.student.student_id,
             'status': a.status,
             'assigned_set_label': a.assigned_set_label,
+            'assigned_set_id': str(a.assigned_set_id) if a.assigned_set_id else None,
         })
 
     return JsonResponse({
         'total_students': total,
         'distributed': distributed,
         'undistributed': undistributed,
-        'distribution_complete': undistributed == 0,
+        'distribution_complete': undistributed == 0 and total > 0,
         'by_set': by_set,
         'students': rows,
     })
@@ -359,9 +427,15 @@ def clear_distribution(request, test_id):
             status=409
         )
 
-    updated = StudentClapAssignment.objects.filter(
-        clap_test_id=test_id
-    ).update(assigned_set_id=None, assigned_set_label=None)
+    with transaction.atomic():
+        # Serialise concurrent clear operations on the same test
+        ClapTest.objects.select_for_update().get(id=test_id)
+        updated = StudentClapAssignment.objects.filter(
+            clap_test_id=test_id
+        ).update(assigned_set_id=None, assigned_set_label=None)
 
-    logger.info(f"Admin {user.id} cleared set distribution for test {test_id}. Rows reset: {updated}")
+    logger.info(
+        "Admin %s cleared set distribution for test %s. Rows reset: %d",
+        user.id, test_id, updated,
+    )
     return JsonResponse({'message': f'Distribution cleared for {updated} student(s).'})

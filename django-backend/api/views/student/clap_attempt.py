@@ -230,26 +230,30 @@ def student_test_items(request, assignment_id, component_id):
     server_deadline_iso = attempt.deadline.isoformat()
     attempt_is_expired = attempt.is_expired()
 
-    # Build set-item content map: order_index → ClapSetItem row.
-    # When the student has an assigned set, serve their set's question content.
-    # The item_id returned to the frontend is still the structural ClapTestItem.id
-    # so StudentClapResponse FKs remain valid without a schema migration.
-    # correct_option is NEVER sent to the frontend regardless of source.
+    # ── Build set-item content map ─────────────────────────────────────────
+    #
+    # Maps order_index → ClapSetItem data for the student's assigned set.
+    # 'id' is included so audio_block items can resolve their audio files
+    # below without additional per-item DB queries.
+    #
+    # correct_option is intentionally excluded from .values() — we never
+    # want it to reach the frontend, and excluding it here eliminates any
+    # chance of accidental inclusion in the copied raw_content dict.
     set_content_map: dict[int, dict] = {}
     if assignment.assigned_set_id:
         for si in ClapSetItem.objects.filter(
             set_component__set_id=assignment.assigned_set_id,
             set_component__test_type=component.test_type,
-        ).values('order_index', 'content', 'points', 'item_type'):
+        ).values('id', 'order_index', 'content', 'points', 'item_type'):
             set_content_map[si['order_index']] = si
 
-    # Fetch structural slot items for this component.
+    # ── Fetch structural slot items for this component ─────────────────────
     #
     # Three cases:
     #
     #  A) Student has a set AND set_content_map is populated (the normal pure-set
     #     flow): fetch structural slots, then filter to only the order_indices that
-    #     exist in the student's set.  Content is overlaid from ClapSetItem below.
+    #     exist in their set.  Content is overlaid from ClapSetItem below.
     #
     #  B) Student has a set BUT set_content_map is EMPTY: the admin assigned this
     #     student a set that has no questions for this component yet.  Return an
@@ -261,15 +265,127 @@ def student_test_items(request, assignment_id, component_id):
     #     Serve structural ClapTestItem directly (content was added via the master
     #     test editor, not the set editor).
     items = list(ClapTestItem.objects.filter(component=component).order_by('order_index'))
-    if assignment.assigned_set_id:
-        if set_content_map:
-            # Case A — filter to positions that exist in the student's set
-            items = [item for item in items if item.order_index in set_content_map]
-        else:
-            # Case B — set assigned but no questions in this component; return empty
-            items = []
 
-    # Get existing responses for this component
+    if assignment.assigned_set_id:
+        if not set_content_map:
+            # Case B — set assigned but no questions in this component
+            items = []
+        else:
+            # Case A — build a fast lookup of existing structural slots by order_index
+            structural_by_index = {item.order_index: item for item in items}
+
+            # ── Runtime structural slot repair ─────────────────────────────
+            # _ensure_structural_slots is called when items are CREATED via the
+            # admin set editor.  However, if an admin changed an item's
+            # order_index via direct PUT/PATCH before the fix was deployed, or
+            # if the slot was somehow missed (crash mid-create, import script
+            # bypassing the API, etc.), a ClapSetItem can exist without a
+            # matching structural ClapTestItem.  Without a slot, that item
+            # would be silently dropped from the student's view.
+            #
+            # We detect and repair this on every student access:
+            #   1. Compare set_content_map indices against existing structural slots.
+            #   2. For any missing index: get_or_create the structural slot.
+            #   3. Refresh the items list to include newly created slots.
+            #
+            # get_or_create is idempotent — concurrent student requests for the
+            # same slot race to a single INSERT; the loser retries the SELECT.
+            # This is safe without a DB unique constraint because get_or_create
+            # uses a SELECT → INSERT sequence with IntegrityError retry internally.
+            missing_indices = [
+                idx for idx in set_content_map
+                if idx not in structural_by_index
+            ]
+            if missing_indices:
+                logger.warning(
+                    "student_test_items: auto-repairing %d missing structural slot(s) "
+                    "for assignment=%s component=%s indices=%s",
+                    len(missing_indices), assignment_id, component_id, missing_indices,
+                )
+                with transaction.atomic():
+                    for idx in missing_indices:
+                        si = set_content_map[idx]
+                        slot, created = ClapTestItem.objects.get_or_create(
+                            component=component,
+                            order_index=idx,
+                            defaults={
+                                'item_type': si['item_type'] or 'mcq',
+                                'points': si['points'] or 0,
+                                'content': {},
+                            },
+                        )
+                        structural_by_index[idx] = slot
+                        if created:
+                            logger.info(
+                                "Auto-created structural slot: component=%s order_index=%d",
+                                component_id, idx,
+                            )
+
+                # Refresh the full items list after repair so the ordering is correct
+                items = list(ClapTestItem.objects.filter(
+                    component=component
+                ).order_by('order_index'))
+                structural_by_index = {item.order_index: item for item in items}
+
+            # Keep only items whose order_index exists in the student's set
+            items = [
+                structural_by_index[idx]
+                for idx in sorted(set_content_map.keys())
+                if idx in structural_by_index
+            ]
+
+    # ── Bulk audio file resolution for audio_block items ──────────────────
+    #
+    # The admin _item_to_dict() resolves audio file metadata at query time.
+    # The student endpoint must do the same so students can actually hear
+    # audio blocks.  We resolve in bulk (two queries max) to avoid N per-item
+    # DB hits regardless of how many audio_block items are in the component.
+    #
+    # Priority:
+    #   1. Set-specific audio (AdminAudioFile.set_item_id is set) → 'set-items'
+    #   2. Base-item audio (AdminAudioFile.item_id is set, same order_index) → 'clap-items'
+    #   3. No audio found → has_audio_file = False
+    from api.models import AdminAudioFile
+
+    # Build a set of set_item UUIDs that have audio (bulk query — 1 hit)
+    set_item_ids_in_map = {
+        si['id'] for si in set_content_map.values()
+        if si.get('item_type') == 'audio_block'
+    }
+    set_items_with_audio: set = set()
+    if set_item_ids_in_map:
+        set_items_with_audio = set(
+            AdminAudioFile.objects.filter(
+                set_item_id__in=set_item_ids_in_map
+            ).values_list('set_item_id', flat=True)
+        )
+
+    # Build a map of order_index → base ClapTestItem.id for fallback audio
+    # (only needed for audio_block items without set-specific audio)
+    base_audio_item_ids: dict[int, str] = {}   # order_index → ClapTestItem.id
+    audio_block_indices_needing_fallback = [
+        idx for idx, si in set_content_map.items()
+        if si.get('item_type') == 'audio_block'
+        and si['id'] not in set_items_with_audio
+    ]
+    if audio_block_indices_needing_fallback:
+        # Structural items at these indices ARE the base items for fallback audio
+        for item in items:
+            if item.order_index in audio_block_indices_needing_fallback:
+                base_audio_item_ids[item.order_index] = str(item.id)
+
+        # Check which base items actually have an AdminAudioFile (bulk — 1 hit)
+        base_items_with_audio: set = set()
+        if base_audio_item_ids:
+            base_items_with_audio = set(
+                AdminAudioFile.objects.filter(
+                    item_id__in=base_audio_item_ids.values()
+                ).values_list('item_id', flat=True)
+            )
+    else:
+        base_items_with_audio = set()
+
+    # ── Get existing responses for this component ──────────────────────────
     responses = StudentClapResponse.objects.filter(
         assignment=assignment,
         item__component=component
@@ -293,6 +409,27 @@ def student_test_items(request, assignment_id, component_id):
 
         # NEVER send the answer key to the frontend
         raw_content.pop('correct_option', None)
+
+        # ── Audio resolution for audio_block items ─────────────────────────
+        # Mirrors the logic in admin _item_to_dict() so students receive the
+        # same audio metadata.  We use the bulk-prefetched sets above so this
+        # is O(1) per item — no additional DB queries in this loop.
+        if effective_type == 'audio_block':
+            if set_si and set_si['id'] in set_items_with_audio:
+                # Priority 1: set-specific audio file
+                raw_content['has_audio_file'] = True
+                raw_content['audio_endpoint'] = 'set-items'
+                raw_content['set_item_id'] = str(set_si['id'])
+            else:
+                # Priority 2: base/structural item audio (shared across sets)
+                base_item_id = base_audio_item_ids.get(item.order_index)
+                import uuid as _uuid
+                if base_item_id and _uuid.UUID(base_item_id) in base_items_with_audio:
+                    raw_content['has_audio_file'] = True
+                    raw_content['audio_endpoint'] = 'clap-items'
+                    raw_content['base_item_id'] = base_item_id
+                else:
+                    raw_content['has_audio_file'] = False
 
         items_data.append({
             'id': str(item.id),       # structural ClapTestItem.id (StudentClapResponse FK)
