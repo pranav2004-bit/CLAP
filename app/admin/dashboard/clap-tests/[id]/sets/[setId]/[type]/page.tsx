@@ -157,27 +157,35 @@ function SetEditorContent() {
     const comp = componentRef.current
     if (!comp) return
 
-    const tempId  = `temp-${Date.now()}`
-    const newItem = {
-      item_type:   type,
-      order_index: itemsRef.current.length + 1,
-      points:      type === 'mcq' ? 1 : 0,
-      content:     defaultContent(type),
+    const tempId = `temp-${Date.now()}`
+
+    // order_index is intentionally NOT sent to the server.
+    // The backend always computes max(order_index)+1 under a row-lock, which
+    // prevents duplicates from both concurrent adds and the delete-then-add
+    // gap scenario (items.length+1 diverges from max(order_index) after any
+    // delete — sending the client value was the root cause of questions
+    // silently disappearing from student tests).
+    const newItemPayload = {
+      item_type: type,
+      points:    type === 'mcq' ? 1 : 0,
+      content:   defaultContent(type),
     }
 
-    // Optimistic insert
-    setItems(prev => [...prev, { ...newItem, id: tempId }])
+    // Optimistic insert (display only — order_index will be set by server response)
+    setItems(prev => [...prev, { ...newItemPayload, id: tempId, order_index: prev.length + 1 }])
     setShowAddMenu(false)
 
     try {
       const res  = await apiFetch(getApiUrl(`admin/set-components/${comp.id}/items`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-        body: JSON.stringify(newItem),
+        body: JSON.stringify(newItemPayload),
       })
       const data = await res.json()
 
       if (res.ok && data.item) {
+        // Replace the temp placeholder with the server-assigned item (includes
+        // the authoritative order_index computed under a DB row-lock).
         setItems(prev => prev.map(i => i?.id === tempId ? data.item : i).filter(Boolean))
         toast.success(`${ITEM_LABELS[type] || type} added`)
       } else {
@@ -208,6 +216,30 @@ function SetEditorContent() {
         setItems(snapshot)
       } else {
         toast.success('Item deleted')
+
+        // ── Compact order_indices after every delete ─────────────────────
+        // Deletion leaves a gap in the sequence (e.g. deleting item 3 from
+        // [1,2,3,4,5] leaves [1,2,4,5]).  Without compaction, the server's
+        // max(order_index) is 5, not 4, so the next add still gets index 6
+        // and there is no collision.  However, compacting proactively keeps
+        // the sequence tight (1..N) so the set is always in a clean state
+        // and the admin UI displays a continuous numbered list.
+        // Fire-and-forget: if this fails, the next add is still safe because
+        // the server always uses max+1 under a lock; the student view also
+        // handles any duplicates gracefully.
+        const comp = componentRef.current
+        const remaining = itemsRef.current.filter(
+          i => i?.id && i.id !== itemId && !i.id.startsWith('temp-')
+        )
+        if (comp && remaining.length > 0) {
+          apiFetch(getApiUrl(`admin/set-components/${comp.id}/reorder-items`), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+            body: JSON.stringify({ item_ids: remaining.map(i => i.id) }),
+          }).catch(() => {
+            // Best-effort — failure here does not affect correctness.
+          })
+        }
       }
     } catch (_e) {
       toast.error('Network error — item restored')

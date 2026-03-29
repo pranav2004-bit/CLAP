@@ -81,9 +81,10 @@ urlpatterns = [
     path('admin/clap-tests/<uuid:test_id>/retest-candidates', retest_management.list_retest_candidates, name='admin_retest_candidates'),
     path('admin/assignments/<uuid:assignment_id>/grant-retest', retest_management.grant_retest, name='admin_grant_retest'),
 
-    # ── Sets Feature (8 endpoints) ──────────────────────────────────────────
+    # ── Sets Feature (9 endpoints) ──────────────────────────────────────────
     path('admin/clap-tests/<uuid:test_id>/sets', clap_test_sets.sets_handler, name='admin_clap_test_sets'),
     path('admin/clap-tests/<uuid:test_id>/sets/validate', clap_test_sets.validate_sets, name='admin_clap_test_sets_validate'),
+    path('admin/clap-tests/<uuid:test_id>/repair-set-order', clap_test_sets.repair_set_order, name='admin_repair_set_order'),
     path('admin/clap-tests/<uuid:test_id>/sets/<uuid:set_id>', clap_test_sets.set_detail_handler, name='admin_clap_test_set_detail'),
     path('admin/sets/<uuid:set_id>/components', clap_test_sets.set_components_handler, name='admin_set_components'),
     path('admin/set-components/<uuid:component_id>', clap_test_sets.set_component_detail_handler, name='admin_set_component_detail'),

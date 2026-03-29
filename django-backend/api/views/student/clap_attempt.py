@@ -239,13 +239,57 @@ def student_test_items(request, assignment_id, component_id):
     # correct_option is intentionally excluded from .values() — we never
     # want it to reach the frontend, and excluding it here eliminates any
     # chance of accidental inclusion in the copied raw_content dict.
+    #
+    # DUPLICATE order_index DEFENCE
+    # ──────────────────────────────
+    # The DB has no UNIQUE constraint on (set_component_id, order_index)
+    # because the table is managed=False.  Two items can share an index when:
+    #   • Admin deleted an item then added a new one — old frontend sent
+    #     items.length+1 which diverges from max(order_index) after a delete.
+    #   • Two rapid consecutive adds raced before the row-lock was in place
+    #     (fixed in set_items_handler, but historical data may already be dirty).
+    #
+    # Strategy: fetch in (order_index ASC, created_at ASC) order so the
+    # first-created item always wins its natural slot.  Each duplicate gets
+    # a deterministic synthetic index above the current max.  A runtime
+    # structural slot is auto-created for the synthetic index (idempotent).
+    # An ERROR is logged so the admin can run repair-set-order to fix the DB.
+    #
+    # This guarantees students ALWAYS see every question regardless of DB state.
     set_content_map: dict[int, dict] = {}
     if assignment.assigned_set_id:
-        for si in ClapSetItem.objects.filter(
+        raw_set_items = list(ClapSetItem.objects.filter(
             set_component__set_id=assignment.assigned_set_id,
             set_component__test_type=component.test_type,
-        ).values('id', 'order_index', 'content', 'points', 'item_type'):
-            set_content_map[si['order_index']] = si
+        ).values(
+            'id', 'order_index', 'content', 'points', 'item_type', 'created_at',
+        ).order_by('order_index', 'created_at'))  # stable tiebreak: earlier created wins
+
+        _seen_oi: set = set()
+        _synthetic_base = max(
+            (si['order_index'] for si in raw_set_items), default=0
+        )
+        _synthetic_n = 0
+        for si in raw_set_items:
+            oi = si['order_index']
+            if oi not in _seen_oi:
+                set_content_map[oi] = si
+                _seen_oi.add(oi)
+            else:
+                # Duplicate: assign a synthetic index beyond max so the item
+                # is still delivered to the student without overwriting another.
+                _synthetic_n += 1
+                synthetic_oi = _synthetic_base + _synthetic_n
+                set_content_map[synthetic_oi] = {**si, 'order_index': synthetic_oi}
+                logger.error(
+                    'DUPLICATE order_index=%d in ClapSetItem: '
+                    'assignment=%s set=%s component=%s set_item=%s — '
+                    'remapped to synthetic index=%d. '
+                    'Run POST /api/admin/clap-tests/<id>/repair-set-order to '
+                    'permanently fix the underlying data.',
+                    oi, assignment_id, assignment.assigned_set_id,
+                    component_id, si['id'], synthetic_oi,
+                )
 
     # ── Fetch structural slot items for this component ─────────────────────
     #

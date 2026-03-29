@@ -17,7 +17,7 @@ from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
 from django.db import transaction
-from django.db.models import Count, Q
+from django.db.models import Count, Max, Q
 import json
 import uuid
 import logging
@@ -560,14 +560,36 @@ def set_items_handler(request, component_id):
     if item_type not in valid_item_types:
         return error_response(f'item_type must be one of {valid_item_types}', status=400)
 
-    max_index = comp.items.order_by('-order_index').values_list('order_index', flat=True).first()
-    next_index = (max_index or 0) + 1
-
     with transaction.atomic():
+        # ── Serialize concurrent item-create requests ────────────────────────
+        # select_for_update() locks the ClapSetComponent row for the duration
+        # of this transaction.  Two admins clicking "Add Item" simultaneously
+        # will queue — the second request reads the UPDATED max_index after the
+        # first has committed, and receives max+2 instead of a duplicate max+1.
+        #
+        # Without this lock:
+        #   T1: reads max_index=4 → next=5 (no INSERT yet)
+        #   T2: reads max_index=4 → next=5 (no INSERT yet)
+        #   T1 inserts order_index=5; T2 inserts order_index=5 → DUPLICATE
+        locked_comp = ClapSetComponent.objects.select_for_update().get(id=comp.id)
+
+        # ── Always compute server-side — never trust the client ──────────────
+        # The frontend used to send order_index = items.length + 1.  After any
+        # delete, items.length diverges from max(order_index): e.g. after
+        # deleting item 3 from [1,2,3,4,5] the length is 4, so the next add
+        # sends order_index=5, colliding with the existing item at index 5.
+        # Using Max() here is always safe: it reads from the DB under the lock,
+        # so it sees the latest committed state including any concurrent inserts
+        # that were serialised by the lock above.
+        max_oi = ClapSetItem.objects.filter(
+            set_component=locked_comp
+        ).aggregate(m=Max('order_index'))['m']
+        next_index = (max_oi or 0) + 1
+
         item = ClapSetItem.objects.create(
             set_component=comp,
             item_type=item_type,
-            order_index=body.get('order_index', next_index),
+            order_index=next_index,   # ALWAYS server-computed; client value ignored
             points=int(body.get('points', 0)),
             content=body.get('content', {}),
         )
@@ -612,12 +634,41 @@ def set_item_detail_handler(request, item_id):
     except json.JSONDecodeError:
         return error_response('Invalid JSON', status=400)
 
+    # ── Collision guard for order_index changes ─────────────────────────────
+    # Reject any PUT/PATCH that would assign an order_index already held by
+    # a DIFFERENT item in the same component.  Without this guard, an admin
+    # can accidentally place two items at the same index; when student_test_items
+    # builds set_content_map (dict keyed by order_index), the second item
+    # silently overwrites the first — one question disappears from every student.
+    #
+    # Use the reorder endpoint (/reorder-items) to safely rearrange positions;
+    # it assigns a clean sequential 1..N in one atomic operation.
+    if 'order_index' in body:
+        try:
+            requested_oi = int(body['order_index'])
+        except (TypeError, ValueError):
+            return error_response('order_index must be an integer', status=400)
+
+        if requested_oi != item.order_index:
+            collision = ClapSetItem.objects.filter(
+                set_component=item.set_component,
+                order_index=requested_oi,
+            ).exclude(id=item.id).exists()
+            if collision:
+                return error_response(
+                    f'order_index {requested_oi} is already occupied by another '
+                    'item in this component. '
+                    'Use POST /admin/set-components/<id>/reorder-items to '
+                    'rearrange items safely without creating duplicates.',
+                    status=409,
+                )
+
     # Track whether order_index is changing — if so, we must ensure a
     # structural ClapTestItem slot exists at the NEW position.  Without this,
     # the item at the new order_index would be silently dropped from every
     # student's test because student_test_items filters by order_index
     # membership in the structural ClapTestItem table.
-    order_index_changed = 'order_index' in body and body['order_index'] != item.order_index
+    order_index_changed = 'order_index' in body and body['order_index'] != item.order_index  # noqa: F841
 
     for field in ['order_index', 'points', 'content', 'item_type']:
         if field in body:
@@ -676,7 +727,134 @@ def set_reorder_items_handler(request, component_id):
 
 # ─────────────────────────────────────────────────────────────────────────────
 
-# 7. VALIDATE SETS  —  GET /admin/clap-tests/<id>/sets/validate
+# 7. REPAIR SET ORDER  —  POST /admin/clap-tests/<id>/repair-set-order
+# Finds and heals duplicate order_index values in every set component.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def repair_set_order(request, test_id):
+    """
+    POST /api/admin/clap-tests/<test_id>/repair-set-order
+
+    Scans every ClapSetComponent in every set for this test.
+    For each component that has duplicate order_index values:
+      1. Sorts items by (order_index ASC, created_at ASC) — stable, deterministic.
+      2. Renumbers them sequentially: 1, 2, 3 … N.
+      3. Bulk-updates only the rows that changed (no unnecessary writes).
+      4. Ensures structural ClapTestItem slots exist for all post-repair indices.
+
+    Safety properties:
+    - Idempotent: running multiple times produces the same result.
+    - Concurrent-safe: acquires select_for_update() on the parent ClapTestSet
+      row per component to serialise concurrent repair/distribute calls.
+    - Only processes components that actually have duplicates — components
+      already in a clean state are skipped with zero DB writes.
+    - Does NOT touch ClapTestItem structural slots unless items are renumbered
+      (slots remain stable anchors for StudentClapResponse FKs).
+
+    Intended for:
+    - One-time historical data repair (existing duplicates before this fix).
+    - Admin-triggered recovery via the UI if a duplicate is detected in logs.
+
+    Response: { repaired_components, total_items_renumbered, detail[] }
+    """
+    user = get_user_from_request(request)
+    if not user or user.role != 'admin':
+        return error_response('Unauthorized', status=401)
+
+    try:
+        clap_test = ClapTest.objects.get(id=test_id)
+    except ClapTest.DoesNotExist:
+        return error_response('Test not found', status=404)
+
+    repaired_components = 0
+    total_renumbered = 0
+    detail = []
+
+    # Load all set components for this test, with the FK chain needed by
+    # _ensure_structural_slots already prefetched (avoids N+1 inside the loop).
+    set_components = list(
+        ClapSetComponent.objects.filter(
+            set__clap_test=clap_test,
+        ).select_related('set__clap_test').order_by('set__label', 'test_type')
+    )
+
+    for comp in set_components:
+        # Load items ordered by (order_index, created_at) for stable tiebreak:
+        # earlier-created items keep their original position; newer duplicates
+        # are reassigned.  select_related preloads the FK chain for
+        # _ensure_structural_slots.
+        items = list(
+            ClapSetItem.objects.filter(set_component=comp).select_related(
+                'set_component__set__clap_test'
+            ).order_by('order_index', 'created_at')
+        )
+        if not items:
+            continue
+
+        # Detect duplicates in O(N) — no need to sort again, already sorted.
+        seen_indices: set = set()
+        has_duplicates = False
+        for it in items:
+            if it.order_index in seen_indices:
+                has_duplicates = True
+                break
+            seen_indices.add(it.order_index)
+
+        if not has_duplicates:
+            continue
+
+        # ── Repair this component atomically ─────────────────────────────────
+        # Lock the parent ClapTestSet row to serialise against concurrent
+        # distribute / clear operations that also touch the same FK chain.
+        with transaction.atomic():
+            ClapTestSet.objects.select_for_update().get(id=comp.set_id)
+
+            now = timezone.now()
+            to_update = []
+            for new_idx, it in enumerate(items, start=1):
+                if it.order_index != new_idx:
+                    it.order_index = new_idx
+                    it.updated_at = now
+                    to_update.append(it)
+
+            if to_update:
+                ClapSetItem.objects.bulk_update(to_update, ['order_index', 'updated_at'])
+
+                # Ensure structural ClapTestItem slots for every post-repair index.
+                # get_or_create is idempotent — for existing slots this is a
+                # single SELECT with no INSERT.
+                for it in items:
+                    _ensure_structural_slots(it)
+
+                repaired_components += 1
+                total_renumbered += len(to_update)
+
+                detail.append({
+                    'set_label':           comp.set.label,
+                    'component_type':      comp.test_type,
+                    'items_renumbered':    len(to_update),
+                })
+                logger.info(
+                    'repair_set_order: fixed set=%s component=%s test=%s '
+                    'items_renumbered=%d',
+                    comp.set_id, comp.id, test_id, len(to_update),
+                )
+
+    return JsonResponse({
+        'message': (
+            f'Repair complete: {repaired_components} component(s) fixed, '
+            f'{total_renumbered} item(s) renumbered.'
+        ),
+        'repaired_components':  repaired_components,
+        'total_items_renumbered': total_renumbered,
+        'detail':               detail,
+    })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 8. VALIDATE SETS  —  GET /admin/clap-tests/<id>/sets/validate
 # Checks all sets have the same number of items per component type.
 # ─────────────────────────────────────────────────────────────────────────────
 
