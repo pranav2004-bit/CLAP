@@ -119,10 +119,42 @@ def assignment_answers(request, test_id, assignment_id):
             set_item_map[key] = si
 
     # ── Per-component answers ─────────────────────────────────────────────────
+    #
+    # For set-based students we must only iterate structural slots whose
+    # order_index exists in the student's assigned set.  Without this guard:
+    #
+    #   1. Duplicate ClapTestComponent rows (same test_type, different DB rows)
+    #      can exist if two admin requests ran _ensure_structural_slots
+    #      concurrently before a ClapTest row-lock was in place.  Iterating ALL
+    #      components would surface items the student never saw, all showing
+    #      "not submitted" and polluting the preview.
+    #
+    #   2. A test may also have a master-editor ClapTestComponent with items the
+    #      student was never served (because they were in the set flow, not the
+    #      base flow).  Those items also appear "not submitted" erroneously.
+    #
+    # Solution: build a per-test_type set of valid order_indices from set_item_map.
+    # This mirrors student_test_items exactly — the preview only shows questions
+    # the student actually had access to.
+    #
+    # For non-set students (base flow) no filtering is applied — all structural
+    # items are shown as before.
+    valid_indices_by_type: dict[str, set] = {}
+    if assignment.assigned_set_id:
+        for (tt, oi) in set_item_map.keys():
+            valid_indices_by_type.setdefault(tt, set()).add(oi)
+
     components_data = []
     for comp in ClapTestComponent.objects.filter(clap_test_id=test_id).order_by('id'):
+        valid_oi = valid_indices_by_type.get(comp.test_type) if assignment.assigned_set_id else None
+
         items_data = []
         for item in ClapTestItem.objects.filter(component=comp).order_by('order_index'):
+            # Skip items not in the student's set (set-based flow only).
+            # valid_oi is None for non-set students → no filtering.
+            if valid_oi is not None and item.order_index not in valid_oi:
+                continue
+
             resp = response_map.get(str(item.id))
 
             # ── Content resolution: set item takes priority over base item ────

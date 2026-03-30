@@ -612,18 +612,20 @@ def submit_response(request, assignment_id):
                     except (TypeError, ValueError):
                         pass
 
-                # ── Answer-key lookup ─────────────────────────────────────────
+                # ── Answer-key + points lookup ────────────────────────────────
                 # Priority 1: ClapSetItem for the student's assigned set
-                # Priority 2: Base ClapTestItem.content
+                #   → correct_option AND points (authoritative for set-based tests)
+                # Priority 2: Base ClapTestItem.content / item.points
                 # This mirrors the exact same priority order as score_rule_based.
                 correct_option = None
+                effective_points = item.points   # default: structural slot points
 
                 if assignment.assigned_set_id:
                     set_item = ClapSetItem.objects.filter(
                         set_component__set_id=assignment.assigned_set_id,
                         set_component__test_type=item.component.test_type,
                         order_index=item.order_index,
-                    ).values('content').first()
+                    ).values('content', 'points').first()
                     if set_item:
                         co = (set_item['content'] or {}).get('correct_option')
                         if co is not None:
@@ -631,6 +633,12 @@ def submit_response(request, assignment_id):
                                 correct_option = int(co)
                             except (TypeError, ValueError):
                                 pass
+                        # Use set item's points if explicitly configured.
+                        # The structural slot's points can be stale when the admin
+                        # edits a question's point value after initial creation
+                        # (get_or_create does not update existing rows).
+                        if set_item['points'] is not None:
+                            effective_points = set_item['points']
 
                 # Fall back to base item answer key
                 if correct_option is None:
@@ -649,13 +657,13 @@ def submit_response(request, assignment_id):
                     )
                 elif selected_option is not None and selected_option == correct_option:
                     response.is_correct = True
-                    response.marks_awarded = item.points
+                    response.marks_awarded = effective_points
                     logger.debug(
                         'MCQ CORRECT: assignment=%s set=%s component=%s order=%s '
                         'selected=%s correct=%s points=%s',
                         assignment.id, assignment.assigned_set_id,
                         item.component.test_type, item.order_index,
-                        selected_option, correct_option, item.points,
+                        selected_option, correct_option, effective_points,
                     )
                 else:
                     response.is_correct = False

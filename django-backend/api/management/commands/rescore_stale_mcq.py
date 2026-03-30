@@ -40,7 +40,7 @@ from api.models import (
     StudentClapAssignment,
 )
 from api.tasks import (
-    _build_set_answer_key,
+    _build_set_scoring_keys,
     _reevaluate_mcq_responses,
     _upsert_rule_score,
 )
@@ -202,8 +202,10 @@ class Command(BaseCommand):
 
         domain_component_ids = component_cache[assessment_id]
 
-        # Build the answer key once per assignment (O(set_items) query)
-        set_answer_key = _build_set_answer_key(assignment)
+        # Build the answer + points keys once per assignment (O(set_items) query).
+        # set_points_key carries ClapSetItem.points — the authoritative source for
+        # per-question marks, overriding the potentially stale structural slot value.
+        set_answer_key, set_points_key = _build_set_scoring_keys(assignment)
 
         # Find the latest AssessmentSubmission for SubmissionScore update (optional)
         submission = (
@@ -220,7 +222,9 @@ class Command(BaseCommand):
         if dry_run:
             for domain, component_ids in domain_component_ids.items():
                 marks = (
-                    _reevaluate_mcq_responses(assignment, component_ids, set_answer_key)
+                    _reevaluate_mcq_responses(
+                        assignment, component_ids, set_answer_key, set_points_key
+                    )
                     if component_ids else Decimal('0.00')
                 )
                 self.stdout.write(
@@ -237,7 +241,9 @@ class Command(BaseCommand):
                 # is_correct + marks_awarded to StudentClapResponse rows.
                 # The results table and answers preview read these values directly.
                 marks = (
-                    _reevaluate_mcq_responses(assignment, component_ids, set_answer_key)
+                    _reevaluate_mcq_responses(
+                        assignment, component_ids, set_answer_key, set_points_key
+                    )
                     if component_ids else Decimal('0.00')
                 )
 

@@ -611,31 +611,56 @@ def _persist_llm_score(submission: AssessmentSubmission, domain: str, payload: d
     )
 
 
-def _build_set_answer_key(assignment: StudentClapAssignment) -> dict:
+def _build_set_scoring_keys(assignment: StudentClapAssignment) -> tuple:
     """
-    Build a lookup map: (test_type, order_index) → correct_option_int
-    from ClapSetItem rows for the student's assigned set.
+    Build two lookup maps from ClapSetItem rows for the student's assigned set,
+    returned as a (answer_key, points_key) tuple.
 
-    Returns an empty dict when the student has no assigned set.
-    This map is built ONCE per task execution and passed into
+      answer_key : (test_type, order_index) → correct_option_int
+      points_key : (test_type, order_index) → points_int
+
+    Both maps are built in ONE bulk query and passed into
     _reevaluate_mcq_responses, eliminating per-response DB queries.
+
+    Why points_key is needed
+    ────────────────────────
+    The structural ClapTestItem slot is a positional placeholder; its `points`
+    field is set only at slot CREATION time via get_or_create(defaults=…).
+    When an admin later edits a ClapSetItem's points (PUT/PATCH), the structural
+    slot is returned unchanged by get_or_create and its `points` value goes stale.
+    The authoritative source of per-question marks is always ClapSetItem.points.
+
+    Returns ({}, {}) when the student has no assigned set.
     """
     if not assignment.assigned_set_id:
-        return {}
+        return {}, {}
 
     answer_key: dict = {}
+    points_key: dict = {}
     for si in ClapSetItem.objects.filter(
         set_component__set_id=assignment.assigned_set_id,
         item_type='mcq',
     ).select_related('set_component').values(
-        'set_component__test_type', 'order_index', 'content',
+        'set_component__test_type', 'order_index', 'content', 'points',
     ):
+        key = (si['set_component__test_type'], si['order_index'])
         co = (si['content'] or {}).get('correct_option')
         if co is not None:
             try:
-                answer_key[(si['set_component__test_type'], si['order_index'])] = int(co)
+                answer_key[key] = int(co)
             except (TypeError, ValueError):
                 pass
+        if si['points'] is not None:
+            points_key[key] = si['points']
+    return answer_key, points_key
+
+
+# Backward-compatible alias so external callers (rescore_stale_mcq management
+# command) continue to work without modification.  New code should call
+# _build_set_scoring_keys directly.
+def _build_set_answer_key(assignment: StudentClapAssignment) -> dict:
+    """Deprecated alias — use _build_set_scoring_keys instead."""
+    answer_key, _ = _build_set_scoring_keys(assignment)
     return answer_key
 
 
@@ -643,6 +668,7 @@ def _reevaluate_mcq_responses(
     assignment: StudentClapAssignment,
     component_ids,
     set_answer_key: dict,
+    set_points_key: dict = None,
 ) -> Decimal:
     """
     Re-evaluate every MCQ StudentClapResponse for the given component_ids
@@ -655,7 +681,16 @@ def _reevaluate_mcq_responses(
     This is the ONLY authoritative MCQ scoring path — it replaces the old
     approach of trusting marks_awarded set at submission time, which could
     be stale, incorrect, or missing (e.g. if the real-time lookup failed).
+
+    set_points_key : (test_type, order_index) → points_int  (from ClapSetItem).
+        When provided, set item points take priority over structural slot points
+        (ClapTestItem.points).  This ensures that post-creation point edits made
+        by the admin in the set editor are always reflected in the authoritative
+        score, even when the structural slot's points field is stale.
+        Pass None (or omit) for non-set assignments — falls back to item.points.
     """
+    _points_key = set_points_key or {}
+
     responses = (
         StudentClapResponse.objects
         .filter(assignment=assignment, item__component_id__in=component_ids, item__item_type='mcq')
@@ -709,7 +744,13 @@ def _reevaluate_mcq_responses(
 
         if selected_option is not None and selected_option == correct_option:
             is_correct = True
-            awarded = Decimal(str(item.points))
+            # ── Points resolution: set item points take priority ──────────────
+            # ClapSetItem.points is the authoritative source for per-question marks.
+            # The structural ClapTestItem.points can be stale when the admin edits
+            # a set item's points after the slot was first created (get_or_create
+            # does not update existing rows on subsequent calls).
+            effective_points = _points_key.get((test_type, item.order_index), item.points)
+            awarded = Decimal(str(effective_points))
         else:
             is_correct = False
             awarded = Decimal('0.00')
@@ -757,9 +798,11 @@ def score_rule_based(self, submission_id):
         if not assignment:
             raise ValueError(f'No assignment found for submission {submission_id}')
 
-        # Build the set-specific answer key ONCE — O(set_items) DB query,
-        # avoids N per-response queries inside _reevaluate_mcq_responses.
-        set_answer_key = _build_set_answer_key(assignment)
+        # Build the set-specific answer key + points key ONCE — O(set_items) DB
+        # query, avoids N per-response queries inside _reevaluate_mcq_responses.
+        # set_points_key carries ClapSetItem.points (authoritative per-question
+        # marks that override the potentially stale structural slot points).
+        set_answer_key, set_points_key = _build_set_scoring_keys(assignment)
 
         component_map = {'listening': 'listening', 'reading': 'reading', 'vocab': 'vocabulary'}
 
@@ -780,7 +823,9 @@ def score_rule_based(self, submission_id):
                     continue
 
                 # Re-evaluate every MCQ response and get authoritative total
-                marks = _reevaluate_mcq_responses(assignment, component_ids, set_answer_key)
+                marks = _reevaluate_mcq_responses(
+                    assignment, component_ids, set_answer_key, set_points_key
+                )
                 _upsert_rule_score(submission, domain, marks)
 
                 log_event(

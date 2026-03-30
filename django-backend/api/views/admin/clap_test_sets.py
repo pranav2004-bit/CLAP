@@ -122,29 +122,54 @@ def _item_to_dict(i: ClapSetItem) -> dict:
 def _ensure_structural_slots(set_item: ClapSetItem) -> None:
     """
     Guarantee a ClapTestComponent + ClapTestItem structural slot exists for
-    the given ClapSetItem.
+    the given ClapSetItem, and keep the slot's metadata in sync with the
+    set item's current state.
 
     Why structural slots exist
     ──────────────────────────
     StudentClapResponse.item is a non-null FK to ClapTestItem.  In the pure-set
     workflow (admin builds questions only via ClapSetItem editors) there are no
-    master ClapTestItems.  Rather than performing a schema migration we
-    auto-create lightweight "slot" records that carry the position metadata
-    (test_type, order_index, item_type, points) but hold no question content
-    (content = {}).  The real question content is always served from ClapSetItem.
+    master ClapTestItems.  We auto-create lightweight "slot" records that carry
+    position metadata (test_type, order_index, item_type, points) but hold no
+    question content (content = {}).  Real question content is always served
+    from ClapSetItem.
 
-    Concurrency safety
-    ──────────────────
-    get_or_create is safe under concurrent writes because both ClapTestComponent
-    and ClapTestItem have unique_together constraints that produce an IntegrityError
-    on collision; Django's get_or_create catches and retries internally.
+    Why update_or_create instead of get_or_create (for ClapTestItem)
+    ─────────────────────────────────────────────────────────────────
+    get_or_create only sets `defaults` on the initial INSERT.  If the admin
+    later edits a set item's points or item_type (PUT/PATCH), the structural
+    slot returned by get_or_create is unchanged — its `points` field becomes
+    stale.  The authoritative scoring pipeline (_reevaluate_mcq_responses) reads
+    ClapSetItem.points via set_points_key, but keeping the structural slot in
+    sync avoids confusion in any code path that falls back to item.points.
+
+    Why select_for_update on ClapTest (for ClapTestComponent)
+    ──────────────────────────────────────────────────────────
+    ClapTestComponent does not have a DB-level unique constraint on
+    (clap_test, test_type) because managed=False means Django never ran a
+    migration to add one.  Without serialisation, two concurrent admin requests
+    creating items of the same test_type could both find no existing component
+    and both INSERT one — creating duplicate rows.  Locking the parent ClapTest
+    row serialises all concurrent calls for the same test; only the first
+    proceeds to check-and-create, the rest read the already-committed row.
+
     This function must be called inside the same atomic() block as the
-    ClapSetItem INSERT so partial states cannot persist.
+    ClapSetItem INSERT/UPDATE so partial states cannot persist.
     """
     set_comp = set_item.set_component
     clap_test = set_comp.set.clap_test
 
+    # Lock the parent ClapTest row to serialise concurrent structural slot
+    # creation for the same test.  Without this lock, two admin requests
+    # adding items to different sets of the same test simultaneously can both
+    # observe "no reading component yet" and both insert one — producing
+    # duplicate ClapTestComponent rows (which later causes some student
+    # responses to appear "not submitted" in the answers preview).
+    ClapTest.objects.select_for_update().get(id=clap_test.id)
+
     # 1. Ensure a structural ClapTestComponent exists for this test_type.
+    #    get_or_create is safe here because the parent row lock above means
+    #    only one transaction reaches this point at a time for the same test.
     structural_comp, _ = ClapTestComponent.objects.get_or_create(
         clap_test=clap_test,
         test_type=set_comp.test_type,
@@ -156,9 +181,14 @@ def _ensure_structural_slots(set_item: ClapSetItem) -> None:
         },
     )
 
-    # 2. Ensure a structural ClapTestItem slot exists at this order_index.
-    #    Content is intentionally empty — the real content is in ClapSetItem.
-    ClapTestItem.objects.get_or_create(
+    # 2. Ensure a structural ClapTestItem slot exists at this order_index and
+    #    keep its metadata (item_type, points) in sync with the set item.
+    #
+    #    update_or_create is used instead of get_or_create so that when the
+    #    admin edits a set item's points or type after initial creation, the
+    #    structural slot is updated accordingly.  Content is always {} —
+    #    structural slots are positional anchors only, never question containers.
+    ClapTestItem.objects.update_or_create(
         component=structural_comp,
         order_index=set_item.order_index,
         defaults={

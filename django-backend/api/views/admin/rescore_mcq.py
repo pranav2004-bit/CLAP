@@ -50,28 +50,44 @@ _RULE_BASED_DOMAINS = {
 }
 
 
-def _build_set_answer_key(assigned_set_id) -> dict:
+def _build_set_scoring_keys(assigned_set_id) -> tuple:
     """
-    Build lookup: (test_type, order_index) → correct_option_int
-    for a given set.  Returns {} when set_id is None.
+    Build two lookup maps for a given set, returned as (answer_key, points_key).
+
+      answer_key : (test_type, order_index) → correct_option_int
+      points_key : (test_type, order_index) → points_int  (from ClapSetItem.points)
+
+    Both maps are built in ONE bulk query.  Returns ({}, {}) when set_id is None.
+
+    Why points_key is needed
+    ────────────────────────
+    The structural ClapTestItem.points is set only at slot creation time.  When
+    an admin edits a set item's points via PUT/PATCH, the structural slot is NOT
+    updated (get_or_create returns the existing row unchanged).  Using item.points
+    from the structural slot therefore returns the original — potentially wrong —
+    value.  ClapSetItem.points is always authoritative.
     """
     if not assigned_set_id:
-        return {}
+        return {}, {}
 
-    key: dict = {}
+    answer_key: dict = {}
+    points_key: dict = {}
     for row in ClapSetItem.objects.filter(
         set_component__set_id=assigned_set_id,
         item_type='mcq',
     ).select_related('set_component').values(
-        'set_component__test_type', 'order_index', 'content',
+        'set_component__test_type', 'order_index', 'content', 'points',
     ):
+        k = (row['set_component__test_type'], row['order_index'])
         co = (row['content'] or {}).get('correct_option')
         if co is not None:
             try:
-                key[(row['set_component__test_type'], row['order_index'])] = int(co)
+                answer_key[k] = int(co)
             except (TypeError, ValueError):
                 pass
-    return key
+        if row['points'] is not None:
+            points_key[k] = row['points']
+    return answer_key, points_key
 
 
 def _rescore_assignment(assignment: StudentClapAssignment, component_ids_map: dict) -> dict:
@@ -85,7 +101,7 @@ def _rescore_assignment(assignment: StudentClapAssignment, component_ids_map: di
         { domain: [component_id, ...] }  — built ONCE per rescore request,
         not once per assignment. Eliminates 3×N DB queries for N assignments.
     """
-    set_answer_key = _build_set_answer_key(assignment.assigned_set_id)
+    set_answer_key, set_points_key = _build_set_scoring_keys(assignment.assigned_set_id)
     domain_totals: dict[str, Decimal] = {}
 
     for domain, component_ids in component_ids_map.items():
@@ -142,7 +158,12 @@ def _rescore_assignment(assignment: StudentClapAssignment, component_ids_map: di
 
             if selected_option is not None and selected_option == correct_option:
                 is_correct = True
-                awarded = Decimal(str(item.points))
+                # ── Points resolution: set item points take priority ──────────
+                # ClapSetItem.points is always authoritative; structural slot
+                # points can be stale if the admin edited the question after
+                # the slot was first created.
+                effective_points = set_points_key.get((test_type, item.order_index), item.points)
+                awarded = Decimal(str(effective_points))
             else:
                 is_correct = False
                 awarded = Decimal('0.00')
