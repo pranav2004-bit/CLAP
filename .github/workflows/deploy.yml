@@ -34,7 +34,7 @@ jobs:
             docker-compose up -d django celery-llm celery-reports celery-scoring celery-beat
 
             echo "==> Waiting for Django to become healthy..."
-            timeout 60 bash -c 'until [ "$(docker inspect --format={{.State.Health.Status}} clap-django-1 2>/dev/null)" = "healthy" ]; do sleep 3; done'
+            timeout 60 bash -c 'until [ "$(docker inspect --format={{.State.Health.Status}} clap_django_1 2>/dev/null)" = "healthy" ]; do sleep 3; done'
 
             echo "==> Running migrations..."
             docker-compose exec -T django python manage.py migrate --no-input
