@@ -26,21 +26,23 @@ jobs:
             git pull origin main
 
             echo "==> Rebuilding Django image..."
-            docker compose build django
+            docker-compose build django
 
             echo "==> Restarting services..."
-            docker compose up -d --force-recreate django celery-llm celery-reports celery-scoring celery-beat
+            docker-compose stop django celery-llm celery-reports celery-scoring celery-beat
+            docker-compose rm -f django celery-llm celery-reports celery-scoring celery-beat
+            docker-compose up -d django celery-llm celery-reports celery-scoring celery-beat
 
             echo "==> Waiting for Django to become healthy..."
-            timeout 60 bash -c 'until [ "$(docker inspect --format="{{.State.Health.Status}}" clap-django-1 2>/dev/null)" = "healthy" ]; do sleep 3; done'
+            timeout 60 bash -c 'until [ "$(docker inspect --format={{.State.Health.Status}} clap-django-1 2>/dev/null)" = "healthy" ]; do sleep 3; done'
 
             echo "==> Running migrations..."
-            docker compose exec -T django python manage.py migrate --no-input
+            docker-compose exec -T django python manage.py migrate --no-input
 
             echo "==> Reloading nginx to pick up new Django container..."
-            docker compose restart nginx
+            docker-compose restart nginx
 
             echo "==> Pruning old images..."
             docker image prune -f
 
-            echo "==> Deploy complete."
+            echo "==> Deploy complete. Server IP: $(hostname -I | awk '{print $1}')"
