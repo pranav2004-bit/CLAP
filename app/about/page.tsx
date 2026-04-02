@@ -97,7 +97,7 @@ const row3: ProfileMember[] = [
     name:        'Mr. Yogesh Bavana',
     initials:    'YB',
     photo:       '/images/profile_r3_1.jpg',
-    role:        'Chief Coordinator - CLAP',
+    role:        'Coordinator - CLAP',
     title:       'Asst. Professor',
     department:  'Department of Training',
   },
