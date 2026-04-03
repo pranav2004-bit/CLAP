@@ -117,6 +117,13 @@ services:
     # Bitnami deprecated their Docker Hub images in 2024 — use this instead.
     image: edoburu/pgbouncer:latest
     restart: unless-stopped
+    # Custom entrypoint: generates pgbouncer.ini normally but writes userlist.txt
+    # with PLAINTEXT password instead of the md5 hash the image produces by default.
+    # Plaintext is required for SCRAM-SHA-256 auth to RDS PostgreSQL 15.
+    # See scripts/pgbouncer-entrypoint.sh for full explanation.
+    entrypoint: ["/bin/sh", "/pgbouncer-entrypoint.sh"]
+    volumes:
+      - ./scripts/pgbouncer-entrypoint.sh:/pgbouncer-entrypoint.sh:ro
     # env_file provides DB_NAME, DB_USER, DB_PASSWORD from the SAME source as
     # Django — guarantees PgBouncer uses the identical credentials to connect
     # to the backend DB. Without this, docker-compose substitution falls back
