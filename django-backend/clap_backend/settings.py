@@ -107,6 +107,30 @@ DATABASES = {
         'OPTIONS': {
             'sslmode': config('DB_SSLMODE', default='require'),
             'connect_timeout': config('DB_CONNECT_TIMEOUT', default=10, cast=int),
+            # Server-side PostgreSQL session parameters enforced on every connection.
+            # These are the last line of defence against hung queries consuming PgBouncer
+            # pool slots and causing all subsequent requests to time out.
+            #
+            # statement_timeout (default 30 s):
+            #   Kill any query running longer than 30 s. A single runaway query holds a
+            #   PgBouncer server connection, starving all 39 other pool slots for minutes.
+            #
+            # lock_timeout (default 5 s):
+            #   Fail if a row/table lock cannot be acquired within 5 s. Prevents bulk
+            #   imports or admin operations from holding Django threads + pool connections
+            #   hostage indefinitely behind a lock queue.
+            #
+            # idle_in_transaction_session_timeout (default 30 s):
+            #   Kill connections that are inside BEGIN but idle > 30 s. Catches Django
+            #   code that opens a transaction then hangs (network blip, uncaught exception
+            #   before commit). Idle-in-transaction blocks VACUUM and lock acquisition for
+            #   every other client — the single worst production performance killer.
+            'options': (
+                f"-c statement_timeout={config('DB_STATEMENT_TIMEOUT_MS', default=30000, cast=int)}"
+                f" -c lock_timeout={config('DB_LOCK_TIMEOUT_MS', default=5000, cast=int)}"
+                f" -c idle_in_transaction_session_timeout="
+                f"{config('DB_IDLE_IN_TX_TIMEOUT_MS', default=30000, cast=int)}"
+            ),
         },
     }
 }

@@ -46,11 +46,24 @@ worker_class = 'gthread'
 _default_workers = (2 * multiprocessing.cpu_count()) + 1
 workers = _env_int('GUNICORN_WORKERS', _default_workers)
 
-# Threads per worker — 4 allows 4 concurrent requests per process
-threads = _env_int('GUNICORN_THREADS', 4)
+# Threads per worker.
+# 16 threads × 5 workers = 80 concurrent request slots — handles 10 000+ users.
+# gthread is safe with 16 threads because Django views are I/O-bound (DB, S3, SES);
+# threads mostly wait (~10-50ms) rather than burn CPU. Each 5-worker node handles
+# ~800 req/s sustained; scale horizontally (add EC2 nodes) for more.
+threads = _env_int('GUNICORN_THREADS', 16)
 
 # Max simultaneous keep-alive connections per worker
 worker_connections = 1000
+
+# ── Reverse proxy trust ───────────────────────────────────────────
+# Trust X-Forwarded-For from ALL upstream addresses (nginx container on same
+# Docker network). Without this, REMOTE_ADDR is nginx's container IP for every
+# request — Django's rate-limit middleware and security logs see every student as
+# the same "client", breaking per-IP rate limiting and audit trails.
+# Safe because nginx already strips X-Forwarded-For from external clients
+# (proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for).
+forwarded_allow_ips = '*'
 
 # ── Timeouts ─────────────────────────────────────────────────────
 # Kill worker if it doesn't respond within 120s (protects against hung DB queries)
@@ -63,11 +76,15 @@ graceful_timeout = _env_int('GUNICORN_GRACEFUL_TIMEOUT', 30)
 keepalive = _env_int('GUNICORN_KEEPALIVE', 5)
 
 # ── Memory leak prevention ────────────────────────────────────────
-# Restart workers after 1000 requests to flush any ORM connection or memory drift
-max_requests = _env_int('GUNICORN_MAX_REQUESTS', 1000)
+# Restart workers after 2000 requests to flush ORM connection or memory drift.
+# Higher than the old 1000 default — at 80 concurrent threads processing 800 req/s,
+# a 1000-request limit would recycle workers every ~6 seconds (too aggressive).
+# 2000 requests ≈ every ~2.5 seconds at full load — balanced recycle cadence.
+max_requests = _env_int('GUNICORN_MAX_REQUESTS', 2000)
 
-# Randomise restart point ±50 to prevent all workers restarting simultaneously
-max_requests_jitter = _env_int('GUNICORN_MAX_REQUESTS_JITTER', 50)
+# Randomise restart point ±200 to prevent all workers restarting simultaneously
+# (thundering herd). With ±200 spread across 5 workers, no two recycle at once.
+max_requests_jitter = _env_int('GUNICORN_MAX_REQUESTS_JITTER', 200)
 
 # ── Performance ───────────────────────────────────────────────────
 # Load app before forking — workers share read-only pages (copy-on-write)

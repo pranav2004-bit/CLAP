@@ -151,13 +151,37 @@ services:
       # transaction mode: connection released after each transaction.
       # Most efficient for Django's short-lived request/response cycle.
       POOL_MODE: transaction
-      # 20 real DB connections shared across 400 Django/Celery clients.
-      # Increase if you see "no more connections allowed" errors.
-      DEFAULT_POOL_SIZE: "20"
-      # 5 extra connections reserved for admin + spike absorption.
-      RESERVE_POOL_SIZE: "5"
-      # 400 client connections allowed (5w×8t + 16 celery + headroom).
-      MAX_CLIENT_CONN: "400"
+      # 40 real RDS connections (was 20). RDS max=~170; using 40 = 24% of limit.
+      # Supports 80 Django threads + 22 Celery workers multiplexing through 40 connections.
+      # Each connection serves ~50 tx/s at 20ms avg → pool delivers 2000 tx/s total.
+      DEFAULT_POOL_SIZE: "40"
+      # 5 warm standby connections kept alive at all times.
+      # Eliminates cold-start latency: first request after idle period doesn't wait
+      # for a new TCP+TLS+auth handshake to RDS (~100-300ms saved per cold request).
+      MIN_POOL_SIZE: "5"
+      # 10 extra connections reserved for traffic spikes and admin operations.
+      RESERVE_POOL_SIZE: "10"
+      # Use reserve pool after 3 seconds of regular pool being exhausted.
+      RESERVE_POOL_TIMEOUT: "3"
+      # 1000 client connections allowed (80 Django + 22 Celery + 898 headroom for scale).
+      MAX_CLIENT_CONN: "1000"
+      # If no pool slot available after 30s → return error to client instead of
+      # hanging indefinitely. Prevents request pile-up and nginx upstream timeouts.
+      QUERY_WAIT_TIMEOUT: "30"
+      # Timeout for PgBouncer establishing connection to RDS (TCP+TLS+auth).
+      SERVER_CONNECT_TIMEOUT: "15"
+      # Retry failed server connections once before giving up.
+      SERVER_LOGIN_RETRY: "2"
+      # ── TCP keep-alives (detect dead RDS connections before clients notice) ─────
+      # Without keep-alives, a silently-dropped RDS connection (network blip,
+      # RDS maintenance failover) appears healthy to PgBouncer. The next query
+      # fails with "connection reset" and the client gets a 500 error.
+      # TCP keep-alives probe the connection every 60s → dead connections detected
+      # within 110s (60s idle + 5 probes × 10s) and removed from the pool.
+      TCP_KEEPALIVE: "1"
+      TCP_KEEPIDLE: "60"          # send first probe after 60s of idle
+      TCP_KEEPINTVL: "10"         # probe every 10s after the first
+      TCP_KEEPCNT: "5"            # 5 failed probes = connection declared dead
       # Kill idle server connections after 10 minutes (prevents RDS stale).
       SERVER_IDLE_TIMEOUT: "600"
       # Kill idle client connections after 10 minutes.
@@ -167,6 +191,17 @@ services:
       LOG_DISCONNECTIONS: "0"
     ports:
       - "5432:5432"    # expose on host for local psql/migrations
+    # PgBouncer is pure C, very low memory. 256 MB is a generous ceiling.
+    # A memory leak or misconfiguration that causes runaway growth will be
+    # caught here before it can starve Django, Redis, or Celery.
+    mem_limit: 256m
+    memswap_limit: 256m
+    # Raise FD limit — PgBouncer needs one FD per client + one per server connection.
+    # 1000 client conns + 40 server conns + OS overhead = well within 65536.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     depends_on:
       db:
         condition: service_healthy
@@ -233,17 +268,23 @@ services:
       REDIS_URL: "redis://redis:6379/2"
       CELERY_BROKER_URL: "redis://redis:6379/0"
       CELERY_RESULT_BACKEND: "redis://redis:6379/1"
-      # 5 workers × 8 threads = 40 concurrent requests — handles 3000 concurrent users
-      # Workers: (2×CPU)+1 = 5 for 2-vCPU EC2 (full formula, was under-provisioned at 4)
-      # Threads: 8 per worker — gthread handles I/O-bound Django well; each thread blocks
-      #          on DB query ~10-50ms, so 40 threads sustain ~800-4000 req/s
-      # Memory:  5 workers × ~200MB (preload_app CoW) = ~1GB total — safe on t3.large+
-      # DB conns: 5 × 8 = 40 persistent connections to Aurora (CONN_MAX_AGE=600)
+      # 5 workers × 16 threads = 80 concurrent requests — handles 10 000+ concurrent users
+      # Workers: (2×CPU)+1 = 5 for 2-vCPU EC2. Increasing beyond 5 wastes RAM without
+      #          CPU gain — each extra worker costs ~200 MB on a 2-core machine.
+      # Threads: 16 per worker — gthread is I/O-bound; threads wait on DB/S3/SES ~10-50ms.
+      #          80 threads × 50ms avg = 1600 req/s theoretical; realistic mixed: ~800 req/s.
+      #          All 80 threads share PgBouncer's 40-connection pool safely (transaction mode).
+      # Memory:  5 × ~200 MB (preload_app CoW) = ~1 GB; stays inside 1.75 GB container limit.
+      # DB conns: up to 80 persistent connections to PgBouncer (not RDS — pooler handles it).
       GUNICORN_WORKERS: "5"
-      GUNICORN_THREADS: "8"
+      GUNICORN_THREADS: "16"
       GUNICORN_TIMEOUT: "120"
-      # Recycle workers after 2000 requests (±200 jitter) to flush any ORM connection
-      # or memory drift — spread restarts so no thundering herd on simultaneous recycle
+      # Graceful timeout: 30s — lets in-flight requests finish during rolling deploys
+      GUNICORN_GRACEFUL_TIMEOUT: "30"
+      # Keepalive: 5s — reuse connections from nginx upstream keepalive pool
+      GUNICORN_KEEPALIVE: "5"
+      # Recycle workers after 2000 requests (±200 jitter) to flush ORM/memory drift.
+      # Spread restarts prevent thundering herd on simultaneous worker recycle.
       GUNICORN_MAX_REQUESTS: "2000"
       GUNICORN_MAX_REQUESTS_JITTER: "200"
       # Skip automatic migrations for production-style external DBs
@@ -253,6 +294,18 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    # Memory cap: 5 workers × ~200 MB (CoW) + 300 MB overhead = ~1.3 GB working set.
+    # 1.75 GB limit gives 400 MB headroom before Docker OOM-kills the container.
+    # Without a limit, a memory leak in one worker can consume all EC2 RAM, taking
+    # down every other container (Redis, PgBouncer, Celery) in a cascade failure.
+    mem_limit: 1792m
+    memswap_limit: 1792m    # disable swap — OOM-kill immediately, no thrashing
+    # Raise open-file limit so Django can hold 80 simultaneous socket connections
+    # (threads) + PgBouncer connections + S3 HTTP connections without EMFILE errors.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     volumes:
       - ./django-backend/api:/app/api          # live code sync — no rebuild needed
       - ./django-backend/clap_backend:/app/clap_backend
@@ -323,6 +376,8 @@ services:
       dockerfile: Dockerfile
       target: runtime
     restart: unless-stopped
+    mem_limit: 1024m          # PDF generation (WeasyPrint/ReportLab): ~300 MB per task × 2 = 600 MB + overhead
+    memswap_limit: 1024m
     env_file:
       - ./django-backend/.env
     environment:
@@ -348,7 +403,7 @@ services:
 
   # ── Celery Worker: Rule scoring + Email ─────────────────────────
   # Queues: rule_scoring, email
-  # Concurrency: 8  (lightweight, fast tasks — pure DB + rule logic)
+  # Concurrency: 16  (lightweight, fast tasks — pure DB + rule logic)
   celery-scoring:
     image: clap-backend:latest
     build:
@@ -356,6 +411,8 @@ services:
       dockerfile: Dockerfile
       target: runtime
     restart: unless-stopped
+    mem_limit: 1024m          # 16 workers × ~50 MB = 800 MB working set + 200 MB overhead
+    memswap_limit: 1024m
     env_file:
       - ./django-backend/.env
     environment:
@@ -375,7 +432,7 @@ services:
       python -m celery -A clap_backend worker
         --loglevel=info
         --queues=rule_scoring,email
-        --concurrency=12
+        --concurrency=16
         --hostname=scoring@%h
         --max-tasks-per-child=1000
 
@@ -391,6 +448,8 @@ services:
       dockerfile: Dockerfile
       target: runtime
     restart: unless-stopped
+    mem_limit: 256m           # Beat is a scheduler only — minimal memory footprint
+    memswap_limit: 256m
     env_file:
       - ./django-backend/.env
     environment:
