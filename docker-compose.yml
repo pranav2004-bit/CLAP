@@ -118,12 +118,24 @@ services:
     image: edoburu/pgbouncer:latest
     restart: unless-stopped
     environment:
-      # ── Target database (real Postgres / Aurora) ──────────────────
+      # ── Target database (real Postgres / RDS) ─────────────────────
+      # In production: set PGBOUNCER_DB_HOST=<rds-endpoint> in .env
+      # In local dev:  defaults to the local `db` postgres container
       DB_HOST: ${PGBOUNCER_DB_HOST:-db}
       DB_PORT: ${PGBOUNCER_DB_PORT:-5432}
       DB_NAME: ${DB_NAME:-postgres}
       DB_USER: ${DB_USER:-postgres}
-      DB_PASSWORD: ${POSTGRES_PASSWORD:-SANJIVO_CLAP}
+      # Use DB_PASSWORD (matches Django's .env key) with local-dev fallback
+      DB_PASSWORD: ${DB_PASSWORD:-SANJIVO_CLAP}
+      # ── Auth: trust all clients (they are internal Docker services) ──
+      # Django/Celery containers are on the same Docker network — no need
+      # for PgBouncer to verify the client password. PgBouncer still
+      # authenticates to the real Postgres/RDS with DB_USER + DB_PASSWORD.
+      AUTH_TYPE: trust
+      # ── TLS: require SSL on the PgBouncer → RDS backend connection ──
+      # RDS enforces SSL; this must match. Client (Django→PgBouncer)
+      # does NOT need SSL since traffic stays inside Docker's bridge network.
+      SERVER_TLS_SSLMODE: require
       # ── Pool configuration ────────────────────────────────────────
       # transaction mode: connection released after each transaction.
       # Most efficient for Django's short-lived request/response cycle.
@@ -135,7 +147,7 @@ services:
       RESERVE_POOL_SIZE: "5"
       # 400 client connections allowed (5w×8t + 16 celery + headroom).
       MAX_CLIENT_CONN: "400"
-      # Kill idle server connections after 10 minutes (prevents Aurora stale).
+      # Kill idle server connections after 10 minutes (prevents RDS stale).
       SERVER_IDLE_TIMEOUT: "600"
       # Kill idle client connections after 10 minutes.
       CLIENT_IDLE_TIMEOUT: "600"
