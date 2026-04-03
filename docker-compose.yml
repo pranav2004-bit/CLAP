@@ -117,25 +117,31 @@ services:
     # Bitnami deprecated their Docker Hub images in 2024 — use this instead.
     image: edoburu/pgbouncer:latest
     restart: unless-stopped
+    # env_file provides DB_NAME, DB_USER, DB_PASSWORD from the SAME source as
+    # Django — guarantees PgBouncer uses the identical credentials to connect
+    # to the backend DB. Without this, docker-compose substitution falls back
+    # to defaults and PgBouncer connects with the wrong password.
+    env_file:
+      - ./django-backend/.env
     environment:
       # ── Target database (real Postgres / RDS) ─────────────────────
-      # In production: set PGBOUNCER_DB_HOST=<rds-endpoint> in .env
-      # In local dev:  defaults to the local `db` postgres container
+      # DB_HOST here OVERRIDES the DB_HOST=pgbouncer set in env_file
+      # (which is Django's value — pgbouncer must NOT connect to itself).
+      # Production: set PGBOUNCER_DB_HOST=<rds-endpoint> in ~/CLAP/.env
+      #             (root .env — used by docker-compose for substitution)
+      # Local dev:  defaults to the local `db` postgres container.
       DB_HOST: ${PGBOUNCER_DB_HOST:-db}
       DB_PORT: ${PGBOUNCER_DB_PORT:-5432}
-      DB_NAME: ${DB_NAME:-postgres}
-      DB_USER: ${DB_USER:-postgres}
-      # Use DB_PASSWORD (matches Django's .env key) with local-dev fallback
-      DB_PASSWORD: ${DB_PASSWORD:-SANJIVO_CLAP}
       # ── Auth: trust all clients (they are internal Docker services) ──
       # Django/Celery containers are on the same Docker network — no need
       # for PgBouncer to verify the client password. PgBouncer still
-      # authenticates to the real Postgres/RDS with DB_USER + DB_PASSWORD.
+      # authenticates to the real Postgres/RDS with DB_USER + DB_PASSWORD
+      # (from env_file above).
       AUTH_TYPE: trust
       # ── TLS: SSL mode for PgBouncer → backend DB connection ─────────
-      # Production (RDS): set PGBOUNCER_SERVER_TLS_SSLMODE=require in .env
+      # Production (RDS): set PGBOUNCER_SERVER_TLS_SSLMODE=require in ~/CLAP/.env
       # Local dev (plain postgres container): defaults to "prefer"
-      #   prefer = tries SSL first, falls back to plain if unsupported — safe for both.
+      #   prefer = tries SSL first, falls back to plain — safe for both.
       # Client (Django→PgBouncer) does NOT need SSL — internal Docker network.
       SERVER_TLS_SSLMODE: ${PGBOUNCER_SERVER_TLS_SSLMODE:-prefer}
       # ── Pool configuration ────────────────────────────────────────
