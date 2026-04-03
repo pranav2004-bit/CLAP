@@ -132,10 +132,12 @@ services:
       # for PgBouncer to verify the client password. PgBouncer still
       # authenticates to the real Postgres/RDS with DB_USER + DB_PASSWORD.
       AUTH_TYPE: trust
-      # ── TLS: require SSL on the PgBouncer → RDS backend connection ──
-      # RDS enforces SSL; this must match. Client (Django→PgBouncer)
-      # does NOT need SSL since traffic stays inside Docker's bridge network.
-      SERVER_TLS_SSLMODE: require
+      # ── TLS: SSL mode for PgBouncer → backend DB connection ─────────
+      # Production (RDS): set PGBOUNCER_SERVER_TLS_SSLMODE=require in .env
+      # Local dev (plain postgres container): defaults to "prefer"
+      #   prefer = tries SSL first, falls back to plain if unsupported — safe for both.
+      # Client (Django→PgBouncer) does NOT need SSL — internal Docker network.
+      SERVER_TLS_SSLMODE: ${PGBOUNCER_SERVER_TLS_SSLMODE:-prefer}
       # ── Pool configuration ────────────────────────────────────────
       # transaction mode: connection released after each transaction.
       # Most efficient for Django's short-lived request/response cycle.
@@ -160,7 +162,9 @@ services:
       db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-p", "5432", "-U", "postgres"]
+      # nc (busybox netcat) is always present in Alpine — checks port is open.
+      # pg_isready is NOT included in edoburu/pgbouncer image.
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 5432 || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 10
