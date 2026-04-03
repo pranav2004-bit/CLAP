@@ -117,13 +117,6 @@ services:
     # Bitnami deprecated their Docker Hub images in 2024 — use this instead.
     image: edoburu/pgbouncer:latest
     restart: unless-stopped
-    # Custom entrypoint: generates pgbouncer.ini normally but writes userlist.txt
-    # with PLAINTEXT password instead of the md5 hash the image produces by default.
-    # Plaintext is required for SCRAM-SHA-256 auth to RDS PostgreSQL 15.
-    # See scripts/pgbouncer-entrypoint.sh for full explanation.
-    entrypoint: ["/bin/sh", "/pgbouncer-entrypoint.sh"]
-    volumes:
-      - ./scripts/pgbouncer-entrypoint.sh:/pgbouncer-entrypoint.sh:ro
     # env_file provides DB_NAME, DB_USER, DB_PASSWORD from the SAME source as
     # Django — guarantees PgBouncer uses the identical credentials to connect
     # to the backend DB. Without this, docker-compose substitution falls back
@@ -139,12 +132,15 @@ services:
       # Local dev:  defaults to the local `db` postgres container.
       DB_HOST: ${PGBOUNCER_DB_HOST:-db}
       DB_PORT: ${PGBOUNCER_DB_PORT:-5432}
-      # ── Auth: trust all clients (they are internal Docker services) ──
-      # Django/Celery containers are on the same Docker network — no need
-      # for PgBouncer to verify the client password. PgBouncer still
-      # authenticates to the real Postgres/RDS with DB_USER + DB_PASSWORD
-      # (from env_file above).
-      AUTH_TYPE: trust
+      # ── Auth type: scram-sha-256 ───────────────────────────────────
+      # CRITICAL: edoburu/pgbouncer stores the password in userlist.txt as
+      # PLAINTEXT only when AUTH_TYPE is "plain" or "scram-sha-256".
+      # Any other value (including "trust" and "md5") causes it to store
+      # an md5 hash — which CANNOT be used for SCRAM-SHA-256 authentication
+      # to RDS PostgreSQL 15 (SCRAM requires the plaintext password).
+      # scram-sha-256: plaintext stored → PgBouncer→RDS SCRAM works ✓
+      #                clients (Django) authenticate to PgBouncer via SCRAM ✓
+      AUTH_TYPE: scram-sha-256
       # ── TLS: SSL mode for PgBouncer → backend DB connection ─────────
       # Production (RDS): set PGBOUNCER_SERVER_TLS_SSLMODE=require in ~/CLAP/.env
       # Local dev (plain postgres container): defaults to "prefer"
