@@ -28,9 +28,15 @@ jobs:
             echo "==> Rebuilding Django image..."
             docker-compose build django
 
-            echo "==> Restarting services..."
-            docker-compose stop django celery-llm celery-reports celery-scoring celery-beat
-            docker-compose rm -f django celery-llm celery-reports celery-scoring celery-beat
+            echo "==> Stopping and removing all app containers (prevents ContainerConfig KeyError on docker-compose 1.29.2)..."
+            docker-compose stop django celery-llm celery-reports celery-scoring celery-beat pgbouncer
+            docker-compose rm -f django celery-llm celery-reports celery-scoring celery-beat pgbouncer
+
+            echo "==> Starting pgbouncer first and waiting for it to become healthy..."
+            docker-compose up -d pgbouncer
+            timeout 30 bash -c 'until [ "$(docker inspect --format={{.State.Health.Status}} clap_pgbouncer_1 2>/dev/null)" = "healthy" ]; do sleep 3; done'
+
+            echo "==> Starting app services..."
             docker-compose up -d django celery-llm celery-reports celery-scoring celery-beat
 
             echo "==> Waiting for Django to become healthy..."
