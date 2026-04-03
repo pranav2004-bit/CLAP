@@ -34,7 +34,7 @@ jobs:
 
             echo "==> Starting pgbouncer first and waiting for it to become healthy..."
             docker-compose up -d pgbouncer
-            timeout 30 bash -c 'until [ "$(docker inspect --format={{.State.Health.Status}} clap_pgbouncer_1 2>/dev/null)" = "healthy" ]; do sleep 3; done'
+            timeout 90 bash -c 'until [ "$(docker inspect --format={{.State.Health.Status}} clap_pgbouncer_1 2>/dev/null)" = "healthy" ]; do sleep 3; done'
 
             echo "==> Starting app services..."
             docker-compose up -d django celery-llm celery-reports celery-scoring celery-beat

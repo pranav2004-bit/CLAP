@@ -161,10 +161,10 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-p", "5432", "-U", "postgres"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
-      retries: 5
-      start_period: 10s
+      retries: 10
+      start_period: 5s
 
   # ── Redis ───────────────────────────────────────────────────────
   redis:
