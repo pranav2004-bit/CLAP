@@ -107,30 +107,17 @@ DATABASES = {
         'OPTIONS': {
             'sslmode': config('DB_SSLMODE', default='require'),
             'connect_timeout': config('DB_CONNECT_TIMEOUT', default=10, cast=int),
-            # Server-side PostgreSQL session parameters enforced on every connection.
-            # These are the last line of defence against hung queries consuming PgBouncer
-            # pool slots and causing all subsequent requests to time out.
+            # NOTE: statement_timeout, lock_timeout, idle_in_transaction_session_timeout
+            # CANNOT be set here via psycopg2 'options' when using PgBouncer in
+            # transaction mode. PgBouncer blocks session-level startup parameters
+            # and returns: "FATAL: unsupported startup parameter in options".
             #
-            # statement_timeout (default 30 s):
-            #   Kill any query running longer than 30 s. A single runaway query holds a
-            #   PgBouncer server connection, starving all 39 other pool slots for minutes.
-            #
-            # lock_timeout (default 5 s):
-            #   Fail if a row/table lock cannot be acquired within 5 s. Prevents bulk
-            #   imports or admin operations from holding Django threads + pool connections
-            #   hostage indefinitely behind a lock queue.
-            #
-            # idle_in_transaction_session_timeout (default 30 s):
-            #   Kill connections that are inside BEGIN but idle > 30 s. Catches Django
-            #   code that opens a transaction then hangs (network blip, uncaught exception
-            #   before commit). Idle-in-transaction blocks VACUUM and lock acquisition for
-            #   every other client — the single worst production performance killer.
-            'options': (
-                f"-c statement_timeout={config('DB_STATEMENT_TIMEOUT_MS', default=30000, cast=int)}"
-                f" -c lock_timeout={config('DB_LOCK_TIMEOUT_MS', default=5000, cast=int)}"
-                f" -c idle_in_transaction_session_timeout="
-                f"{config('DB_IDLE_IN_TX_TIMEOUT_MS', default=30000, cast=int)}"
-            ),
+            # These timeouts are instead enforced at the RDS PostgreSQL role level:
+            #   ALTER ROLE postgres SET statement_timeout = '30s';
+            #   ALTER ROLE postgres SET lock_timeout = '5s';
+            #   ALTER ROLE postgres SET idle_in_transaction_session_timeout = '30s';
+            # Run these once via: docker-compose exec django python manage.py dbshell
+            # They persist across all connections permanently without any app-level config.
         },
     }
 }
