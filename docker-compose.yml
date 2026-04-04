@@ -524,7 +524,7 @@ services:
     entrypoint: >
       /bin/sh -c '
         while true; do
-          CERT=/etc/letsencrypt/live/clap.sanjivo.com/fullchain.pem;
+          CERT=/etc/letsencrypt/live/api.sanjivo.com/fullchain.pem;
           if [ -f "$$CERT" ]; then
             EXPIRY=$$(openssl x509 -enddate -noout -in "$$CERT" 2>/dev/null | cut -d= -f2);
             EXPIRY_EPOCH=$$(date -d "$$EXPIRY" +%s 2>/dev/null || date -jf "%b %e %H:%M:%S %Y %Z" "$$EXPIRY" +%s 2>/dev/null);
