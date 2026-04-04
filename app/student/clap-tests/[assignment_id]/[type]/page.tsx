@@ -13,6 +13,7 @@ import AudioRecorderItem from '@/components/audio-recorder'
 import AudioBlockPlayer from '@/components/AudioBlockPlayer'
 import { useNetworkStatus } from '@/hooks/useNetworkStatus'
 import { useAntiCheat } from '@/hooks/useAntiCheat'
+import { useScreenWakeLock } from '@/hooks/useScreenWakeLock'
 import { CubeLoader } from '@/components/ui/CubeLoader'
 
 // Question classification helper
@@ -424,6 +425,14 @@ export default function ClapTestTakingPage({
         onTabSwitch: handleTabSwitch,
         onFullscreenExit: handleFullscreenExit,
     })
+
+    // ── Screen Wake Lock ──────────────────────────────────────────────────────
+    // Prevents the device screen from dimming/turning off while the test is active.
+    // Critical for mobile students who stop interacting while reading a long passage.
+    // Released automatically when auto-submit fires or the component unmounts.
+    // Gracefully no-ops on unsupported browsers (Safari/iOS) — server-side Celery
+    // Beat auto-submit and localStorage timer restore are the primary safety nets.
+    useScreenWakeLock(!autoSubmitActive && !isLoading)
 
     // ── Enter fullscreen when content loads ───────────────────────────────────
     // Skipped when externalFullscreen=true — the parent shell already holds fullscreen.
