@@ -523,17 +523,19 @@ services:
     # Check daily. Log expiry days so CloudWatch/Datadog can alert on WARNING.
     entrypoint: >
       /bin/sh -c '
+        apk add --quiet openssl 2>/dev/null || true;
         while true; do
           CERT=/etc/letsencrypt/live/api.sanjivo.com/fullchain.pem;
           if [ -f "$$CERT" ]; then
             EXPIRY=$$(openssl x509 -enddate -noout -in "$$CERT" 2>/dev/null | cut -d= -f2);
-            EXPIRY_EPOCH=$$(date -d "$$EXPIRY" +%s 2>/dev/null || date -jf "%b %e %H:%M:%S %Y %Z" "$$EXPIRY" +%s 2>/dev/null);
-            NOW_EPOCH=$$(date +%s);
-            DAYS_LEFT=$$(( (EXPIRY_EPOCH - NOW_EPOCH) / 86400 ));
-            if [ "$$DAYS_LEFT" -le 14 ]; then
-              echo "[SSL_CERT_EXPIRY_WARNING] Certificate expires in $$DAYS_LEFT days! ($$EXPIRY) — RENEW IMMEDIATELY";
+            if ! openssl x509 -checkend 0 -noout -in "$$CERT" 2>/dev/null; then
+              echo "[SSL_CERT_EXPIRED] Certificate has EXPIRED ($$EXPIRY) — RENEW IMMEDIATELY";
+            elif ! openssl x509 -checkend 1209600 -noout -in "$$CERT" 2>/dev/null; then
+              echo "[SSL_CERT_EXPIRY_WARNING] Certificate expires within 14 days! ($$EXPIRY) — RENEW IMMEDIATELY";
+            elif ! openssl x509 -checkend 2592000 -noout -in "$$CERT" 2>/dev/null; then
+              echo "[SSL_CERT_EXPIRY_WARNING] Certificate expires within 30 days ($$EXPIRY)";
             else
-              echo "[SSL_CERT_OK] Certificate valid for $$DAYS_LEFT more days (expires $$EXPIRY)";
+              echo "[SSL_CERT_OK] Certificate is valid and not expiring soon ($$EXPIRY)";
             fi;
           else
             echo "[SSL_CERT_MISSING] Certificate file not found at $$CERT";
