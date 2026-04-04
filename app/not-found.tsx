@@ -1,5 +1,3 @@
-'use client'
-
 /**
  * app/not-found.tsx — Next.js global 404 page.
  *
@@ -8,10 +6,8 @@
  *  - notFound() is called explicitly from a Server Component
  *  - A user types a non-existent URL manually
  *
- * Without this file, Next.js shows a plain white "404 | This page could not be found." text.
- *
- * Must be 'use client' because the Go Back button uses window.history.back()
- * which is not available during server-side static generation.
+ * Kept as a pure Server Component (no 'use client') — no event handlers,
+ * only <Link> navigation. This guarantees static generation succeeds on Vercel.
  */
 
 import Link from 'next/link'
@@ -38,7 +34,7 @@ export default function NotFound() {
                     </p>
                 </div>
 
-                {/* Actions */}
+                {/* Actions — pure <Link> only, no onClick handlers */}
                 <div className="flex flex-col sm:flex-row gap-3 justify-center">
                     <Link
                         href="/"
@@ -47,13 +43,13 @@ export default function NotFound() {
                         <Home className="w-4 h-4" />
                         Go Home
                     </Link>
-                    <button
-                        onClick={() => window.history.back()}
+                    <Link
+                        href="/login"
                         className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-white hover:bg-gray-50 text-gray-700 text-sm font-medium rounded-lg border border-gray-200 transition-colors"
                     >
                         <ArrowLeft className="w-4 h-4" />
-                        Go Back
-                    </button>
+                        Go to Login
+                    </Link>
                 </div>
 
             </div>
