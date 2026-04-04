@@ -1,3 +1,5 @@
+'use client'
+
 /**
  * app/not-found.tsx — Next.js global 404 page.
  *
@@ -7,6 +9,9 @@
  *  - A user types a non-existent URL manually
  *
  * Without this file, Next.js shows a plain white "404 | This page could not be found." text.
+ *
+ * Must be 'use client' because the Go Back button uses window.history.back()
+ * which is not available during server-side static generation.
  */
 
 import Link from 'next/link'
