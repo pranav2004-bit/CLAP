@@ -82,10 +82,10 @@ export function EnhancedStudentManagement({ refreshKey = 0 }: EnhancedStudentMan
     } else {
       const query = searchQuery.toLowerCase()
       const filtered = students.filter(student =>
-        student.student_id.toLowerCase().includes(query) ||
+        student.student_id?.toLowerCase().includes(query) ||
         student.username?.toLowerCase().includes(query) ||
         student.full_name?.toLowerCase().includes(query) ||
-        student.email.toLowerCase().includes(query)
+        student.email?.toLowerCase().includes(query)
       )
       setFilteredStudents(filtered)
     }
@@ -118,7 +118,10 @@ export function EnhancedStudentManagement({ refreshKey = 0 }: EnhancedStudentMan
           setFilteredStudents(data.students)
         } else {
           const filtered = data.students.filter((student: Student) =>
-            student.student_id.toLowerCase().includes(searchQuery.toLowerCase())
+            student.student_id?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            student.username?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            student.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            student.email?.toLowerCase().includes(searchQuery.toLowerCase())
           )
           setFilteredStudents(filtered)
         }
