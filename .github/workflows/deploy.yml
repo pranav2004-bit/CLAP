@@ -33,27 +33,41 @@ jobs:
             echo "==> Rebuilding Django image..."
             docker-compose build django
 
-            echo "==> Stopping and removing all app containers (prevents ContainerConfig KeyError on docker-compose 1.29.2)..."
-            docker-compose stop django celery-llm celery-reports celery-scoring celery-beat pgbouncer
-            docker-compose rm -f django celery-llm celery-reports celery-scoring celery-beat pgbouncer
+            # ── Prevent ContainerConfig KeyError (docker-compose 1.29.2 bug) ──────
+            # Any container whose config changed (mem_limit, command, env, image)
+            # must be stopped AND removed before docker-compose up recreates it.
+            # docker-compose up --force-recreate fails with ContainerConfig KeyError
+            # on stopped containers built from images that predate this docker version.
+            # Safest fix: stop everything, remove all containers, start fresh in order.
+            echo "==> Stopping all containers..."
+            docker-compose stop || true
 
-            echo "==> Starting pgbouncer first and waiting for it to become healthy..."
+            echo "==> Removing all stopped containers (prevents ContainerConfig bug)..."
+            docker-compose rm -f || true
+
+            echo "==> Starting Redis and waiting for it to become healthy..."
+            docker-compose up -d redis
+            timeout 30 bash -c 'until docker-compose exec -T redis redis-cli ping 2>/dev/null | grep -q PONG; do sleep 2; done' \
+              || { echo "Redis did not become healthy in 30s — dumping logs:"; docker-compose logs --tail=20 redis; exit 1; }
+
+            echo "==> Starting PgBouncer and waiting for it to become healthy..."
             docker-compose up -d pgbouncer
-            timeout 90 bash -c 'until [ "$(docker inspect --format={{.State.Health.Status}} clap_pgbouncer_1 2>/dev/null)" = "healthy" ]; do sleep 3; done'
+            timeout 90 bash -c 'until [ "$(docker inspect --format={{.State.Health.Status}} clap_pgbouncer_1 2>/dev/null)" = "healthy" ]; do sleep 3; done' \
+              || { echo "PgBouncer did not become healthy in 90s — dumping logs:"; docker-compose logs --tail=20 pgbouncer; exit 1; }
 
-            echo "==> Starting app services..."
+            echo "==> Starting Django and Celery workers..."
             docker-compose up -d django celery-llm celery-reports celery-scoring celery-beat
 
             echo "==> Waiting for Django to become healthy..."
-            echo "    (collectstatic + gunicorn boot with 16 threads can take up to 120s)"
-            timeout 120 bash -c 'until [ "$(docker inspect --format={{.State.Health.Status}} clap_django_1 2>/dev/null)" = "healthy" ]; do sleep 3; done' \
-              || { echo "Django did not become healthy in 120s — dumping logs:"; docker-compose logs --tail=40 django; exit 1; }
+            echo "    (collectstatic + gunicorn boot with 9 workers × 16 threads can take up to 150s)"
+            timeout 150 bash -c 'until [ "$(docker inspect --format={{.State.Health.Status}} clap_django_1 2>/dev/null)" = "healthy" ]; do sleep 3; done' \
+              || { echo "Django did not become healthy in 150s — dumping logs:"; docker-compose logs --tail=40 django; exit 1; }
 
             echo "==> Running migrations..."
             docker-compose exec -T django python manage.py migrate --no-input
 
-            echo "==> Reloading nginx to pick up new Django container..."
-            docker-compose restart nginx
+            echo "==> Starting Nginx and Flower..."
+            docker-compose up -d nginx flower
 
             echo "==> Pruning old images..."
             docker image prune -f
