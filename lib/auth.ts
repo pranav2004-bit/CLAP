@@ -61,7 +61,17 @@ export const signIn = async (identifier: string, password: string, role: 'studen
 
     const data = await response.json()
     if (!response.ok) {
-      return { data: null, error: { message: data.error || 'Invalid credentials' } }
+      return {
+        data: null,
+        error: {
+          message: data.error || 'Invalid credentials',
+          // Backend sends this on credential failures so the UI can show
+          // "X attempts left" before the account gets locked out.
+          attempts_remaining: typeof data.attempts_remaining === 'number'
+            ? data.attempts_remaining
+            : undefined,
+        }
+      }
     }
 
     // Store JWT access token — used by getAuthHeaders() for all subsequent API calls

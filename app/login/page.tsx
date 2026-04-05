@@ -35,23 +35,26 @@ function LoginContent() {
     password: ''
   })
   const [error, setError] = useState('')
+  const [attemptsLeft, setAttemptsLeft] = useState<number | null>(null)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsLoading(true)
     setError('')
+    setAttemptsLeft(null)
 
     try {
-      // For student login, we need to get the actual email from username
-      let email = formData.identifier
-
-      // In a real app, you'd look up the email by username
-      // For now, we'll assume username is the email
-
-      const { data, error: signInError } = await signIn(email, formData.password, 'student')
+      const { data, error: signInError } = await signIn(formData.identifier, formData.password, 'student')
 
       if (signInError) {
         setError(signInError.message || 'Invalid credentials')
+        // Show remaining attempts only when it's a plain credential failure
+        // (backend returns this field; lockout / disabled-account errors don't include it)
+        if (typeof signInError.attempts_remaining === 'number' && signInError.attempts_remaining > 0) {
+          setAttemptsLeft(signInError.attempts_remaining)
+        } else {
+          setAttemptsLeft(null)
+        }
         setIsLoading(false)
         return
       }
@@ -192,7 +195,16 @@ function LoginContent() {
               {error && (
                 <Alert variant="destructive" className="mb-4">
                   <AlertCircle className="h-4 w-4" />
-                  <AlertDescription>{error}</AlertDescription>
+                  <AlertDescription>
+                    {error}
+                    {attemptsLeft !== null && (
+                      <span className="block mt-1 font-semibold">
+                        {attemptsLeft === 1
+                          ? '1 attempt left before your account is temporarily locked.'
+                          : `${attemptsLeft} attempts left.`}
+                      </span>
+                    )}
+                  </AlertDescription>
                 </Alert>
               )}
 

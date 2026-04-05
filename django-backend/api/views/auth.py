@@ -70,13 +70,19 @@ def _check_lockout(redis_client, identifier: str) -> tuple:
     return (ttl > 0, ttl)
 
 
-def _record_failed_attempt(redis_client, identifier: str) -> None:
+_MAX_ATTEMPTS = 5  # lockout triggers after this many failures
+
+
+def _record_failed_attempt(redis_client, identifier: str) -> int:
     """
-    Increment fail counter. After 5 failures in a 5-minute window,
+    Increment fail counter. After _MAX_ATTEMPTS failures in a 5-minute window,
     sets a 15-minute lockout key.
+
+    Returns the current failure count so the caller can surface
+    "X attempts remaining" to the user.
     """
     if redis_client is None:
-        return
+        return 0
     key = _fails_key(identifier)
     try:
         pipe = redis_client.pipeline()
@@ -85,10 +91,12 @@ def _record_failed_attempt(redis_client, identifier: str) -> None:
         count, ttl = pipe.execute()
         if count == 1 or ttl < 0:
             redis_client.expire(key, 300)   # 5-minute failure window
-        if count >= 5:
+        if count >= _MAX_ATTEMPTS:
             redis_client.setex(_lockout_key(identifier), 900, '1')  # 15-minute lockout
+        return int(count)
     except Exception as exc:
         logger.warning('Auth: Redis fail recording error (%s)', exc)
+        return 0
 
 
 def _clear_failed_attempts(redis_client, identifier: str) -> None:
@@ -276,8 +284,12 @@ def login(request):
 
         user = query.first()
         if not user:
-            _record_failed_attempt(redis_client, identifier)
-            return JsonResponse({"error": "Invalid credentials"}, status=401)
+            fail_count = _record_failed_attempt(redis_client, identifier)
+            remaining = max(0, _MAX_ATTEMPTS - fail_count)
+            return JsonResponse(
+                {"error": "Invalid credentials", "attempts_remaining": remaining},
+                status=401
+            )
 
         if not user.is_active:
             return JsonResponse({"error": "This account is disabled by admin"}, status=403)
@@ -287,12 +299,20 @@ def login(request):
             valid = bcrypt.checkpw(password.encode("utf-8"), user.password_hash.encode("utf-8"))
         except Exception as exc:
             logger.error("Password verification failed: %s", exc)
-            _record_failed_attempt(redis_client, identifier)
-            return JsonResponse({"error": "Invalid credentials"}, status=401)
+            fail_count = _record_failed_attempt(redis_client, identifier)
+            remaining = max(0, _MAX_ATTEMPTS - fail_count)
+            return JsonResponse(
+                {"error": "Invalid credentials", "attempts_remaining": remaining},
+                status=401
+            )
 
         if not valid:
-            _record_failed_attempt(redis_client, identifier)
-            return JsonResponse({"error": "Invalid credentials"}, status=401)
+            fail_count = _record_failed_attempt(redis_client, identifier)
+            remaining = max(0, _MAX_ATTEMPTS - fail_count)
+            return JsonResponse(
+                {"error": "Invalid credentials", "attempts_remaining": remaining},
+                status=401
+            )
 
         # ── Success: clear lockout, issue JWT ─────────────────────────────────
         _clear_failed_attempts(redis_client, identifier)
