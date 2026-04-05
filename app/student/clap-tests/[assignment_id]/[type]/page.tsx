@@ -1323,13 +1323,13 @@ export default function ClapTestTakingPage({
 
                                             {currentItem.item_type === 'text_block' && (
                                                 <div className="prose max-w-none bg-gray-50 p-4 sm:p-6 rounded-lg border">
-                                                    <p className="text-sm sm:text-base text-gray-800 leading-relaxed whitespace-pre-wrap">{currentItem.content.text}</p>
+                                                    <p className="text-sm sm:text-base text-gray-800 leading-relaxed whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: currentItem.content.text || '' }} />
                                                 </div>
                                             )}
 
                                             {currentItem.item_type === 'mcq' && (
                                                 <div className="space-y-4 sm:space-y-6">
-                                                    <h3 className="text-base sm:text-xl font-medium whitespace-pre-wrap">{currentItem.content.question}</h3>
+                                                    <h3 className="text-base sm:text-xl font-medium whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: currentItem.content.question || '' }} />
                                                     <div className="space-y-3">
                                                         {currentItem.content.options?.map((opt: string, index: number) => (
                                                             <div
@@ -1375,7 +1375,7 @@ export default function ClapTestTakingPage({
 
                                                 return (
                                                     <div className="space-y-3 sm:space-y-4">
-                                                        <h3 className="text-base sm:text-xl font-medium whitespace-pre-wrap">{currentItem.content.question}</h3>
+                                                        <h3 className="text-base sm:text-xl font-medium whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: currentItem.content.question || '' }} />
                                                         <Textarea
                                                             value={currentText}
                                                             readOnly={readOnly}
