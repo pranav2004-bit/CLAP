@@ -7,7 +7,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { RichTextarea } from '@/components/ui/RichTextarea'
 import { ArrowLeft, Save, Plus, Trash2, GripVertical, FileText, Mic, Image as ImageIcon, CheckSquare, Eye, X, Loader2, ArrowUp, ArrowDown, Check } from 'lucide-react'
 import { CubeLoader } from '@/components/ui/CubeLoader'
 import { toast } from 'sonner'
@@ -442,11 +441,12 @@ function ClapTestEditorContent() {
                             <CardContent className="p-6">
                                 {/* Editor based on type */}
                                 {item.item_type === 'text_block' && (
-                                    <RichTextarea
-                                        value={item.content.text || ''}
-                                        onChange={(html) => handleUpdateItem(item.id, { content: { text: html } })}
+                                    <Textarea
+                                        value={item.content.text}
+                                        onChange={(e) => handleUpdateItem(item.id, { content: { text: e.target.value } })}
                                         rows={4}
                                         placeholder="Enter text content or instructions..."
+                                        className="font-sans text-base min-h-[100px]"
                                     />
                                 )}
 
@@ -474,10 +474,11 @@ function ClapTestEditorContent() {
                                     }
                                     return (
                                     <div className="space-y-4">
-                                        <RichTextarea
-                                            value={item.content.question || ''}
-                                            onChange={(html) => handleUpdateItem(item.id, { content: { question: html } })}
+                                        <Textarea
+                                            value={item.content.question}
+                                            onChange={(e) => handleUpdateItem(item.id, { content: { question: e.target.value } })}
                                             placeholder="Question text..."
+                                            className="resize-none font-medium"
                                             rows={2}
                                         />
                                         <div className="space-y-2 pl-4 border-l-2 border-indigo-100">

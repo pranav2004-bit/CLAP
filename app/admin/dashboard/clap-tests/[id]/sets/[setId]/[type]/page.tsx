@@ -7,7 +7,6 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { RichTextarea } from '@/components/ui/RichTextarea'
 import {
   ArrowLeft, Plus, Trash2, FileText, Mic, CheckSquare, Eye,
   Clock, ArrowUp, ArrowDown, Check, Loader2, AlertCircle,
@@ -674,11 +673,12 @@ function TextBlockEditor({ item, onUpdate }: { item: any; onUpdate: any }) {
   return (
     <div>
       <Label className="text-xs text-gray-500 mb-2 block">Content / Instructions</Label>
-      <RichTextarea
+      <Textarea
         value={item.content?.text || ''}
-        onChange={html => onUpdate(item.id, { content: { text: html } })}
+        onChange={e => onUpdate(item.id, { content: { text: e.target.value } })}
         placeholder="Enter reading passage, instructions, or any display text…"
         rows={6}
+        className="font-sans text-sm leading-relaxed resize-y"
       />
     </div>
   )
@@ -730,11 +730,12 @@ function MCQEditor({ item, onUpdate }: { item: any; onUpdate: any }) {
       {/* Question */}
       <div>
         <Label className="text-xs text-gray-500 mb-2 block">Question</Label>
-        <RichTextarea
+        <Textarea
           value={item.content?.question || ''}
-          onChange={html => onUpdate(item.id, { content: { question: html } })}
+          onChange={e => onUpdate(item.id, { content: { question: e.target.value } })}
           placeholder="Type the question here…"
           rows={3}
+          className="font-medium resize-none"
         />
       </div>
 
@@ -807,11 +808,12 @@ function SubjectiveEditor({ item, onUpdate }: { item: any; onUpdate: any }) {
     <div className="space-y-4">
       <div>
         <Label className="text-xs text-gray-500 mb-2 block">Question / Writing Prompt</Label>
-        <RichTextarea
+        <Textarea
           value={item.content?.question || ''}
-          onChange={html => onUpdate(item.id, { content: { question: html } })}
+          onChange={e => onUpdate(item.id, { content: { question: e.target.value } })}
           placeholder="Enter the essay question or writing prompt…"
           rows={4}
+          className="font-medium resize-y"
         />
       </div>
       <div className="grid grid-cols-2 gap-4">
@@ -997,11 +999,12 @@ function AudioRecordingEditor({ item, onUpdate }: { item: any; onUpdate: any }) 
       {/* Question */}
       <div>
         <Label className="text-xs text-gray-500 mb-1.5 block">Question / Speaking Prompt</Label>
-        <RichTextarea
+        <Textarea
           value={item.content?.question || ''}
-          onChange={html => onUpdate(item.id, { content: { question: html } })}
+          onChange={e => onUpdate(item.id, { content: { question: e.target.value } })}
           placeholder="e.g. Describe a memorable journey you have taken."
           rows={3}
+          className="font-medium"
         />
       </div>
 
