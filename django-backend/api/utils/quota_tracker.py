@@ -516,17 +516,8 @@ class QuotaTracker:
         """
         from django.conf import settings
 
-        redis_client = None
-        try:
-            import redis as _redis
-            redis_url = getattr(settings, 'REDIS_URL', None)
-            if redis_url:
-                redis_client = _redis.Redis.from_url(redis_url, decode_responses=True)
-                # Quick connectivity check (raises on failure)
-                redis_client.ping()
-        except Exception as exc:
-            logger.warning('quota_tracker_redis_unavailable error=%s', exc)
-            redis_client = None
+        from api.utils.redis_client import get_redis_client
+        redis_client = get_redis_client()
 
         return cls(
             redis_client=redis_client,

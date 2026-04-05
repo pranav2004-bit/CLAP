@@ -40,13 +40,8 @@ logger = logging.getLogger(__name__)
 
 
 def _redis_client():
-    if redis is None:
-        return None
-
-    redis_url = getattr(settings, 'REDIS_URL', None)
-    if not redis_url:
-        return None
-    return redis.Redis.from_url(redis_url, decode_responses=True)
+    from api.utils.redis_client import get_redis_client
+    return get_redis_client()
 
 
 def _idempotency_cache_key(user_id, idempotency_key):

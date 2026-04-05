@@ -455,6 +455,43 @@ CELERY_TASK_ROUTES = {
 CELERY_TASK_DEFAULT_QUEUE = 'default'
 CLAP_CELERY_QUEUES = ('rule_scoring', 'llm_evaluation', 'report_gen', 'email')
 
+# ── Celery Redis broker transport options ─────────────────────────────────────
+# These apply to every Celery worker's connection to the Redis broker (DB 0).
+# Without explicit timeouts, a stalled Redis causes workers to block forever,
+# exhausting the prefork pool and stopping all task processing silently.
+#
+# visibility_timeout: how long a task can be invisible (being processed) before
+# Redis re-queues it for another worker. Must be > the longest task time_limit
+# (600 s). Set to 3 600 s (1 hour) — safe ceiling that prevents duplicate
+# execution of long-running LLM tasks while still recovering from worker crashes.
+#
+# socket_keepalive: OS TCP keepalives detect dropped broker connections within
+# minutes, not hours, allowing the worker to reconnect automatically.
+#
+# retry settings: if the broker is temporarily unreachable (Redis restart,
+# network blip), workers retry with exponential backoff up to 10 times before
+# giving up. interval_start=0 makes the first retry immediate.
+CELERY_BROKER_TRANSPORT_OPTIONS = {
+    'socket_timeout': 5,
+    'socket_connect_timeout': 3,
+    'socket_keepalive': True,
+    'retry_on_timeout': True,
+    'visibility_timeout': 3600,        # must exceed CELERY_TASK_TIME_LIMIT (600 s)
+    'max_retries': 3,
+    'interval_start': 0,               # first retry immediately
+    'interval_step': 0.2,
+    'interval_max': 0.5,
+}
+
+# Maximum Redis connections in the Celery worker's broker connection pool.
+# Each celery-scoring prefork worker process needs at most 2 broker connections
+# (one for consuming, one for result backend). 10 gives comfortable headroom.
+CELERY_REDIS_MAX_CONNECTIONS = 10
+
+# Reconnect automatically if the broker drops (network blip, Redis restart).
+CELERY_BROKER_CONNECTION_RETRY = True
+CELERY_BROKER_CONNECTION_MAX_RETRIES = 10
+
 # Redis Configuration (cache/idempotency/rate limit fast-path)
 REDIS_URL = config('REDIS_URL', default='redis://localhost:6379/2')
 

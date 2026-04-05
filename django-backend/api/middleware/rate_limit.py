@@ -48,27 +48,10 @@ if find_spec('redis') is not None:
 else:
     _redis_lib = None
 
-_redis_client = None
-
-
 def _get_redis():
-    """Return a shared Redis client, creating it lazily on first call."""
-    global _redis_client
-    if _redis_client is not None:
-        return _redis_client
-
-    if _redis_lib is None:
-        return None
-
-    redis_url = getattr(settings, 'REDIS_URL', 'redis://localhost:6379/2')
-    try:
-        # Use DB 2 (same as rate limiting in submissions.py)
-        _redis_client = _redis_lib.from_url(redis_url, decode_responses=True)
-        _redis_client.ping()
-        return _redis_client
-    except Exception as exc:
-        logger.warning('Rate-limit middleware: Redis unavailable (%s) — failing open', exc)
-        return None
+    """Return the process-level Redis singleton (production-configured)."""
+    from api.utils.redis_client import get_redis_client
+    return get_redis_client()
 
 
 def _rate_limited(redis_client, key: str, limit: int, window_seconds: int = 60) -> tuple:

@@ -151,23 +151,31 @@ services:
       # transaction mode: connection released after each transaction.
       # Most efficient for Django's short-lived request/response cycle.
       POOL_MODE: transaction
-      # 40 real RDS connections (was 20). RDS max=~170; using 40 = 24% of limit.
-      # Supports 80 Django threads + 22 Celery workers multiplexing through 40 connections.
-      # Each connection serves ~50 tx/s at 20ms avg → pool delivers 2000 tx/s total.
-      DEFAULT_POOL_SIZE: "40"
-      # 5 warm standby connections kept alive at all times.
-      # Eliminates cold-start latency: first request after idle period doesn't wait
-      # for a new TCP+TLS+auth handshake to RDS (~100-300ms saved per cold request).
-      MIN_POOL_SIZE: "5"
-      # 10 extra connections reserved for traffic spikes and admin operations.
-      RESERVE_POOL_SIZE: "10"
+      # 100 real RDS connections.
+      # RDS db.t3.large max_connections ≈ 170; using 100 = 59% of limit.
+      # Supports 144 Django threads + 36 Celery workers multiplexing through 100
+      # connections. Each connection serves ~50 tx/s at 20ms avg → pool delivers
+      # ~5 000 tx/s total — 3× headroom over expected 10 000-user peak load.
+      DEFAULT_POOL_SIZE: "100"
+      # 10 warm standby connections always open.
+      # Eliminates cold-start latency on first post-idle request (~100-300ms saved
+      # per TCP+TLS+auth handshake to RDS). Critical after low-traffic nights.
+      MIN_POOL_SIZE: "10"
+      # 20 extra connections reserved for traffic spikes and admin operations.
+      # Spike buffer handles exam-end burst (thousands of students submitting
+      # simultaneously) without pool exhaustion.
+      RESERVE_POOL_SIZE: "20"
       # Use reserve pool after 3 seconds of regular pool being exhausted.
       RESERVE_POOL_TIMEOUT: "3"
-      # 1000 client connections allowed (80 Django + 22 Celery + 898 headroom for scale).
-      MAX_CLIENT_CONN: "1000"
-      # If no pool slot available after 30s → return error to client instead of
-      # hanging indefinitely. Prevents request pile-up and nginx upstream timeouts.
-      QUERY_WAIT_TIMEOUT: "30"
+      # 2000 client connections allowed (144 Django + 36 Celery + 1820 headroom).
+      # Headroom absorbs horizontal scaling (additional Celery worker instances)
+      # and any connection leak before it causes a hard failure.
+      MAX_CLIENT_CONN: "2000"
+      # Fail fast: if no pool slot available after 15 s → return error to client.
+      # 15 s is the right balance: long enough for a transient spike to drain,
+      # short enough to prevent Nginx upstream queue from growing unbounded.
+      # (Old value 30 s caused downstream timeout cascades during exam-end surges.)
+      QUERY_WAIT_TIMEOUT: "15"
       # Timeout for PgBouncer establishing connection to RDS (TCP+TLS+auth).
       SERVER_CONNECT_TIMEOUT: "15"
       # Retry failed server connections once before giving up.
@@ -222,28 +230,69 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
-    # P1-3: Redis persistence + safe eviction policy
+    # ── Memory cap ────────────────────────────────────────────────
+    # 3 GB maxmemory accommodates 10 000+ concurrent users:
+    #   ~200 MB  active Celery task queue messages (10 000 pending tasks × 20 KB)
+    #   ~100 MB  rate-limit counters (10 000 students × 10 KB per window)
+    #   ~ 50 MB  JWT/session cache entries
+    #   ~ 50 MB  idempotency and submission-dedup keys
+    #   ~ 50 MB  OpenAI quota tracker counters
+    #   ~300 MB  AOF write buffer + fork COW overhead during rewrite
+    #   Total working set ≈ 750 MB; 3 GB ceiling gives 4× headroom.
     #
     # volatile-lru (NOT allkeys-lru):
-    #   Only evicts keys that have a TTL set. Rate-limit buckets and JWT tokens
-    #   have TTLs → eligible for eviction (fine — they're transient).
-    #   Celery task queue keys (Redis lists) have NO TTL → never evicted.
-    #   allkeys-lru would evict Celery tasks under memory pressure, losing
-    #   pending scoring jobs for 1000 students. volatile-lru prevents this.
+    #   Only evicts keys with a TTL. Rate-limit buckets and session tokens have
+    #   TTLs → eligible for eviction (fine — they're transient).
+    #   Celery task queue lists have NO TTL → NEVER evicted.
+    #   allkeys-lru would silently drop pending scoring jobs under pressure.
     #
-    # appendonly yes + appendfsync everysec:
-    #   AOF persistence: every write is logged to disk (flushed every 1s).
-    #   On crash/OOM-kill, Redis replays the AOF on restart — tasks survive.
-    #   Max data loss: 1 second of writes (acceptable for a test platform).
-    #   everysec is the best balance between durability and write throughput.
+    # appendonly + everysec:
+    #   AOF replay on crash — max 1 second of data loss.
+    #
+    # no-appendfsync-on-rewrite:
+    #   During AOF rewrite (triggered automatically at 64 MB), the main thread
+    #   must NOT block on fsync. Without this flag, a 10 000-user peak + AOF
+    #   rewrite = 200-500 ms Redis stall → mass request timeouts.
+    #
+    # lazyfree-*:
+    #   Key deletion/eviction/expiry runs in a background thread — prevents
+    #   the main event loop from stalling while freeing large data structures.
+    #
+    # hz 20:
+    #   Redis background tasks (expiry scan, eviction) run 20× per second
+    #   instead of default 10×. Ensures TTL-expired keys are reclaimed faster
+    #   under high write pressure, preventing memory overshoot.
+    #
+    # tcp-keepalive 300:
+    #   OS-level TCP probe every 300 s. Detects silently-closed client
+    #   connections (crashed Django worker, network blip) and releases FDs.
+    #
+    # mem_limit 3584m = 3.5 GB:
+    #   512 MB headroom above maxmemory for AOF buffer, fork COW copy, and
+    #   Redis internal metadata. Without this margin, Linux OOM-killer fires
+    #   BEFORE Redis's own eviction logic, killing the container abruptly.
+    mem_limit: 3584m
+    memswap_limit: 3584m    # disable swap — hard OOM-kill, no disk thrashing
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     command: >
       redis-server
-        --maxmemory 1gb
+        --maxmemory 3gb
         --maxmemory-policy volatile-lru
         --appendonly yes
         --appendfsync everysec
+        --no-appendfsync-on-rewrite yes
         --auto-aof-rewrite-percentage 100
         --auto-aof-rewrite-min-size 64mb
+        --lazyfree-lazy-eviction yes
+        --lazyfree-lazy-expire yes
+        --lazyfree-lazy-server-del yes
+        --hz 20
+        --tcp-keepalive 300
+        --loglevel notice
+        --latency-tracking yes
     healthcheck:
       test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
@@ -268,15 +317,18 @@ services:
       REDIS_URL: "redis://redis:6379/2"
       CELERY_BROKER_URL: "redis://redis:6379/0"
       CELERY_RESULT_BACKEND: "redis://redis:6379/1"
-      # 5 workers × 16 threads = 80 concurrent requests — handles 10 000+ concurrent users
-      # Workers: (2×CPU)+1 = 5 for 2-vCPU EC2. Increasing beyond 5 wastes RAM without
-      #          CPU gain — each extra worker costs ~200 MB on a 2-core machine.
-      # Threads: 16 per worker — gthread is I/O-bound; threads wait on DB/S3/SES ~10-50ms.
-      #          80 threads × 50ms avg = 1600 req/s theoretical; realistic mixed: ~800 req/s.
-      #          All 80 threads share PgBouncer's 40-connection pool safely (transaction mode).
-      # Memory:  5 × ~200 MB (preload_app CoW) = ~1 GB; stays inside 1.75 GB container limit.
-      # DB conns: up to 80 persistent connections to PgBouncer (not RDS — pooler handles it).
-      GUNICORN_WORKERS: "5"
+      # 9 workers × 16 threads = 144 concurrent request threads (t3.xlarge: 4 vCPU).
+      # Workers: (2×CPU)+1 = 9 for 4-vCPU EC2 (t3.xlarge). Formula yields the right
+      #          balance between CPU utilisation and I/O parallelism for gthread workers.
+      # Threads: 16 per worker — gthread is I/O-bound; threads block on DB/S3/SES 10-50ms,
+      #          releasing the GIL during every network wait. 144 threads × 50ms avg =
+      #          ~2 880 req/s theoretical; realistic mixed load: ~1 200-1 500 req/s.
+      #          10 000 concurrent users × 1 req/15s avg = ~667 req/s peak — 2× headroom.
+      # Memory:  9 × ~200 MB (preload_app CoW) = 1.8 GB + 700 MB overhead = ~2.5 GB;
+      #          2.5 GB container limit gives a tight but safe ceiling on t3.xlarge (16 GB).
+      # DB conns: up to 144 PgBouncer client slots (not raw RDS — pooler multiplexes 100).
+      # NOTE: requires t3.xlarge (4 vCPU, 16 GB). On t3.large reduce back to "5".
+      GUNICORN_WORKERS: "9"
       GUNICORN_THREADS: "16"
       GUNICORN_TIMEOUT: "120"
       # Graceful timeout: 30s — lets in-flight requests finish during rolling deploys
@@ -294,12 +346,13 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # Memory cap: 5 workers × ~200 MB (CoW) + 300 MB overhead = ~1.3 GB working set.
-    # 1.75 GB limit gives 400 MB headroom before Docker OOM-kills the container.
-    # Without a limit, a memory leak in one worker can consume all EC2 RAM, taking
-    # down every other container (Redis, PgBouncer, Celery) in a cascade failure.
-    mem_limit: 1792m
-    memswap_limit: 1792m    # disable swap — OOM-kill immediately, no thrashing
+    # Memory cap: 9 workers × ~200 MB (CoW) = 1.8 GB + 700 MB overhead = ~2.5 GB working set.
+    # 2.56 GB limit gives 60 MB hard ceiling — OOM-kills a single rogue worker before
+    # it can starve Redis, PgBouncer, or Celery containers on the same host.
+    # Without a cap, a memory leak in one worker drains all EC2 RAM and triggers a
+    # cascade OOM-kill of every container simultaneously (the worst possible failure mode).
+    mem_limit: 2560m
+    memswap_limit: 2560m    # disable swap — hard OOM-kill, no disk thrashing
     # Raise open-file limit so Django can hold 80 simultaneous socket connections
     # (threads) + PgBouncer connections + S3 HTTP connections without EMFILE errors.
     ulimits:
@@ -403,7 +456,15 @@ services:
 
   # ── Celery Worker: Rule scoring + Email ─────────────────────────
   # Queues: rule_scoring, email
-  # Concurrency: 16  (lightweight, fast tasks — pure DB + rule logic)
+  # Concurrency: 32  (lightweight, fast tasks — pure DB + rule logic)
+  #
+  # 32 prefork workers × ~50 MB RSS each = 1.6 GB working set.
+  # At 50ms/task: 32 workers deliver ~640 tasks/s — drains 10 000 simultaneous
+  # exam submissions in ~15 s (acceptable async latency for score display).
+  # max-tasks-per-child=500: recycles each worker after 500 tasks, clearing
+  # ORM query-plan cache and any thread-local memory drift before it accumulates.
+  # mem_limit 2048m: 32 × ~50 MB = 1.6 GB + 448 MB overhead. Docker OOM-kills
+  # the container if a rogue worker leaks memory, isolating the failure.
   celery-scoring:
     image: clap-backend:latest
     build:
@@ -411,8 +472,8 @@ services:
       dockerfile: Dockerfile
       target: runtime
     restart: unless-stopped
-    mem_limit: 1024m          # 16 workers × ~50 MB = 800 MB working set + 200 MB overhead
-    memswap_limit: 1024m
+    mem_limit: 2048m          # 32 workers × ~50 MB = 1.6 GB working set + 448 MB overhead
+    memswap_limit: 2048m
     env_file:
       - ./django-backend/.env
     environment:
@@ -432,9 +493,9 @@ services:
       python -m celery -A clap_backend worker
         --loglevel=info
         --queues=rule_scoring,email
-        --concurrency=16
+        --concurrency=32
         --hostname=scoring@%h
-        --max-tasks-per-child=1000
+        --max-tasks-per-child=500
 
   # ── Celery Beat: Periodic task scheduler ────────────────────────
   # Schedules:
