@@ -13,7 +13,7 @@ import time
 
 from api.models import Batch, User
 from api.utils import success_response, error_response, bad_request_response
-from api.utils.auth import require_admin as _require_admin
+from api.utils.auth import require_admin as _require_admin, require_admin_or_sub_admin as _require_admin_or_sub_admin
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +23,10 @@ logger = logging.getLogger(__name__)
 def list_batches(request):
     """
     GET /api/admin/batches
-    Matches Next.js GET function behavior
+    Accessible by both admin and sub_admin — sub_admins need the batch list
+    to assign students to batches when using the Add Student modal.
     """
-    admin_user, err = _require_admin(request)
+    admin_user, err = _require_admin_or_sub_admin(request)
     if err:
         return err
     try:
