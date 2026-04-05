@@ -271,15 +271,15 @@ services:
     #   512 MB headroom above maxmemory for AOF buffer, fork COW copy, and
     #   Redis internal metadata. Without this margin, Linux OOM-killer fires
     #   BEFORE Redis's own eviction logic, killing the container abruptly.
-    mem_limit: 3584m
-    memswap_limit: 3584m    # disable swap — hard OOM-kill, no disk thrashing
+    mem_limit: 4608m
+    memswap_limit: 4608m    # disable swap — hard OOM-kill, no disk thrashing
     ulimits:
       nofile:
         soft: 65536
         hard: 65536
     command: >
       redis-server
-        --maxmemory 3gb
+        --maxmemory 4gb
         --maxmemory-policy volatile-lru
         --appendonly yes
         --appendfsync everysec
