@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, Suspense } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, Suspense, useEffect } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import Image from 'next/image'
 import { Button } from '@/components/ui/button'
@@ -24,6 +24,7 @@ import { authStorage } from '@/lib/auth-storage'
 
 function AdminLoginContent() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [isBackLoading, setIsBackLoading] = useState(false)
@@ -32,6 +33,13 @@ function AdminLoginContent() {
     password: ''
   })
   const [error, setError] = useState('')
+
+  // Show session-expired banner when redirected here after logout / token expiry
+  useEffect(() => {
+    if (searchParams.get('reason') === 'session_expired') {
+      setError('Your session has expired. Please sign in again.')
+    }
+  }, [searchParams])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()

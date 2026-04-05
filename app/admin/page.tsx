@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, Suspense, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import Image from 'next/image'
 import { Button } from '@/components/ui/button'
@@ -24,20 +24,26 @@ import { authStorage } from '@/lib/auth-storage'
 
 function AdminLoginContent() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [isBackLoading, setIsBackLoading] = useState(false)
   const [formData, setFormData] = useState({ identifier: '', password: '' })
   const [error, setError] = useState('')
 
-  // If already logged in as sub_admin redirect directly to students
   useEffect(() => {
+    // If already logged in as sub_admin redirect directly to students
     const token = authStorage.get('access_token')
     const role = authStorage.get('user_role')
     if (token && role === 'sub_admin') {
       router.replace('/super-admin/students')
+      return
     }
-  }, [router])
+    // Show session-expired banner when redirected here after token expiry
+    if (searchParams.get('reason') === 'session_expired') {
+      setError('Your session has expired. Please sign in again.')
+    }
+  }, [router, searchParams])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()

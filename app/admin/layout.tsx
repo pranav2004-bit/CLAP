@@ -117,6 +117,20 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
     return <CubeLoader />
   }
 
+  // Sub-admins are only allowed on the students page.
+  // If they somehow navigate to any other route (direct URL, browser back, etc.)
+  // bounce them immediately — before the page renders and fires admin-only API
+  // calls that would return 401 and incorrectly trigger a session-expired redirect.
+  if (isSubAdmin) {
+    const onStudents =
+      pathname === '/super-admin/students' ||
+      pathname === '/admin/students'
+    if (!onStudents) {
+      router.replace('/super-admin/students')
+      return <CubeLoader />
+    }
+  }
+
   // Check if a route is currently active — supports both /super-admin/* and /admin/* URLs
   const isActive = (route: string) => {
     // Convert super-admin path to admin path for comparison (rewrite means both URLs can appear)
