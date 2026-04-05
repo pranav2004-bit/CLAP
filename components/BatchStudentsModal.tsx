@@ -77,9 +77,9 @@ export function BatchStudentsModal({ batch, onClose }: BatchStudentsModalProps) 
         } else {
             const query = searchQuery.toLowerCase()
             const filtered = students.filter(student =>
-                student.student_id.toLowerCase().includes(query) ||
+                student.student_id?.toLowerCase().includes(query) ||
                 student.full_name?.toLowerCase().includes(query) ||
-                student.email.toLowerCase().includes(query)
+                student.email?.toLowerCase().includes(query)
             )
             setFilteredStudents(filtered)
         }
