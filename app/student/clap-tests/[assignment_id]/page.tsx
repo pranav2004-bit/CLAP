@@ -37,6 +37,7 @@ export default function StudentClapTestDetailPage() {
 
   // Fullscreen prompt — shown once when test loads so user gesture can grant fullscreen
   const [showFullscreenPrompt, setShowFullscreenPrompt] = useState(false)
+  const [fullscreenBlocked, setFullscreenBlocked] = useState(false)
   // Fullscreen exit warning — blocking modal when student exits fullscreen mid-test
   const [showFullscreenExitWarning, setShowFullscreenExitWarning] = useState(false)
   // Fullscreen exit strike tracking: 1st/2nd → modal + 20 s countdown; 3rd → instant auto-submit
@@ -920,19 +921,31 @@ export default function StudentClapTestDetailPage() {
       {showFullscreenPrompt && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-gray-950 px-4">
           <div className="bg-white rounded-2xl p-8 max-w-sm w-full shadow-2xl text-center">
-            <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                  d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />
-              </svg>
+            <div className={`w-16 h-16 ${fullscreenBlocked ? 'bg-red-50' : 'bg-indigo-50'} rounded-full flex items-center justify-center mx-auto mb-4`}>
+              {fullscreenBlocked ? (
+                <svg className="w-8 h-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                </svg>
+              ) : (
+                <svg className="w-8 h-8 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />
+                </svg>
+              )}
             </div>
-            <h2 className="text-lg font-bold text-gray-900 mb-2">Fullscreen Required</h2>
+            <h2 className="text-lg font-bold text-gray-900 mb-2">
+              {fullscreenBlocked ? 'Fullscreen Blocked' : 'Fullscreen Required'}
+            </h2>
             <p className="text-sm text-gray-500 mb-6">
-              This assessment must be taken in fullscreen mode. Tab switching is monitored.
+              {fullscreenBlocked
+                ? 'Your browser blocked fullscreen. Please click "Allow" if your browser shows a permission prompt, or check that fullscreen is not disabled in your browser settings.'
+                : 'This assessment must be taken in fullscreen mode. Tab switching is monitored.'}
             </p>
             <button
-              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 rounded-xl transition-colors"
+              className={`w-full ${fullscreenBlocked ? 'bg-red-600 hover:bg-red-700' : 'bg-indigo-600 hover:bg-indigo-700'} text-white font-semibold py-3 rounded-xl transition-colors`}
               onClick={async () => {
+                setFullscreenBlocked(false)
                 // Pre-request microphone permission if a Speaking module exists.
                 // This fires the browser permission dialog BEFORE fullscreen so it
                 // doesn't interrupt (and exit) the fullscreen session mid-test.
@@ -944,11 +957,18 @@ export default function StudentClapTestDetailPage() {
                     // User denied — continue anyway; speaking module handles missing permission
                   }
                 }
-                await requestFullscreen()
-                setShowFullscreenPrompt(false)
+                const success = await requestFullscreen()
+                // Verify browser actually entered fullscreen before closing the prompt.
+                // If blocked/denied, keep the prompt open with a clear retry message.
+                const actuallyFullscreen = !!(document.fullscreenElement || (document as any).webkitFullscreenElement)
+                if (success && actuallyFullscreen) {
+                  setShowFullscreenPrompt(false)
+                } else {
+                  setFullscreenBlocked(true)
+                }
               }}
             >
-              Enter Fullscreen & Begin
+              {fullscreenBlocked ? 'Try Again' : 'Enter Fullscreen & Begin'}
             </button>
           </div>
         </div>

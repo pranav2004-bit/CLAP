@@ -80,22 +80,24 @@ export function useAntiCheat({ onTabSwitch, onFullscreenExit, enabled = true }: 
     }
   }, [enabled])
 
-  const requestFullscreen = useCallback(async () => {
+  const requestFullscreen = useCallback(async (): Promise<boolean> => {
     try {
       // If already in fullscreen (e.g. overview page requested it and we just
       // navigated here), skip the API call and sync the ref immediately so
       // the exit detection works straight away.
       if (document.fullscreenElement || (document as any).webkitFullscreenElement) {
         isFullscreen.current = true
-        return
+        return true
       }
       await document.documentElement.requestFullscreen({ navigationUI: 'hide' })
       isFullscreen.current = true
+      return true
     } catch (_e) {
       // iOS Safari does not support requestFullscreen — caller applies CSS simulation.
       // Sync from actual browser state in case the element is still fullscreen
       // despite the exception (some browsers throw on already-fullscreen calls).
       isFullscreen.current = !!(document.fullscreenElement || (document as any).webkitFullscreenElement)
+      return isFullscreen.current
     }
   }, [])
 
