@@ -419,7 +419,7 @@ export default function ClapTestTakingPage({
     // ── Anti-cheat hook ───────────────────────────────────────────────────────
     // onTabSwitch calls forceSubmitRef.current() — a stable forward-ref that will
     // point to the real handleForceSubmitAll once it is defined below.
-    const { requestFullscreen, exitFullscreen } = useAntiCheat({
+    const { requestFullscreen, exitFullscreen, allowNavigation } = useAntiCheat({
         // Disable when embedded — the parent shell (hub page) owns anti-cheat
         enabled: !externalFullscreen && !isLoading,
         onTabSwitch: handleTabSwitch,
@@ -1026,6 +1026,23 @@ export default function ClapTestTakingPage({
             {saveStatus === 'error' && (
                 <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
                     <div className="bg-white rounded-2xl p-8 max-w-sm w-full shadow-2xl text-center">
+                        {/* Exit button — top of card */}
+                        <div className="flex justify-center mb-5">
+                            <button
+                                onClick={async () => {
+                                    allowNavigation()
+                                    await exitFullscreen()
+                                    router.push('/student/clap-tests')
+                                }}
+                                className="inline-flex items-center gap-2 px-5 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-full transition-colors"
+                            >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                                </svg>
+                                Exit Test
+                            </button>
+                        </div>
+
                         {/* Icon */}
                         <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4">
                             <AlertCircle className="w-8 h-8 text-red-500" />
