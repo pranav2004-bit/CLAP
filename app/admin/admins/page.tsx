@@ -7,14 +7,6 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import {
   Edit,
   KeyRound,
   Loader2,
@@ -23,6 +15,7 @@ import {
   RotateCcw,
   ShieldCheck,
   Trash2,
+  X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { API_BASE_URL, getAuthHeaders } from '@/lib/api-config'
@@ -33,10 +26,54 @@ interface Admin {
   full_name: string
   is_active: boolean
   created_at: string | null
-  default_password: string
 }
 
 const DEFAULT_PASSWORD = 'CLAP@123'
+
+// ── Simple overlay modal ──────────────────────────────────────────────────────
+function Modal({
+  open,
+  onClose,
+  title,
+  description,
+  children,
+}: {
+  open: boolean
+  onClose: () => void
+  title: string
+  description?: string
+  children: React.ReactNode
+}) {
+  // Close on Escape key
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [open, onClose])
+
+  if (!open) return null
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+      {/* Panel */}
+      <div className="relative z-10 bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
+            {description && <p className="text-sm text-gray-500 mt-0.5">{description}</p>}
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors ml-4 flex-shrink-0">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  )
+}
 
 export default function AdminsPage() {
   const [admins, setAdmins] = useState<Admin[]>([])
@@ -53,7 +90,7 @@ export default function AdminsPage() {
   const [editForm, setEditForm] = useState({ email: '', full_name: '' })
   const [editLoading, setEditLoading] = useState(false)
 
-  // Delete confirm
+  // Delete confirm modal
   const [deleteTarget, setDeleteTarget] = useState<Admin | null>(null)
   const [deleteLoading, setDeleteLoading] = useState(false)
 
@@ -84,7 +121,7 @@ export default function AdminsPage() {
       })
       const data = await res.json()
       if (!res.ok) { toast.error(data.error || 'Failed to create admin'); return }
-      toast.success(`Admin ${data.admin.email} created. Default password: ${DEFAULT_PASSWORD}`)
+      toast.success(`Admin created. Default password: ${DEFAULT_PASSWORD}`)
       setAdmins(prev => [data.admin, ...prev])
       setAddOpen(false)
       setAddForm({ email: '', full_name: '' })
@@ -130,7 +167,6 @@ export default function AdminsPage() {
     const action = admin.is_active ? 'disable' : 'enable'
     if (!confirm(`${action === 'enable' ? 'Enable' : 'Disable'} admin "${admin.email}"?`)) return
 
-    // Optimistic update
     setAdmins(prev => prev.map(a => a.id === admin.id ? { ...a, is_active: !a.is_active } : a))
     try {
       const res = await fetch(`${API_BASE_URL}/admin/admins/${admin.id}/toggle`, {
@@ -141,9 +177,9 @@ export default function AdminsPage() {
       if (!res.ok) {
         setAdmins(prev => prev.map(a => a.id === admin.id ? { ...a, is_active: admin.is_active } : a))
         toast.error(data.error || `Failed to ${action} admin`)
-        return
+      } else {
+        toast.success(`Admin ${action}d`)
       }
-      toast.success(`Admin ${action}d`)
     } catch {
       setAdmins(prev => prev.map(a => a.id === admin.id ? { ...a, is_active: admin.is_active } : a))
       toast.error(`Failed to ${action} admin`)
@@ -260,42 +296,34 @@ export default function AdminsPage() {
                       </td>
                       <td className="p-4">
                         <div className="flex items-center justify-center gap-1">
-                          <Button
-                            size="sm"
-                            variant="ghost"
+                          <button
                             onClick={() => openEdit(admin)}
-                            className="h-8 w-8 p-0"
+                            className="h-8 w-8 flex items-center justify-center rounded hover:bg-gray-100 transition-colors"
                             title="Edit"
                           >
-                            <Edit className="w-3.5 h-3.5" />
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
+                            <Edit className="w-3.5 h-3.5 text-gray-500" />
+                          </button>
+                          <button
                             onClick={() => handleToggle(admin)}
-                            className="h-8 w-8 p-0"
+                            className="h-8 w-8 flex items-center justify-center rounded hover:bg-gray-100 transition-colors"
                             title={admin.is_active ? 'Disable' : 'Enable'}
                           >
                             <Power className={`w-3.5 h-3.5 ${admin.is_active ? 'text-red-500' : 'text-green-500'}`} />
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
+                          </button>
+                          <button
                             onClick={() => handleResetPassword(admin)}
-                            className="h-8 w-8 p-0"
+                            className="h-8 w-8 flex items-center justify-center rounded hover:bg-gray-100 transition-colors"
                             title="Reset password"
                           >
                             <KeyRound className="w-3.5 h-3.5 text-amber-500" />
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
+                          </button>
+                          <button
                             onClick={() => setDeleteTarget(admin)}
-                            className="h-8 w-8 p-0"
+                            className="h-8 w-8 flex items-center justify-center rounded hover:bg-gray-100 transition-colors"
                             title="Delete"
                           >
                             <Trash2 className="w-3.5 h-3.5 text-red-500" />
-                          </Button>
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -307,7 +335,6 @@ export default function AdminsPage() {
         </CardContent>
       </Card>
 
-      {/* Refresh button */}
       <div className="flex justify-end">
         <Button variant="outline" onClick={fetchAdmins} className="gap-2">
           <RotateCcw className="w-4 h-4" />
@@ -315,100 +342,97 @@ export default function AdminsPage() {
         </Button>
       </div>
 
-      {/* ── Add Admin Dialog ─────────────────────────────────────────────────── */}
-      <Dialog open={addOpen} onOpenChange={setAddOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Add Admin</DialogTitle>
-            <DialogDescription>
-              Create a new admin account. Default password will be <code className="text-xs bg-gray-100 px-1 rounded">{DEFAULT_PASSWORD}</code>.
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleAdd} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="add-email">Email *</Label>
-              <Input
-                id="add-email"
-                type="email"
-                placeholder="admin@example.com"
-                value={addForm.email}
-                onChange={e => setAddForm(f => ({ ...f, email: e.target.value }))}
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="add-name">Full Name</Label>
-              <Input
-                id="add-name"
-                placeholder="John Doe"
-                value={addForm.full_name}
-                onChange={e => setAddForm(f => ({ ...f, full_name: e.target.value }))}
-              />
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setAddOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={addLoading}>
-                {addLoading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Creating…</> : 'Create Admin'}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* ── Edit Admin Dialog ─────────────────────────────────────────────────── */}
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Edit Admin</DialogTitle>
-            <DialogDescription>Update admin account details.</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleEdit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="edit-email">Email *</Label>
-              <Input
-                id="edit-email"
-                type="email"
-                value={editForm.email}
-                onChange={e => setEditForm(f => ({ ...f, email: e.target.value }))}
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-name">Full Name</Label>
-              <Input
-                id="edit-name"
-                value={editForm.full_name}
-                onChange={e => setEditForm(f => ({ ...f, full_name: e.target.value }))}
-              />
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={editLoading}>
-                {editLoading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Saving…</> : 'Save Changes'}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* ── Delete Confirm Dialog ─────────────────────────────────────────────── */}
-      <Dialog open={!!deleteTarget} onOpenChange={open => !open && setDeleteTarget(null)}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Delete Admin</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to permanently delete <strong>{deleteTarget?.email}</strong>?
-              This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button>
-            <Button variant="destructive" onClick={handleDelete} disabled={deleteLoading}>
-              {deleteLoading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Deleting…</> : 'Delete'}
+      {/* ── Add Admin Modal ───────────────────────────────────────────────────── */}
+      <Modal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        title="Add Admin"
+        description={`Create a new admin account. Default password: ${DEFAULT_PASSWORD}`}
+      >
+        <form onSubmit={handleAdd} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="add-email">Email *</Label>
+            <Input
+              id="add-email"
+              type="email"
+              placeholder="admin@example.com"
+              value={addForm.email}
+              onChange={e => setAddForm(f => ({ ...f, email: e.target.value }))}
+              required
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="add-name">Full Name</Label>
+            <Input
+              id="add-name"
+              placeholder="John Doe"
+              value={addForm.full_name}
+              onChange={e => setAddForm(f => ({ ...f, full_name: e.target.value }))}
+            />
+          </div>
+          <div className="flex gap-2 justify-end pt-2">
+            <Button type="button" variant="outline" onClick={() => setAddOpen(false)}>Cancel</Button>
+            <Button type="submit" disabled={addLoading}>
+              {addLoading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Creating…</> : 'Create Admin'}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </div>
+        </form>
+      </Modal>
+
+      {/* ── Edit Admin Modal ──────────────────────────────────────────────────── */}
+      <Modal
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        title="Edit Admin"
+        description="Update admin account details."
+      >
+        <form onSubmit={handleEdit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="edit-email">Email *</Label>
+            <Input
+              id="edit-email"
+              type="email"
+              value={editForm.email}
+              onChange={e => setEditForm(f => ({ ...f, email: e.target.value }))}
+              required
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="edit-name">Full Name</Label>
+            <Input
+              id="edit-name"
+              value={editForm.full_name}
+              onChange={e => setEditForm(f => ({ ...f, full_name: e.target.value }))}
+            />
+          </div>
+          <div className="flex gap-2 justify-end pt-2">
+            <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>
+            <Button type="submit" disabled={editLoading}>
+              {editLoading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Saving…</> : 'Save Changes'}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* ── Delete Confirm Modal ──────────────────────────────────────────────── */}
+      <Modal
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete Admin"
+        description={`Permanently delete "${deleteTarget?.email}"? This cannot be undone.`}
+      >
+        <div className="flex gap-2 justify-end pt-2">
+          <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+          <Button
+            variant="destructive"
+            onClick={handleDelete}
+            disabled={deleteLoading}
+            className="bg-red-600 hover:bg-red-700 text-white"
+          >
+            {deleteLoading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Deleting…</> : 'Delete'}
+          </Button>
+        </div>
+      </Modal>
     </div>
   )
 }
