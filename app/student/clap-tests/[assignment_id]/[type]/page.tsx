@@ -1121,10 +1121,10 @@ export default function ClapTestTakingPage({
                             <button
                                 className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 rounded-xl transition-colors disabled:opacity-50"
                                 disabled={autoSubmitActive}
-                                onClick={async () => {
-                                    await requestFullscreen()
+                                onClick={() => {
                                     setShowFullscreenModal(false)
                                     setFsExitCountdown(20)
+                                    void requestFullscreen()
                                 }}
                             >
                                 <Maximize2 className="w-4 h-4 inline mr-2" />
