@@ -9,13 +9,13 @@ export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
 
   // Define public paths that don't require authentication
-  const publicPaths = ['/login', '/admin-login', '/', '/api']
+  const publicPaths = ['/login', '/super-admin', '/admin-login', '/', '/api']
   const isPublicPath = publicPaths.some(path =>
     pathname === path || pathname.startsWith(`${path}/`)
   )
 
   // Define admin-only paths
-  const isAdminPath = pathname.startsWith('/admin')
+  const isAdminPath = pathname.startsWith('/admin') || pathname.startsWith('/super-admin')
 
   // For now, we'll handle authentication redirects in client components
   // This middleware focuses on basic routing protection

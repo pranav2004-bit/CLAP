@@ -54,12 +54,12 @@ export const handle401 = () => {
     // student login page when sessionStorage was empty (e.g. after a hard
     // browser refresh that wiped the tab's sessionStorage).
     const role = authStorage.get('user_role')
-    const isAdminRoute = window.location.pathname.startsWith('/admin')
+    const isAdminRoute = window.location.pathname.startsWith('/admin') || window.location.pathname.startsWith('/super-admin')
 
     // Clear all auth tokens — the session is truly expired
     authStorage.clear()
 
-    const loginPath = (role === 'admin' || isAdminRoute) ? '/admin-login' : '/login'
+    const loginPath = (role === 'admin' || isAdminRoute) ? '/super-admin' : '/login'
     window.location.href = `${loginPath}?reason=session_expired`
 }
 

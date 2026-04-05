@@ -46,7 +46,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
 
       // No token or wrong role → redirect immediately, render nothing
       if (!token || role !== 'admin') {
-        window.location.replace('/admin-login?reason=session_expired')
+        window.location.replace('/super-admin?reason=session_expired')
         return
       }
 
@@ -65,7 +65,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
         const currentToken = authStorage.get('access_token')
         if (!currentToken) {
           // Token was cleared externally (logout in another tab, etc.)
-          window.location.replace('/admin-login?reason=session_expired')
+          window.location.replace('/super-admin?reason=session_expired')
           return
         }
         const exp = Number(authStorage.get('token_expires_at') || 0)
@@ -123,7 +123,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
         {/* Logo Header */}
         <div className="flex flex-col items-center gap-1 px-6 py-5 border-b border-gray-200 text-center shrink-0">
           <Image src="/images/clap-logo.png?v=new" alt="CLAP Logo" width={113} height={46} className="w-auto h-10 object-contain" priority style={{ width: 'auto', height: 'auto' }} />
-          <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mt-1">Admin Portal</p>
+          <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mt-1">Super Admin Portal</p>
         </div>
 
         {/* Navigation */}
@@ -269,7 +269,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
               document.cookie.split(";").forEach((c) => {
                 document.cookie = c.replace(/^ +/, "").replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/");
               });
-              window.location.href = '/admin-login';
+              window.location.href = '/super-admin';
             }}
             className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 transition-colors"
           >
