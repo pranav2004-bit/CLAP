@@ -10,12 +10,6 @@ const nextConfig = {
   // Remove X-Powered-By: Next.js header — do not expose framework version
   poweredByHeader: false,
 
-  // CDN asset prefix — set NEXT_PUBLIC_CDN_URL in .env to serve JS/CSS/fonts
-  // from CloudFront or any CDN edge (e.g. https://cdn.yourdomain.com).
-  // Leave unset in local dev — Next.js serves assets from localhost.
-  // Production: NEXT_PUBLIC_CDN_URL=https://your-cloudfront-distribution.cloudfront.net
-  assetPrefix: process.env.NEXT_PUBLIC_CDN_URL || '',
-
   // Instruct Next.js to only bundle the specific named exports imported per
   // file, instead of pulling in the entire library on every page.
   // lucide-react has 1,400+ icons; recharts ships multiple chart types.
