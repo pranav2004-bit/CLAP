@@ -184,8 +184,11 @@ def student_test_items(request, assignment_id, component_id):
     except StudentClapAssignment.DoesNotExist:
         return JsonResponse({'error': 'Assignment not found'}, status=404)
 
-    # Block access to components of already-completed or expired assignments
-    if assignment.status in ('completed', 'expired', 'test_deleted'):
+    # Read-only mode: completed/expired assignments can still be viewed (not edited).
+    # The student sees their submitted answers but cannot change or re-submit them.
+    # test_deleted is a hard block — the test no longer exists so nothing to show.
+    read_only_mode = assignment.status in ('completed', 'expired')
+    if assignment.status == 'test_deleted':
         return JsonResponse({'error': 'Assignment already completed', 'code': 'ALREADY_COMPLETED'}, status=403)
 
     # Verify component belongs to the assigned test
@@ -194,8 +197,8 @@ def student_test_items(request, assignment_id, component_id):
     except ClapTestComponent.DoesNotExist:
         return JsonResponse({'error': 'Component not found in this test'}, status=404)
 
-    # If assignment hasn't started, mark it as started
-    if not assignment.started_at:
+    # If assignment hasn't started, mark it as started (skip in read-only mode)
+    if not read_only_mode and not assignment.started_at:
         assignment.started_at = timezone.now()
         assignment.status = 'started'
         assignment.save()
@@ -215,20 +218,24 @@ def student_test_items(request, assignment_id, component_id):
             effective_title = set_comp_meta['title']
 
     # Create or retrieve ComponentAttempt — this is the server-issued deadline.
-    # The deadline uses the student's set-specific duration, not the structural
-    # slot's default, so different sets can have different component time limits.
-    now = timezone.now()
-    attempt, attempt_created = ComponentAttempt.objects.get_or_create(
-        assignment=assignment,
-        component=component,
-        defaults={
-            'started_at': now,
-            'deadline': now + timezone.timedelta(minutes=effective_duration),
-            'status': 'active',
-        }
-    )
-    server_deadline_iso = attempt.deadline.isoformat()
-    attempt_is_expired = attempt.is_expired()
+    # Skipped in read-only mode: the attempt already exists (component was submitted)
+    # and we must not create a new one or modify the existing deadline.
+    if read_only_mode:
+        server_deadline_iso = None
+        attempt_is_expired = True
+    else:
+        now = timezone.now()
+        attempt, attempt_created = ComponentAttempt.objects.get_or_create(
+            assignment=assignment,
+            component=component,
+            defaults={
+                'started_at': now,
+                'deadline': now + timezone.timedelta(minutes=effective_duration),
+                'status': 'active',
+            }
+        )
+        server_deadline_iso = attempt.deadline.isoformat()
+        attempt_is_expired = attempt.is_expired()
 
     # ── Build set-item content map ─────────────────────────────────────────
     #
@@ -484,14 +491,19 @@ def student_test_items(request, assignment_id, component_id):
             'saved_response': response_map.get(str(item.id)),
         })
 
+    attempt_started_at = None
+    if not read_only_mode:
+        attempt_started_at = attempt.started_at.isoformat()
+
     return JsonResponse({
         'component': {
             'id': str(component.id),
             'title': effective_title,
             'duration_minutes': effective_duration,
             'server_deadline': server_deadline_iso,
-            'attempt_started_at': attempt.started_at.isoformat(),
+            'attempt_started_at': attempt_started_at,
             'is_expired': attempt_is_expired,
+            'read_only': read_only_mode,
         },
         'items': items_data
     })
