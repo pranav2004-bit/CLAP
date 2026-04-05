@@ -9,7 +9,7 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from api.models import User
-from api.utils.auth import require_admin as _require_admin
+from api.utils.auth import require_admin_or_sub_admin as _require_admin
 
 logger = logging.getLogger(__name__)
 

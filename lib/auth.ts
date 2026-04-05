@@ -6,7 +6,7 @@ import { authStorage } from '@/lib/auth-storage'
 export interface User {
   id: string
   email: string
-  role: 'student' | 'admin'
+  role: 'student' | 'admin' | 'sub_admin'
   full_name: string | null
   created_at: string
 }
@@ -50,7 +50,7 @@ export interface TestAttempt {
 
 // ── Auth functions ───────────────────────────────────────────────────────────
 
-export const signIn = async (identifier: string, password: string, role: 'student' | 'admin' = 'student') => {
+export const signIn = async (identifier: string, password: string, role: 'student' | 'admin' | 'sub_admin' = 'student') => {
   try {
     const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api'
     const response = await fetch(`${apiBase}/auth/login`, {

@@ -59,7 +59,9 @@ export const handle401 = () => {
     // Clear all auth tokens — the session is truly expired
     authStorage.clear()
 
-    const loginPath = (role === 'admin' || isAdminRoute) ? '/super-admin' : '/login'
+    let loginPath = '/login'
+    if (role === 'sub_admin') loginPath = '/admin'
+    else if (role === 'admin' || isAdminRoute) loginPath = '/super-admin'
     window.location.href = `${loginPath}?reason=session_expired`
 }
 

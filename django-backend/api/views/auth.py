@@ -239,7 +239,7 @@ def login(request):
         if not identifier or not password:
             return JsonResponse({"error": "Missing identifier or password"}, status=400)
 
-        if role not in ("student", "admin"):
+        if role not in ("student", "admin", "sub_admin"):
             return JsonResponse({"error": "Invalid role"}, status=400)
 
         redis_client = _get_redis()
@@ -271,7 +271,7 @@ def login(request):
                 Q(username__iexact=identifier) |
                 Q(student_id__iexact=identifier)
             )
-        else:
+        else:  # admin or sub_admin — email-only lookup
             query = query.filter(email__iexact=identifier)
 
         user = query.first()

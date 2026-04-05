@@ -24,6 +24,18 @@ const nextConfig = {
     optimizePackageImports: ['lucide-react', 'recharts', 'framer-motion'],
   },
 
+  // Serve all super-admin pages at /super-admin/* without moving the 47 files
+  // under app/admin/. Requests to /super-admin/dashboard → renders /admin/dashboard,
+  // but the browser URL stays as /super-admin/dashboard.
+  async rewrites() {
+    return [
+      {
+        source: '/super-admin/:path+',
+        destination: '/admin/:path+',
+      },
+    ]
+  },
+
   async headers() {
     return [
       {

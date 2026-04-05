@@ -34,6 +34,7 @@ from api.views.admin import (
     timer_management,    # Live timer management
     rescore_mcq,         # MCQ rescore (admin correction tool)
     dashboard_stats,     # Real-time dashboard KPI cards + analytics charts
+    admin_management,    # Sub-admin CRUD (super admin only)
 )
 from api.views.student import profile, clap_attempt, audio_upload, audio_playback
 from api.views.student import timer_status as student_timer_status
@@ -153,6 +154,14 @@ urlpatterns = [
     # Admin Dashboard Stats (real-time KPI + analytics)
     path('admin/stats/dashboard', dashboard_stats.dashboard_stats, name='admin_stats_dashboard'),
     path('admin/stats/analytics', dashboard_stats.analytics_stats, name='admin_stats_analytics'),
+
+    # ============================================
+    # ADMIN MANAGEMENT — sub_admin CRUD (super admin only)
+    # ============================================
+    path('admin/admins', admin_management.admins_handler, name='admin_admins_list_create'),
+    path('admin/admins/<uuid:admin_id>', admin_management.admin_detail_handler, name='admin_admins_detail'),
+    path('admin/admins/<uuid:admin_id>/toggle', admin_management.admin_toggle_active, name='admin_admins_toggle'),
+    path('admin/admins/<uuid:admin_id>/reset-password', admin_management.admin_reset_password, name='admin_admins_reset_password'),
 
     # Score Management
     path('admin/scores/search', score_management.scores_search, name='admin_scores_search'),

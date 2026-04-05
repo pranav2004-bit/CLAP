@@ -19,7 +19,7 @@ import uuid
 
 from api.models import User
 from api.utils import success_response, error_response
-from api.utils.auth import require_admin as _require_admin
+from api.utils.auth import require_admin_or_sub_admin as _require_admin
 
 logger = logging.getLogger(__name__)
 

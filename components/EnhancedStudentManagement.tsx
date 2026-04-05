@@ -69,14 +69,13 @@ export function EnhancedStudentManagement({ refreshKey = 0 }: EnhancedStudentMan
   })
   const [isSaving, setIsSaving] = useState(false)
 
-  // Fetch students data
+  // Fetch students data — re-runs when refreshKey changes (e.g. after bulk import)
   useEffect(() => {
-    // Only do initial load
     fetchStudents()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [refreshKey])
 
-  // Filter students based on search
+  // Filter students based on search query (client-side, across all loaded data)
   useEffect(() => {
     if (!searchQuery.trim()) {
       setFilteredStudents(students)
@@ -84,12 +83,13 @@ export function EnhancedStudentManagement({ refreshKey = 0 }: EnhancedStudentMan
       const query = searchQuery.toLowerCase()
       const filtered = students.filter(student =>
         student.student_id.toLowerCase().includes(query) ||
+        student.username?.toLowerCase().includes(query) ||
         student.full_name?.toLowerCase().includes(query) ||
         student.email.toLowerCase().includes(query)
       )
       setFilteredStudents(filtered)
     }
-    setCurrentPage(1) // Reset to first page on search
+    setCurrentPage(1)
   }, [searchQuery, students])
 
   // Pagination calculations
@@ -336,7 +336,7 @@ export function EnhancedStudentManagement({ refreshKey = 0 }: EnhancedStudentMan
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
-            placeholder="Search by Student ID (e.g., A23126551029)"
+            placeholder="Search by ID, username, name or email…"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="pl-10"
