@@ -36,7 +36,7 @@ function AdminLoginContent() {
     const token = authStorage.get('access_token')
     const role = authStorage.get('user_role')
     if (token && role === 'sub_admin') {
-      router.replace('/super-admin/students')
+      router.replace('/admin/students')
       return
     }
     // Show session-expired banner when redirected here after token expiry
@@ -66,7 +66,7 @@ function AdminLoginContent() {
         authStorage.set('user_name', data.user.user_metadata?.full_name || '')
 
         // Admins (sub_admin) only have access to the Students tab
-        router.push('/super-admin/students')
+        router.push('/admin/students')
       }
     } catch {
       setError('An unexpected error occurred')
