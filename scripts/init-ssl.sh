@@ -3,7 +3,7 @@
 # CLAP SSL Bootstrap — First-time Let's Encrypt setup
 # ================================================================
 # Run ONCE on EC2 after DNS A record for api.sanjivo.com has
-# propagated to 3.111.52.234 (verify with: dig api.sanjivo.com)
+# propagated to 35.154.14.203 (verify with: dig api.sanjivo.com)
 #
 # Usage:
 #   chmod +x scripts/init-ssl.sh
