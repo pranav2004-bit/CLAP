@@ -99,7 +99,11 @@ jobs:
       #   PYSEC-2026-4539 / CVE-2026-4539 — pygments 2.19.2 (transitive via ipython/weasyprint)
       #     No patched version released as of 2026-03. Risk accepted: pygments is a
       #     dev/report-rendering dependency, not exposed to untrusted user input in our stack.
-      run: pip-audit -r requirements.txt --strict --ignore-vuln CVE-2026-4539
+      #   PYSEC-2026-3412 / CVE-2026-49452 — weasyprint 68.1 (no patched version as of 2026-08)
+      #     CSS injection via HTML presentational hints, only reachable when
+      #     presentational_hints=True. Our only call site (api/tasks.py) uses
+      #     HTML(string=html).write_pdf() with the default presentational_hints=False.
+      run: pip-audit -r requirements.txt --strict --ignore-vuln CVE-2026-4539 --ignore-vuln CVE-2026-49452
 
   # ── Docker image build ───────────────────────────────────────────────────────
   # F1: Ensures the Docker image builds cleanly on every PR.
