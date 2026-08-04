@@ -156,21 +156,21 @@ services:
       # Supports 144 Django threads + 36 Celery workers multiplexing through 100
       # connections. Each connection serves ~50 tx/s at 20ms avg → pool delivers
       # ~5 000 tx/s total — 3× headroom over expected 10 000-user peak load.
-      DEFAULT_POOL_SIZE: "100"
+      DEFAULT_POOL_SIZE: "15"
       # 10 warm standby connections always open.
       # Eliminates cold-start latency on first post-idle request (~100-300ms saved
       # per TCP+TLS+auth handshake to RDS). Critical after low-traffic nights.
-      MIN_POOL_SIZE: "10"
+      MIN_POOL_SIZE: "2"
       # 20 extra connections reserved for traffic spikes and admin operations.
       # Spike buffer handles exam-end burst (thousands of students submitting
       # simultaneously) without pool exhaustion.
-      RESERVE_POOL_SIZE: "20"
+      RESERVE_POOL_SIZE: "5"
       # Use reserve pool after 3 seconds of regular pool being exhausted.
       RESERVE_POOL_TIMEOUT: "3"
       # 2000 client connections allowed (144 Django + 36 Celery + 1820 headroom).
       # Headroom absorbs horizontal scaling (additional Celery worker instances)
       # and any connection leak before it causes a hard failure.
-      MAX_CLIENT_CONN: "2000"
+      MAX_CLIENT_CONN: "200"
       # Fail fast: if no pool slot available after 15 s → return error to client.
       # 15 s is the right balance: long enough for a transient spike to drain,
       # short enough to prevent Nginx upstream queue from growing unbounded.
@@ -271,15 +271,15 @@ services:
     #   512 MB headroom above maxmemory for AOF buffer, fork COW copy, and
     #   Redis internal metadata. Without this margin, Linux OOM-killer fires
     #   BEFORE Redis's own eviction logic, killing the container abruptly.
-    mem_limit: 4608m
-    memswap_limit: 4608m    # disable swap — hard OOM-kill, no disk thrashing
+    mem_limit: 640m
+    memswap_limit: 640m    # disable swap — hard OOM-kill, no disk thrashing
     ulimits:
       nofile:
         soft: 65536
         hard: 65536
     command: >
       redis-server
-        --maxmemory 4gb
+        --maxmemory 512mb
         --maxmemory-policy volatile-lru
         --appendonly yes
         --appendfsync everysec
@@ -328,8 +328,10 @@ services:
       #          2.5 GB container limit gives a tight but safe ceiling on t3.xlarge (16 GB).
       # DB conns: up to 144 PgBouncer client slots (not raw RDS — pooler multiplexes 100).
       # NOTE: requires t3.xlarge (4 vCPU, 16 GB). On t3.large reduce back to "5".
-      GUNICORN_WORKERS: "9"
-      GUNICORN_THREADS: "16"
+      # Tier 1 (Pilot, 50-100 students, 2 vCPU): 3 workers x 4 threads = 12 concurrent
+      # request slots. Scale up per the CLAP capacity tiers as real usage grows.
+      GUNICORN_WORKERS: "3"
+      GUNICORN_THREADS: "4"
       GUNICORN_TIMEOUT: "120"
       # Graceful timeout: 30s — lets in-flight requests finish during rolling deploys
       GUNICORN_GRACEFUL_TIMEOUT: "30"
@@ -351,8 +353,8 @@ services:
     # it can starve Redis, PgBouncer, or Celery containers on the same host.
     # Without a cap, a memory leak in one worker drains all EC2 RAM and triggers a
     # cascade OOM-kill of every container simultaneously (the worst possible failure mode).
-    mem_limit: 2560m
-    memswap_limit: 2560m    # disable swap — hard OOM-kill, no disk thrashing
+    mem_limit: 1280m
+    memswap_limit: 1280m    # disable swap — hard OOM-kill, no disk thrashing
     # Raise open-file limit so Django can hold 80 simultaneous socket connections
     # (threads) + PgBouncer connections + S3 HTTP connections without EMFILE errors.
     ulimits:
@@ -394,8 +396,8 @@ services:
       dockerfile: Dockerfile
       target: runtime
     restart: unless-stopped
-    mem_limit: 1536m          # P1-6: hard OOM kill at 1.5 GB (FFmpeg leak safety net)
-    memswap_limit: 1536m      # disable swap — OOM-kill immediately, no swap thrash
+    mem_limit: 800m          # Tier 1 pilot: 1 worker (FFmpeg leak safety net)
+    memswap_limit: 800m      # disable swap — OOM-kill immediately, no swap thrash
     env_file:
       - ./django-backend/.env
     environment:
@@ -415,7 +417,7 @@ services:
       python -m celery -A clap_backend worker
         --loglevel=info
         --queues=llm_evaluation
-        --concurrency=2
+        --concurrency=1
         --hostname=llm@%h
         --max-tasks-per-child=10
 
@@ -429,8 +431,8 @@ services:
       dockerfile: Dockerfile
       target: runtime
     restart: unless-stopped
-    mem_limit: 1024m          # PDF generation (WeasyPrint/ReportLab): ~300 MB per task × 2 = 600 MB + overhead
-    memswap_limit: 1024m
+    mem_limit: 512m          # Tier 1 pilot: 1 worker, PDF generation (WeasyPrint/ReportLab)
+    memswap_limit: 512m
     env_file:
       - ./django-backend/.env
     environment:
@@ -450,7 +452,7 @@ services:
       python -m celery -A clap_backend worker
         --loglevel=info
         --queues=report_gen
-        --concurrency=2
+        --concurrency=1
         --hostname=reports@%h
         --max-tasks-per-child=100
 
@@ -472,8 +474,8 @@ services:
       dockerfile: Dockerfile
       target: runtime
     restart: unless-stopped
-    mem_limit: 2048m          # 32 workers × ~50 MB = 1.6 GB working set + 448 MB overhead
-    memswap_limit: 2048m
+    mem_limit: 512m          # Tier 1 pilot: 4 workers × ~50 MB working set + overhead
+    memswap_limit: 512m
     env_file:
       - ./django-backend/.env
     environment:
@@ -493,7 +495,7 @@ services:
       python -m celery -A clap_backend worker
         --loglevel=info
         --queues=rule_scoring,email
-        --concurrency=32
+        --concurrency=4
         --hostname=scoring@%h
         --max-tasks-per-child=500
 
@@ -538,7 +540,7 @@ services:
   # SECURITY: flower is NOT exposed to the public internet.
   # Port 5555 is bound to 127.0.0.1 only (localhost).
   # Access via SSH tunnel from your local machine:
-  #   ssh -L 5555:localhost:5555 -i clap-production-key.pem ubuntu@35.154.14.203
+  #   ssh -L 5555:localhost:5555 -i clap-production-key.pem ubuntu@13.203.222.245
   #   Then open: http://localhost:5555
   flower:
     image: clap-backend:latest
