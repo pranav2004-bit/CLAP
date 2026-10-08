@@ -1,5 +1,11 @@
 # Database Setup Instructions
 
+> **DEPRECATED:** everything below describes an old Supabase-based setup
+> that no longer matches this app. To set up the database now, just run
+> `python manage.py migrate` from `django-backend/` — the real schema lives
+> in `django-backend/api/migrations/0000_create_core_schema.py`. Kept only
+> for historical reference.
+
 ## Prerequisites
 1. Create a Supabase account at [supabase.com](https://supabase.com)
 2. Create a new project in your Supabase dashboard

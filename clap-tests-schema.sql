@@ -1,3 +1,8 @@
+-- DEPRECATED: do not run this file. It is incomplete/stale and is no longer
+-- the source of truth for the schema. The real, verified schema now lives
+-- in Django migrations: django-backend/api/migrations/0000_create_core_schema.py
+-- Run `python manage.py migrate` instead. Kept only for historical reference.
+
 -- CLAP Tests Schema
 -- Create table for CLAP Tests (comprehensive test packages)
 

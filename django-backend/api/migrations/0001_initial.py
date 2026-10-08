@@ -10,6 +10,7 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
+        ('api', '0000_create_core_schema'),
     ]
 
     operations = [
@@ -157,6 +158,7 @@ class Migration(migrations.Migration):
             ],
             options={
                 'db_table': 'clap_test_id_counter',
+                'managed': False,
             },
         ),
         migrations.RunSQL(

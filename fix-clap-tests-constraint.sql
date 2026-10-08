@@ -1,3 +1,11 @@
+-- DEPRECATED: do not run this file. Verified against the real production
+-- database: it has NO CHECK constraint on clap_tests.status at all (status
+-- validation is enforced at the Django model layer via `choices=`, not the
+-- database layer). This script is obsolete.
+-- The real, verified schema now lives in Django migrations:
+--   django-backend/api/migrations/0000_create_core_schema.py
+-- Kept only for historical reference.
+
 -- Fix for CLAP Tests status constraint
 -- Run this to add 'deleted' to the allowed status values
 

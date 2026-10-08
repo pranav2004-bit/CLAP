@@ -1,3 +1,11 @@
+-- DEPRECATED: do not run this file. It is an early Supabase-RLS-era
+-- prototype that is fundamentally incompatible with the current app (e.g.
+-- its `users` table has no password_hash column, and its `role` constraint
+-- doesn't allow 'sub_admin'/'super_admin', which the app actively uses).
+-- The real, verified schema now lives in Django migrations:
+--   django-backend/api/migrations/0000_create_core_schema.py
+-- Run `python manage.py migrate` instead. Kept only for historical reference.
+
 -- CLAP Test Application Database Schema
 -- Run this in your Supabase SQL editor
 

@@ -1,3 +1,10 @@
+-- DEPRECATED: do not run this file. It is incomplete/stale (e.g. depends on
+-- the uuid-ossp extension and a `users` table this project no longer uses
+-- that way) and is no longer the source of truth for the schema.
+-- The real, verified schema now lives in Django migrations:
+--   django-backend/api/migrations/0000_create_core_schema.py
+-- Run `python manage.py migrate` instead. Kept only for historical reference.
+
 -- Add batches table to CLAP database
 CREATE TABLE IF NOT EXISTS batches (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
