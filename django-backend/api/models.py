@@ -295,7 +295,9 @@ class ClapTestIdCounter(models.Model):
     
     class Meta:
         db_table = 'clap_test_id_counter'
-        # Let Django manage this table since it's new
+        managed = False
+        # Table is created via migration 0000_create_core_schema (raw SQL),
+        # not Django's auto-DDL - see api/migrations/0000_create_core_schema.py
 
 
 
