@@ -260,8 +260,7 @@ export function BulkImportModal({ isOpen, onClose, onSuccess, batches }: Props) 
                             {/* Department Selection */}
                             <div>
                                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">
-                                    Step 3: Select Default Department <span className="text-red-500">*</span>
-                                    <span className="text-xs font-normal text-gray-400 ml-1">(can be overridden per-row in CSV)</span>
+                                    Step 3: Select Department <span className="text-red-500">*</span>
                                 </label>
                                 <select
                                     value={selectedDept}
@@ -273,7 +272,7 @@ export function BulkImportModal({ isOpen, onClose, onSuccess, batches }: Props) 
                                         <option key={d} value={d}>{d}</option>
                                     ))}
                                 </select>
-                                <p className="text-xs text-gray-400 mt-1">Applied to rows with no department in the CSV. Rows missing department from both sources are rejected.</p>
+                                <p className="text-xs text-gray-400 mt-1">Applied to every student in this import.</p>
                             </div>
 
                             {/* File Drop Zone */}
@@ -322,7 +321,7 @@ export function BulkImportModal({ isOpen, onClose, onSuccess, batches }: Props) 
                                 <ul className="list-disc ml-4 space-y-0.5">
                                     <li>CSV must have a column header named <code className="bg-amber-100 px-1 rounded">student_id</code></li>
                                     <li>Student IDs: 3–50 characters, letters, numbers, hyphens, underscores only</li>
-                                    <li>Optional <code className="bg-amber-100 px-1 rounded">department</code> column overrides the default department per row</li>
+                                    <li>All students in this import are assigned the department selected in Step 3</li>
                                     <li>Max 10,000 rows per upload</li>
                                     <li>Duplicate IDs (already in system) are silently skipped — no error</li>
                                     <li>All created accounts get default password: <code className="bg-amber-100 px-1 rounded">CLAP@123</code></li>

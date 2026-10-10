@@ -3,12 +3,10 @@ Bulk Student Import — Enterprise Grade
 =======================================
 POST /api/admin/students/bulk-import
     Accepts a multipart/form-data request with:
-      - file       : CSV file with a 'student_id' column (required), and an
-                     optional 'department' column (per-row override)
+      - file       : CSV file with a 'student_id' column (required)
       - batch_id   : UUID of the target batch (required)
-      - department : Default department code applied to rows with no
-                     per-row value in the CSV (required if the CSV has no
-                     'department' column, or if any row omits it)
+      - department : Department code applied to every student in this
+                     import (required)
 
     Behaviour:
       - File-level validation:  Rejects malformed files immediately.
@@ -143,20 +141,18 @@ def bulk_import_students(request):
     except Batch.DoesNotExist:
         return JsonResponse({'error': f'Batch with ID "{batch_id_raw}" does not exist.'}, status=404)
 
-    # ── 4a. Global department validation ────────────────────────────────────
-    # Applied to every row that doesn't have its own department in the CSV.
-    # If neither the CSV column nor this field provides a value, the row fails.
-    global_dept_raw = request.POST.get('department', '').strip().upper()
-    global_dept: str | None = None
-    if global_dept_raw:
-        if global_dept_raw not in VALID_DEPARTMENTS:
-            return JsonResponse({
-                'error': (
-                    f'Invalid department "{global_dept_raw}". '
-                    f'Valid options: {", ".join(sorted(VALID_DEPARTMENTS))}'
-                )
-            }, status=400)
-        global_dept = global_dept_raw
+    # ── 4a. Department validation ────────────────────────────────────────────
+    # Applied uniformly to every row in this import — not read from the CSV.
+    department = request.POST.get('department', '').strip().upper()
+    if not department:
+        return JsonResponse({'error': 'department is required. Please select a department before uploading.'}, status=400)
+    if department not in VALID_DEPARTMENTS:
+        return JsonResponse({
+            'error': (
+                f'Invalid department "{department}". '
+                f'Valid options: {", ".join(sorted(VALID_DEPARTMENTS))}'
+            )
+        }, status=400)
 
     # ── 5. Parse CSV ────────────────────────────────────────────────────────
     try:
@@ -185,11 +181,6 @@ def bulk_import_students(request):
 
     # Map the correct original header name for student_id (handles case variations)
     sid_col = reader.fieldnames[normalized_headers.index('student_id')]
-
-    # Optional department column — case-insensitive header match
-    dept_col = None
-    if 'department' in normalized_headers:
-        dept_col = reader.fieldnames[normalized_headers.index('department')]
 
     # ── 6. Row-level validation pass ───────────────────────────────────────
     valid_rows: list[dict] = []       # Dicts with 'student_id' and 'department'
@@ -226,40 +217,12 @@ def bulk_import_students(request):
             })
             continue
 
-        # Department: per-row CSV value takes priority, falls back to global default
-        raw_dept = (row.get(dept_col, '') or '').strip().upper() if dept_col else ''
-        dept_value = raw_dept or global_dept
-
-        if raw_dept and raw_dept not in VALID_DEPARTMENTS:
-            failed_rows.append({
-                'row': row_num,
-                'student_id': cleaned_id,
-                'department': raw_dept,
-                'reason': (
-                    f'Invalid department "{raw_dept}". '
-                    f'Valid options: {", ".join(sorted(VALID_DEPARTMENTS))}'
-                )
-            })
-            continue
-
-        if not dept_value:
-            failed_rows.append({
-                'row': row_num,
-                'student_id': cleaned_id,
-                'department': '',
-                'reason': (
-                    'Department is required. '
-                    'Add a "department" column to the CSV or select a default department above.'
-                )
-            })
-            continue
-
         seen_in_file.add(cleaned_id)
-        valid_rows.append({'student_id': cleaned_id, 'department': dept_value})
+        valid_rows.append({'student_id': cleaned_id, 'department': department})
 
     # For compatibility with the existing ID-based logic below
     valid_ids = [r['student_id'] for r in valid_rows]
-    dept_map: dict[str, str | None] = {r['student_id']: r['department'] for r in valid_rows}
+    dept_map: dict[str, str] = {r['student_id']: r['department'] for r in valid_rows}
 
     if not valid_ids:
         return JsonResponse({
@@ -431,11 +394,11 @@ def bulk_import_template(request):
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(['student_id', 'department'])
+    writer.writerow(['student_id'])
     writer.writerows([
-        ['A23126551001', 'CSE'],
-        ['A23126551002', 'MECH'],
-        ['A23126551003', ''],       # department is optional — leave blank if unknown
+        ['A23126551001'],
+        ['A23126551002'],
+        ['A23126551003'],
     ])
 
     response = HttpResponse(buf.getvalue(), content_type='text/csv')
