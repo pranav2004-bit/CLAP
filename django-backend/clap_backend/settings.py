@@ -410,6 +410,12 @@ CSRF_COOKIE_HTTPONLY = True
 ENFORCE_TLS = config('ENFORCE_TLS', default=not DEBUG, cast=bool)
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 SECURE_SSL_REDIRECT = ENFORCE_TLS
+# Docker's internal healthcheck (docker-compose.yml) hits gunicorn directly over
+# plain HTTP on localhost:8000, bypassing Nginx's TLS termination entirely.
+# Without this exemption, SECURE_SSL_REDIRECT 301s that request to https://,
+# which gunicorn doesn't serve on that port - the healthcheck then hangs on the
+# TLS handshake until it times out and Django is marked permanently unhealthy.
+SECURE_REDIRECT_EXEMPT = [r'^api/health']
 SESSION_COOKIE_SECURE = ENFORCE_TLS
 CSRF_COOKIE_SECURE = ENFORCE_TLS
 SECURE_HSTS_SECONDS = config('SECURE_HSTS_SECONDS', default=31536000 if ENFORCE_TLS else 0, cast=int)
