@@ -47,3 +47,5 @@ Contributions are welcome! Please ensure you:
 ## 📄 License
 
 Proprietary software. All rights reserved.
+
+<!-- vercel auto-deploy diagnostic 2026-10-10T02:32:14Z -->
