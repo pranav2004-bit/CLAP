@@ -69,6 +69,16 @@ jobs:
             echo "==> Starting Nginx and Flower..."
             docker-compose up -d nginx flower
 
+            # Nginx caches the resolved IP for "django" at its own startup and never
+            # re-resolves it on its own. Since django is rebuilt/recreated above but
+            # nginx's image never changes, Compose leaves an already-running nginx
+            # container untouched - it keeps proxying to django's OLD (now-dead) IP,
+            # causing 502s on every request until someone notices and reloads it by
+            # hand. Reload unconditionally on every deploy so this never depends on
+            # a person remembering a manual step.
+            echo "==> Reloading Nginx to re-resolve the Django upstream IP..."
+            docker-compose kill -s HUP nginx
+
             echo "==> Pruning old images..."
             docker image prune -f
 
