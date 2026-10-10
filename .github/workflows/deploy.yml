@@ -52,7 +52,7 @@ jobs:
 
             echo "==> Starting PgBouncer and waiting for it to become healthy..."
             docker-compose up -d pgbouncer
-            timeout 90 bash -c 'until [ "$(docker inspect --format={{.State.Health.Status}} clap_pgbouncer_1 2>/dev/null)" = "healthy" ]; do sleep 3; done' \
+            timeout 90 bash -c 'until [ "$(docker inspect --format={{.State.Health.Status}} clap-pgbouncer-1 2>/dev/null)" = "healthy" ]; do sleep 3; done' \
               || { echo "PgBouncer did not become healthy in 90s — dumping logs:"; docker-compose logs --tail=20 pgbouncer; exit 1; }
 
             echo "==> Starting Django and Celery workers..."
@@ -60,7 +60,7 @@ jobs:
 
             echo "==> Waiting for Django to become healthy..."
             echo "    (collectstatic + gunicorn boot with 9 workers × 16 threads can take up to 150s)"
-            timeout 150 bash -c 'until [ "$(docker inspect --format={{.State.Health.Status}} clap_django_1 2>/dev/null)" = "healthy" ]; do sleep 3; done' \
+            timeout 150 bash -c 'until [ "$(docker inspect --format={{.State.Health.Status}} clap-django-1 2>/dev/null)" = "healthy" ]; do sleep 3; done' \
               || { echo "Django did not become healthy in 150s — dumping logs:"; docker-compose logs --tail=40 django; exit 1; }
 
             echo "==> Running migrations..."
