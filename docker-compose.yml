@@ -156,15 +156,15 @@ services:
       # Supports 144 Django threads + 36 Celery workers multiplexing through 100
       # connections. Each connection serves ~50 tx/s at 20ms avg → pool delivers
       # ~5 000 tx/s total — 3× headroom over expected 10 000-user peak load.
-      DEFAULT_POOL_SIZE: "15"
+      DEFAULT_POOL_SIZE: "100"
       # 10 warm standby connections always open.
       # Eliminates cold-start latency on first post-idle request (~100-300ms saved
       # per TCP+TLS+auth handshake to RDS). Critical after low-traffic nights.
-      MIN_POOL_SIZE: "2"
+      MIN_POOL_SIZE: "10"
       # 20 extra connections reserved for traffic spikes and admin operations.
       # Spike buffer handles exam-end burst (thousands of students submitting
       # simultaneously) without pool exhaustion.
-      RESERVE_POOL_SIZE: "5"
+      RESERVE_POOL_SIZE: "20"
       # Use reserve pool after 3 seconds of regular pool being exhausted.
       RESERVE_POOL_TIMEOUT: "3"
       # 2000 client connections allowed (144 Django + 36 Celery + 1820 headroom).
@@ -353,8 +353,8 @@ services:
     # it can starve Redis, PgBouncer, or Celery containers on the same host.
     # Without a cap, a memory leak in one worker drains all EC2 RAM and triggers a
     # cascade OOM-kill of every container simultaneously (the worst possible failure mode).
-    mem_limit: 1280m
-    memswap_limit: 1280m    # disable swap — hard OOM-kill, no disk thrashing
+    mem_limit: 2560m
+    memswap_limit: 2560m    # disable swap — hard OOM-kill, no disk thrashing
     # Raise open-file limit so Django can hold 80 simultaneous socket connections
     # (threads) + PgBouncer connections + S3 HTTP connections without EMFILE errors.
     ulimits:
@@ -474,8 +474,8 @@ services:
       dockerfile: Dockerfile
       target: runtime
     restart: unless-stopped
-    mem_limit: 512m          # Tier 1 pilot: 4 workers × ~50 MB working set + overhead
-    memswap_limit: 512m
+    mem_limit: 1024m         # 4 workers; bumped from 512m - was already at 57% (290MB) idle, no headroom for exam-day load
+    memswap_limit: 1024m
     env_file:
       - ./django-backend/.env
     environment:
