@@ -13,9 +13,15 @@ interface Batch {
     batch_name: string
 }
 
+const DEPARTMENTS = [
+    'CSD', 'CSE', 'CSM', 'CSC', 'IT',
+    'MECH', 'EEE', 'ECE', 'CHEM', 'CIVIL', 'BIOTECHNOLOGY'
+]
+
 interface FailedRow {
     row: string | number
     student_id: string
+    department: string
     reason: string
 }
 
@@ -52,6 +58,7 @@ interface Props {
 export function BulkImportModal({ isOpen, onClose, onSuccess, batches }: Props) {
     const [stage, setStage] = useState<Stage>('select')
     const [selectedBatchId, setSelectedBatchId] = useState('')
+    const [selectedDept, setSelectedDept] = useState('')
     const [selectedFile, setSelectedFile] = useState<File | null>(null)
     const [dragOver, setDragOver] = useState(false)
     const [result, setResult] = useState<ImportResult | null>(null)
@@ -63,6 +70,7 @@ export function BulkImportModal({ isOpen, onClose, onSuccess, batches }: Props) 
         setStage('select')
         setSelectedFile(null)
         setSelectedBatchId('')
+        setSelectedDept('')
         setResult(null)
         setErrorMsg('')
         setDragOver(false)
@@ -134,12 +142,14 @@ export function BulkImportModal({ isOpen, onClose, onSuccess, batches }: Props) 
     const handleImport = async () => {
         if (!selectedFile) { toast.error('Please select a CSV file.'); return }
         if (!selectedBatchId) { toast.error('Please select a batch.'); return }
+        if (!selectedDept) { toast.error('Please select a default department.'); return }
 
         setStage('uploading')
 
         const formData = new FormData()
         formData.append('file', selectedFile)
         formData.append('batch_id', selectedBatchId)
+        formData.append('department', selectedDept)
 
         try {
             const res = await fetch(getApiUrl('admin/students/bulk-import'), {
@@ -247,10 +257,29 @@ export function BulkImportModal({ isOpen, onClose, onSuccess, batches }: Props) 
                                 <p className="text-xs text-gray-400 mt-1">All imported students will be assigned to this batch.</p>
                             </div>
 
+                            {/* Department Selection */}
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-1.5">
+                                    Step 3: Select Default Department <span className="text-red-500">*</span>
+                                    <span className="text-xs font-normal text-gray-400 ml-1">(can be overridden per-row in CSV)</span>
+                                </label>
+                                <select
+                                    value={selectedDept}
+                                    onChange={(e) => setSelectedDept(e.target.value)}
+                                    className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white"
+                                >
+                                    <option value="">— Select a department —</option>
+                                    {DEPARTMENTS.map((d) => (
+                                        <option key={d} value={d}>{d}</option>
+                                    ))}
+                                </select>
+                                <p className="text-xs text-gray-400 mt-1">Applied to rows with no department in the CSV. Rows missing department from both sources are rejected.</p>
+                            </div>
+
                             {/* File Drop Zone */}
                             <div>
                                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">
-                                    Step 3: Upload your CSV <span className="text-red-500">*</span>
+                                    Step 4: Upload your CSV <span className="text-red-500">*</span>
                                 </label>
                                 <div
                                     onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
@@ -293,6 +322,7 @@ export function BulkImportModal({ isOpen, onClose, onSuccess, batches }: Props) 
                                 <ul className="list-disc ml-4 space-y-0.5">
                                     <li>CSV must have a column header named <code className="bg-amber-100 px-1 rounded">student_id</code></li>
                                     <li>Student IDs: 3–50 characters, letters, numbers, hyphens, underscores only</li>
+                                    <li>Optional <code className="bg-amber-100 px-1 rounded">department</code> column overrides the default department per row</li>
                                     <li>Max 10,000 rows per upload</li>
                                     <li>Duplicate IDs (already in system) are silently skipped — no error</li>
                                     <li>All created accounts get default password: <code className="bg-amber-100 px-1 rounded">CLAP@123</code></li>
@@ -360,6 +390,7 @@ export function BulkImportModal({ isOpen, onClose, onSuccess, batches }: Props) 
                                                 <tr>
                                                     <th className="text-left px-3 py-2 text-gray-500 font-semibold">Row</th>
                                                     <th className="text-left px-3 py-2 text-gray-500 font-semibold">Student ID</th>
+                                                    <th className="text-left px-3 py-2 text-gray-500 font-semibold">Department</th>
                                                     <th className="text-left px-3 py-2 text-gray-500 font-semibold">Reason</th>
                                                 </tr>
                                             </thead>
@@ -368,6 +399,7 @@ export function BulkImportModal({ isOpen, onClose, onSuccess, batches }: Props) 
                                                     <tr key={i} className="border-t border-gray-100 hover:bg-gray-50">
                                                         <td className="px-3 py-2 text-gray-500 font-mono">{f.row}</td>
                                                         <td className="px-3 py-2 text-gray-800 font-mono">{f.student_id || '—'}</td>
+                                                        <td className="px-3 py-2 text-gray-800 font-mono">{f.department || '—'}</td>
                                                         <td className="px-3 py-2 text-red-600">{f.reason}</td>
                                                     </tr>
                                                 ))}
@@ -412,7 +444,7 @@ export function BulkImportModal({ isOpen, onClose, onSuccess, batches }: Props) 
                             </button>
                             <button
                                 onClick={handleImport}
-                                disabled={!selectedFile || !selectedBatchId}
+                                disabled={!selectedFile || !selectedBatchId || !selectedDept}
                                 className="flex items-center gap-2 text-sm font-semibold bg-indigo-600 text-white rounded-lg px-5 py-2.5 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                             >
                                 <Upload className="w-4 h-4" />

@@ -3,8 +3,12 @@ Bulk Student Import — Enterprise Grade
 =======================================
 POST /api/admin/students/bulk-import
     Accepts a multipart/form-data request with:
-      - file       : CSV file with a 'student_id' column (required)
+      - file       : CSV file with a 'student_id' column (required), and an
+                     optional 'department' column (per-row override)
       - batch_id   : UUID of the target batch (required)
+      - department : Default department code applied to rows with no
+                     per-row value in the CSV (required if the CSV has no
+                     'department' column, or if any row omits it)
 
     Behaviour:
       - File-level validation:  Rejects malformed files immediately.
@@ -47,6 +51,12 @@ MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024   # 5 MB hard cap
 MAX_ROWS = 10_000                        # Realistic upper limit for one import
 STUDENT_ID_RE = re.compile(r'^[A-Za-z0-9_\-]{3,50}$')  # Allow alphanumeric, underscore, hyphen 3-50 chars
 
+# Valid department codes — must stay in sync with frontend dropdown.
+VALID_DEPARTMENTS = frozenset({
+    'CSD', 'CSE', 'CSM', 'CSC', 'IT',
+    'MECH', 'EEE', 'ECE', 'CHEM', 'CIVIL', 'BIOTECHNOLOGY',
+})
+
 
 # ── Validation helpers ─────────────────────────────────────────────────────────
 
@@ -77,9 +87,9 @@ def _build_failed_csv(failed_rows: list[dict]) -> str:
     """Builds a base64-encoded CSV of failed rows for admin download."""
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(['row_number', 'student_id', 'reason'])
+    writer.writerow(['row_number', 'student_id', 'department', 'reason'])
     for row in failed_rows:
-        writer.writerow([row['row'], row['student_id'], row['reason']])
+        writer.writerow([row['row'], row['student_id'], row.get('department', ''), row['reason']])
     csv_bytes = buf.getvalue().encode('utf-8')
     return base64.b64encode(csv_bytes).decode('ascii')
 
@@ -133,6 +143,21 @@ def bulk_import_students(request):
     except Batch.DoesNotExist:
         return JsonResponse({'error': f'Batch with ID "{batch_id_raw}" does not exist.'}, status=404)
 
+    # ── 4a. Global department validation ────────────────────────────────────
+    # Applied to every row that doesn't have its own department in the CSV.
+    # If neither the CSV column nor this field provides a value, the row fails.
+    global_dept_raw = request.POST.get('department', '').strip().upper()
+    global_dept: str | None = None
+    if global_dept_raw:
+        if global_dept_raw not in VALID_DEPARTMENTS:
+            return JsonResponse({
+                'error': (
+                    f'Invalid department "{global_dept_raw}". '
+                    f'Valid options: {", ".join(sorted(VALID_DEPARTMENTS))}'
+                )
+            }, status=400)
+        global_dept = global_dept_raw
+
     # ── 5. Parse CSV ────────────────────────────────────────────────────────
     try:
         raw_content = uploaded_file.read().decode('utf-8-sig')  # utf-8-sig strips BOM from Excel exports
@@ -161,8 +186,13 @@ def bulk_import_students(request):
     # Map the correct original header name for student_id (handles case variations)
     sid_col = reader.fieldnames[normalized_headers.index('student_id')]
 
+    # Optional department column — case-insensitive header match
+    dept_col = None
+    if 'department' in normalized_headers:
+        dept_col = reader.fieldnames[normalized_headers.index('department')]
+
     # ── 6. Row-level validation pass ───────────────────────────────────────
-    valid_ids: list[str] = []         # Student IDs that passed validation
+    valid_rows: list[dict] = []       # Dicts with 'student_id' and 'department'
     failed_rows: list[dict] = []      # Rows that failed validation
     seen_in_file: set[str] = set()    # Detect intra-file duplicates
     row_num = 1                        # 1-indexed, row 1 = first data row
@@ -174,6 +204,7 @@ def bulk_import_students(request):
             failed_rows.append({
                 'row': row_num,
                 'student_id': '',
+                'department': '',
                 'reason': f'File exceeds maximum row limit of {MAX_ROWS}. Rows beyond this limit were ignored.'
             })
             break
@@ -182,7 +213,7 @@ def bulk_import_students(request):
         cleaned_id, error = _validate_student_id(raw_id)
 
         if error:
-            failed_rows.append({'row': row_num, 'student_id': raw_id.strip(), 'reason': error})
+            failed_rows.append({'row': row_num, 'student_id': raw_id.strip(), 'department': '', 'reason': error})
             continue
 
         # Intra-file duplicate check
@@ -190,12 +221,45 @@ def bulk_import_students(request):
             failed_rows.append({
                 'row': row_num,
                 'student_id': cleaned_id,
+                'department': '',
                 'reason': 'Duplicate student ID within this CSV file'
             })
             continue
 
+        # Department: per-row CSV value takes priority, falls back to global default
+        raw_dept = (row.get(dept_col, '') or '').strip().upper() if dept_col else ''
+        dept_value = raw_dept or global_dept
+
+        if raw_dept and raw_dept not in VALID_DEPARTMENTS:
+            failed_rows.append({
+                'row': row_num,
+                'student_id': cleaned_id,
+                'department': raw_dept,
+                'reason': (
+                    f'Invalid department "{raw_dept}". '
+                    f'Valid options: {", ".join(sorted(VALID_DEPARTMENTS))}'
+                )
+            })
+            continue
+
+        if not dept_value:
+            failed_rows.append({
+                'row': row_num,
+                'student_id': cleaned_id,
+                'department': '',
+                'reason': (
+                    'Department is required. '
+                    'Add a "department" column to the CSV or select a default department above.'
+                )
+            })
+            continue
+
         seen_in_file.add(cleaned_id)
-        valid_ids.append(cleaned_id)
+        valid_rows.append({'student_id': cleaned_id, 'department': dept_value})
+
+    # For compatibility with the existing ID-based logic below
+    valid_ids = [r['student_id'] for r in valid_rows]
+    dept_map: dict[str, str | None] = {r['student_id']: r['department'] for r in valid_rows}
 
     if not valid_ids:
         return JsonResponse({
@@ -249,6 +313,7 @@ def bulk_import_students(request):
         failed_rows.append({
             'row': '—',
             'student_id': sid,
+            'department': dept_map.get(sid, '') or '',
             'reason': 'Student ID already exists in the system (skipped)'
         })
 
@@ -280,6 +345,7 @@ def bulk_import_students(request):
                         is_active=True,
                         profile_completed=False,
                         batch_id=batch.id,
+                        department=dept_map.get(sid),
                     ))
                 # bulk_create with ignore_conflicts=False (we already checked; let DB catch any race)
                 # update_conflicts not available in older Django, use ignore_conflicts
@@ -291,13 +357,17 @@ def bulk_import_students(request):
                 password_hash = _hash_password(default_password)
                 for sid in to_restore:
                     deleted_sid = restorable[sid]
-                    User.objects.filter(student_id=deleted_sid).update(
+                    update_kwargs = dict(
                         student_id=sid,
                         is_active=True,
                         profile_completed=False,
                         batch_id=batch.id,
                         password_hash=password_hash,
                     )
+                    dept = dept_map.get(sid)
+                    if dept is not None:
+                        update_kwargs['department'] = dept
+                    User.objects.filter(student_id=deleted_sid).update(**update_kwargs)
                 restored_count = len(to_restore)
 
     except IntegrityError as e:
@@ -361,11 +431,11 @@ def bulk_import_template(request):
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(['student_id'])
+    writer.writerow(['student_id', 'department'])
     writer.writerows([
-        ['A23126551001'],
-        ['A23126551002'],
-        ['A23126551003'],
+        ['A23126551001', 'CSE'],
+        ['A23126551002', 'MECH'],
+        ['A23126551003', ''],       # department is optional — leave blank if unknown
     ])
 
     response = HttpResponse(buf.getvalue(), content_type='text/csv')

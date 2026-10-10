@@ -47,7 +47,8 @@ export default function AdminStudentsPage() {
         },
         body: JSON.stringify({
           student_id: studentData.student_id,
-          batch_id: studentData.batch_id || null
+          batch_id: studentData.batch_id || null,
+          department: studentData.department || null
         }),
       });
 

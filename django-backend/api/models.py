@@ -29,7 +29,10 @@ class User(models.Model):
     profile_completed = models.BooleanField(default=False)
     batch = models.ForeignKey('Batch', on_delete=models.SET_NULL, null=True, blank=True, db_column='batch_id')
     created_at = models.DateTimeField(default=timezone.now)
-    
+    # Department classification — set at student creation (single or bulk import).
+    # Valid codes: CSD, CSE, CSM, CSC, IT, MECH, EEE, ECE, CHEM, CIVIL, BIOTECHNOLOGY
+    department = models.CharField(max_length=50, null=True, blank=True)
+
     class Meta:
         db_table = 'users'
         managed = False  # Don't let Django manage this table

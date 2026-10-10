@@ -25,6 +25,11 @@ from api.utils.auth import require_admin_or_sub_admin as _require_admin
 
 logger = logging.getLogger(__name__)
 
+VALID_DEPARTMENTS = frozenset({
+    'CSD', 'CSE', 'CSM', 'CSC', 'IT',
+    'MECH', 'EEE', 'ECE', 'CHEM', 'CIVIL', 'BIOTECHNOLOGY',
+})
+
 
 @csrf_exempt
 @require_http_methods(["GET"])
@@ -84,6 +89,7 @@ def list_students(request):
                 'is_active': student.is_active,
                 'profile_completed': student.profile_completed,
                 'batch_id': str(student.batch_id) if student.batch_id else None,
+                'department': student.department or None,
                 'created_at': student.created_at.isoformat() if student.created_at else None,
                 'batches': {
                     'id': str(student.batch.id),
@@ -121,11 +127,23 @@ def create_student(request):
         
         student_id = body.get('student_id')
         batch_id = body.get('batch_id')
-        
+        department = (body.get('department') or '').strip().upper() or None
+
         if not student_id:
             logger.info('Missing student_id')
             return error_response('Student ID is required', status=400)
-        
+
+        # Department is mandatory for every new/restored student account
+        if not department:
+            return error_response('Department is required', status=400)
+
+        if department not in VALID_DEPARTMENTS:
+            return error_response(
+                f'Invalid department "{department}". '
+                f'Valid options: {", ".join(sorted(VALID_DEPARTMENTS))}',
+                status=400
+            )
+
         # Check if student_id already exists (excluding deleted ones)
         existing_active_student = User.objects.filter(
             student_id=student_id
@@ -155,7 +173,10 @@ def create_student(request):
             # Update batch if provided
             if batch_id:
                 deleted_student.batch_id = batch_id
-            
+
+            # Department is validated+mandatory above, always set on restore
+            deleted_student.department = department
+
             # Reset password to default
             default_password = settings.DEFAULT_PASSWORD
             password_hash = bcrypt.hashpw(
@@ -174,6 +195,7 @@ def create_student(request):
                 'is_active': deleted_student.is_active,
                 'profile_completed': deleted_student.profile_completed,
                 'batch_id': str(deleted_student.batch_id) if deleted_student.batch_id else None,
+                'department': deleted_student.department or None,
                 'created_at': deleted_student.created_at.isoformat() if deleted_student.created_at else None,
                 'restored': True  # Flag to indicate this was a restoration
             }
@@ -200,13 +222,14 @@ def create_student(request):
             'password_hash': password_hash,
             'role': 'student',
             'is_active': True,
-            'profile_completed': False
+            'profile_completed': False,
+            'department': department,  # validated+mandatory above
         }
-        
+
         # Add batch_id if provided
         if batch_id:
             insert_data['batch_id'] = batch_id
-        
+
         logger.info(f'Inserting student data: {insert_data}')
         
         # Create student
@@ -220,6 +243,7 @@ def create_student(request):
             'is_active': student.is_active,
             'profile_completed': student.profile_completed,
             'batch_id': str(student.batch_id) if student.batch_id else None,
+            'department': student.department or None,
             'created_at': student.created_at.isoformat() if student.created_at else None,
             'restored': False
         }

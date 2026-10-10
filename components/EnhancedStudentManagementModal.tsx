@@ -25,6 +25,11 @@ import {
 import { toast } from 'sonner'
 import { getApiUrl, getAuthHeaders } from '@/lib/api-config'
 
+const DEPARTMENTS = [
+  'CSD', 'CSE', 'CSM', 'CSC', 'IT',
+  'MECH', 'EEE', 'ECE', 'CHEM', 'CIVIL', 'BIOTECHNOLOGY'
+]
+
 interface StudentFormData {
   id?: string
   full_name?: string
@@ -33,6 +38,7 @@ interface StudentFormData {
   password?: string
   college?: string
   batch_id?: string
+  department?: string
 }
 
 interface StudentDetail {
@@ -70,7 +76,8 @@ export function EnhancedStudentManagementModal({
 }: StudentModalProps) {
   const [formData, setFormData] = useState<StudentFormData>({
     student_id: '',
-    batch_id: ''
+    batch_id: '',
+    department: ''
   })
 
   const [batches, setBatches] = useState<Array<{ id: string, batch_name: string }>>([])
@@ -92,7 +99,8 @@ export function EnhancedStudentManagementModal({
             email: initialData.email,
             student_id: initialData.student_id,
             college: initialData.college || '',
-            batch_id: ('batch_id' in initialData ? initialData.batch_id : '') || ''
+            batch_id: ('batch_id' in initialData ? initialData.batch_id : '') || '',
+            department: ('department' in initialData ? (initialData as any).department : '') || ''
           })
         } else {
           setStudentDetails(initialData as StudentDetail)
@@ -101,7 +109,8 @@ export function EnhancedStudentManagementModal({
         // Reset form for create mode
         setFormData({
           student_id: '',
-          batch_id: ''
+          batch_id: '',
+          department: ''
         })
         setErrors({})
         setStudentDetails(null)
@@ -140,6 +149,11 @@ export function EnhancedStudentManagementModal({
     // Batch is now required
     if (!formData.batch_id || formData.batch_id === 'no-batch') {
       newErrors.batch = 'Batch selection is required'
+    }
+
+    // Department is required
+    if (!formData.department || formData.department === 'no-dept') {
+      newErrors.department = 'Department selection is required'
     }
 
     setErrors(newErrors)
@@ -317,6 +331,33 @@ export function EnhancedStudentManagementModal({
             </Select>
             {errors.batch && (
               <p className="text-sm text-red-500 mt-1">{errors.batch}</p>
+            )}
+          </div>
+
+          <div>
+            <Label htmlFor="department" className="text-sm font-medium">
+              Department *
+            </Label>
+            <Select
+              value={formData.department || 'no-dept'}
+              onValueChange={(value: string) => setFormData({ ...formData, department: value === 'no-dept' ? '' : value })}
+            >
+              <SelectTrigger className={errors.department ? 'border-red-500' : ''}>
+                <SelectValue placeholder="Select department">
+                  {formData.department || 'Select department'}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="no-dept" disabled>Select department</SelectItem>
+                {DEPARTMENTS.map((dept) => (
+                  <SelectItem key={dept} value={dept}>
+                    {dept}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {errors.department && (
+              <p className="text-sm text-red-500 mt-1">{errors.department}</p>
             )}
           </div>
 
