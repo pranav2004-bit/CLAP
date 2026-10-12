@@ -390,6 +390,7 @@ export default function AnalyticsDashboard() {
         qs.set('scope', 'test')
         qs.set('test_id', selectedTestId)
       }
+      if (selectedDepartment) qs.set('department', selectedDepartment)
       const qsStr = qs.toString()
       const url = getApiUrl(`admin/scores/export${qsStr ? `?${qsStr}` : ''}`)
 
@@ -406,10 +407,11 @@ export default function AnalyticsDashboard() {
       const blob = await res.blob()
       objUrl = URL.createObjectURL(blob)
 
-      const scopeSuffix = data?.selected_test?.test_id
+      const testSuffix = data?.selected_test?.test_id
         ? `-${data.selected_test.test_id}`
         : ''
-      const filename = `clap-scores${scopeSuffix}-${new Date().toISOString().slice(0, 10)}.csv`
+      const deptSuffix = selectedDepartment ? `-${selectedDepartment}` : ''
+      const filename = `clap-scores${testSuffix}${deptSuffix}-${new Date().toISOString().slice(0, 10)}.csv`
 
       const a = document.createElement('a')
       a.href     = objUrl

@@ -454,6 +454,12 @@ def scores_search(request):
 
 # ── CSV Export ────────────────────────────────────────────────────────────────
 
+_VALID_DEPARTMENTS = frozenset({
+    'CSD', 'CSE', 'CSM', 'CSC', 'IT',
+    'MECH', 'EEE', 'ECE', 'CHEM', 'CIVIL', 'BIOTECHNOLOGY',
+})
+
+
 @csrf_exempt
 @require_http_methods(["GET"])
 def export_scores(request):
@@ -467,6 +473,15 @@ def export_scores(request):
         .select_related('user', 'assessment')
         .order_by('-created_at')
     )
+
+    department = (request.GET.get('department') or '').strip().upper()
+    if department:
+        if department not in _VALID_DEPARTMENTS:
+            return JsonResponse({
+                'error': f'Invalid department "{department}". '
+                         f'Valid options: {", ".join(sorted(_VALID_DEPARTMENTS))}'
+            }, status=400)
+        qs = qs.filter(user__department=department)
 
     if scope == 'batch':
         batch_id = request.GET.get('batch_id')
