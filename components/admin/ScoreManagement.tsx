@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { getApiUrl, getAuthHeaders, isNetworkError, markBackendOffline } from '@/lib/api-config'
@@ -49,6 +49,17 @@ interface OverrideState {
   reason: string
 }
 
+interface ClapTestOption {
+  id:      string
+  test_id: string | null
+  name:    string
+}
+
+interface BatchOption {
+  id:         string
+  batch_name: string
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const DOMAINS = ['listening', 'reading', 'vocab', 'writing', 'speaking'] as const
@@ -60,6 +71,10 @@ const DOMAIN_COLORS: Record<string, string> = {
   writing:   'bg-orange-100 text-orange-800',
   vocab:     'bg-teal-100 text-teal-800',
 }
+
+/** How often to re-fetch the assessment/batch dropdown lists (ms) — keeps
+ *  them accurate as new assessments/batches are created elsewhere. */
+const OPTIONS_REFRESH_MS = 60_000
 
 const MODE_CONFIG: Record<SearchMode, { label: string; placeholder: string; example: string; icon: React.ReactNode }> = {
   assessment: { label: 'By Assessment', placeholder: 'Enter assessment name', example: 'e.g. DEMO',           icon: <BookOpen className="w-4 h-4" /> },
@@ -79,8 +94,45 @@ export function ScoreManagement() {
   const [overriding, setOverriding]   = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
 
+  // Dropdown option lists — assessment & batch, kept fresh via polling
+  const [tests, setTests]               = useState<ClapTestOption[]>([])
+  const [batches, setBatches]           = useState<BatchOption[]>([])
+  const [optionsLoading, setOptionsLoading] = useState(true)
+
   // Track the last committed search params so pagination can re-use them
   const lastSearch = useRef<{ mode: SearchMode; query: string } | null>(null)
+
+  // ── Fetch assessment + batch option lists (initial + 60s poll) ─────────────
+  const fetchOptions = useCallback(async () => {
+    try {
+      const [testsRes, batchesRes] = await Promise.all([
+        fetch(getApiUrl('admin/clap-tests'), { headers: getAuthHeaders() }),
+        fetch(getApiUrl('admin/batches'),     { headers: getAuthHeaders() }),
+      ])
+
+      if (testsRes.ok) {
+        const data = await testsRes.json()
+        const list: ClapTestOption[] = data.clapTests ?? data.tests ?? data.results ?? []
+        setTests(list.filter(t => Boolean(t.id)))
+      }
+      if (batchesRes.ok) {
+        const data = await batchesRes.json()
+        const list: BatchOption[] = data.batches ?? []
+        setBatches(list.filter(b => Boolean(b.id)))
+      }
+    } catch (error) {
+      if (isNetworkError(error)) markBackendOffline()
+      // Non-fatal — dropdowns just stay at their last known list
+    } finally {
+      setOptionsLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchOptions()
+    const id = setInterval(fetchOptions, OPTIONS_REFRESH_MS)
+    return () => clearInterval(id)
+  }, [fetchOptions])
 
   // ── Core fetch ─────────────────────────────────────────────────────────────
   const fetchPage = useCallback(async (mode: SearchMode, q: string, page: number) => {
@@ -121,6 +173,15 @@ export function ScoreManagement() {
     setCurrentPage(1)
     fetchPage(searchMode, q, 1)
   }, [query, searchMode, fetchPage])
+
+  // ── Dropdown selection (assessment/batch) — search runs immediately ────────
+  const handleSelectQuery = useCallback((value: string) => {
+    setQuery(value)
+    if (!value) return
+    lastSearch.current = { mode: searchMode, query: value }
+    setCurrentPage(1)
+    fetchPage(searchMode, value, 1)
+  }, [searchMode, fetchPage])
 
   // ── Pagination ─────────────────────────────────────────────────────────────
   const goToPage = useCallback((page: number) => {
@@ -262,18 +323,52 @@ export function ScoreManagement() {
 
           {/* Input row */}
           <div className="flex gap-2">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input
-                type="text"
-                placeholder={`${cfg.placeholder} — ${cfg.example}`}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 rounded-lg
-                           focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-              />
-            </div>
+            {searchMode === 'assessment' ? (
+              <div className="relative flex-1">
+                <BookOpen className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <select
+                  value={query}
+                  onChange={(e) => handleSelectQuery(e.target.value)}
+                  disabled={optionsLoading}
+                  className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 rounded-lg bg-white
+                             focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:opacity-60"
+                >
+                  <option value="">{optionsLoading ? 'Loading assessments…' : 'Select an assessment'}</option>
+                  {tests.map((t) => (
+                    <option key={t.id} value={t.name}>{t.name}</option>
+                  ))}
+                </select>
+              </div>
+            ) : searchMode === 'batch' ? (
+              <div className="relative flex-1">
+                <Users className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <select
+                  value={query}
+                  onChange={(e) => handleSelectQuery(e.target.value)}
+                  disabled={optionsLoading}
+                  className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 rounded-lg bg-white
+                             focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:opacity-60"
+                >
+                  <option value="">{optionsLoading ? 'Loading batches…' : 'Select a batch'}</option>
+                  {batches.map((b) => (
+                    <option key={b.id} value={b.batch_name}>{b.batch_name}</option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder={`${cfg.placeholder} — ${cfg.example}`}
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                  className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 rounded-lg
+                             focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                />
+              </div>
+            )}
             <Button
               size="sm"
               onClick={handleSearch}
