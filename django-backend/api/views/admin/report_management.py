@@ -28,6 +28,11 @@ if find_spec('celery') is not None:
 else:
     generate_report = None
 
+_VALID_DEPARTMENTS = frozenset({
+    'CSD', 'CSE', 'CSM', 'CSC', 'IT',
+    'MECH', 'EEE', 'ECE', 'CHEM', 'CIVIL', 'BIOTECHNOLOGY',
+})
+
 if find_spec('boto3') is not None:
     import boto3
 else:
@@ -595,6 +600,15 @@ def report_list(request):
     assessment_id = request.GET.get('assessment_id')
     if assessment_id:
         qs = qs.filter(assessment_id=assessment_id)
+
+    department = (request.GET.get('department') or '').strip().upper()
+    if department:
+        if department not in _VALID_DEPARTMENTS:
+            return JsonResponse({
+                'error': f'Invalid department "{department}". '
+                         f'Valid options: {", ".join(sorted(_VALID_DEPARTMENTS))}'
+            }, status=400)
+        qs = qs.filter(user__department=department)
 
     # Server-side search: email (partial icontains) or student UUID (exact OR partial icontains).
     # user_id is a UUID field — Cast to text enables partial match on UUID prefix.

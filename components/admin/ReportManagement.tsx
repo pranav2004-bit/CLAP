@@ -59,6 +59,37 @@ interface Pagination {
   total_pages: number
 }
 
+const DEPARTMENTS = [
+  'CSD', 'CSE', 'CSM', 'CSC', 'IT',
+  'MECH', 'EEE', 'ECE', 'CHEM', 'CIVIL', 'BIOTECHNOLOGY',
+]
+
+// ── DepartmentScopeSelector ───────────────────────────────────────────────
+
+interface DepartmentScopeSelectorProps {
+  selectedDepartment: string
+  onChange:           (dept: string) => void
+}
+
+function DepartmentScopeSelector({ selectedDepartment, onChange }: DepartmentScopeSelectorProps) {
+  return (
+    <div className="relative inline-flex items-center">
+      <select
+        value={selectedDepartment}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-8 pl-3 pr-7 text-xs border border-gray-200 rounded-md bg-white text-gray-700 font-medium appearance-none focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 cursor-pointer"
+        aria-label="Select department scope"
+      >
+        <option value="">All Departments</option>
+        {DEPARTMENTS.map((d) => (
+          <option key={d} value={d}>{d}</option>
+        ))}
+      </select>
+      <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400 pointer-events-none" />
+    </div>
+  )
+}
+
 // ── TestScopeSelector ─────────────────────────────────────────────────────
 
 interface TestScopeSelectorProps {
@@ -106,6 +137,7 @@ export function ReportManagement() {
   // Test scope
   const [tests, setTests]               = useState<ClapTestOption[]>([])
   const [selectedTestId, setSelectedTestId] = useState<string>('')
+  const [departmentFilter, setDepartmentFilter] = useState<string>('')
 
   // AbortController refs
   const abortRef      = useRef<AbortController | null>(null)
@@ -182,6 +214,7 @@ export function ReportManagement() {
       const params = new URLSearchParams({ page: String(page), page_size: '30' })
       if (searchQuery.trim())  params.set('search',        searchQuery.trim())
       if (selectedTestId)      params.set('assessment_id', selectedTestId)
+      if (departmentFilter)    params.set('department',    departmentFilter)
 
       const res = await fetch(getApiUrl(`admin/reports?${params}`), {
         headers: getAuthHeaders(),
@@ -200,7 +233,7 @@ export function ReportManagement() {
     } finally {
       if (!ctrl.signal.aborted) setLoading(false)
     }
-  }, [page, searchQuery, selectedTestId])
+  }, [page, searchQuery, selectedTestId, departmentFilter])
 
   // Trigger fetch when deps change
   useEffect(() => { fetchReports() }, [fetchReports])
@@ -228,6 +261,11 @@ export function ReportManagement() {
   const handleTestChange = (id: string) => {
     setPage(1)
     setSelectedTestId(id)
+  }
+
+  const handleDepartmentChange = (dept: string) => {
+    setPage(1)
+    setDepartmentFilter(dept)
   }
 
   // ── Regenerate report ────────────────────────────────────────────────────
@@ -338,6 +376,10 @@ export function ReportManagement() {
             selectedTestId={selectedTestId}
             onChange={handleTestChange}
           />
+          <DepartmentScopeSelector
+            selectedDepartment={departmentFilter}
+            onChange={handleDepartmentChange}
+          />
           <Button variant="outline" size="sm" onClick={openTemplateModal}>
             <Eye className="w-4 h-4 mr-2" />
             Preview Report
@@ -365,19 +407,33 @@ export function ReportManagement() {
       </div>
 
       {/* Scope info badge */}
-      {selectedTestId && (
+      {(selectedTestId || departmentFilter) && (
         <div className="flex items-center gap-2">
           <span className="text-xs text-gray-500">Showing reports for</span>
-          <span className="inline-flex items-center gap-1 text-xs font-medium bg-indigo-50 text-indigo-700 px-2.5 py-0.5 rounded-full border border-indigo-100">
-            {scopeLabel}
-            <button
-              onClick={() => handleTestChange('')}
-              className="ml-1 text-indigo-400 hover:text-indigo-600"
-              aria-label="Clear test filter"
-            >
-              <X className="w-3 h-3" />
-            </button>
-          </span>
+          {selectedTestId && (
+            <span className="inline-flex items-center gap-1 text-xs font-medium bg-indigo-50 text-indigo-700 px-2.5 py-0.5 rounded-full border border-indigo-100">
+              {scopeLabel}
+              <button
+                onClick={() => handleTestChange('')}
+                className="ml-1 text-indigo-400 hover:text-indigo-600"
+                aria-label="Clear test filter"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          )}
+          {departmentFilter && (
+            <span className="inline-flex items-center gap-1 text-xs font-medium bg-indigo-50 text-indigo-700 px-2.5 py-0.5 rounded-full border border-indigo-100">
+              {departmentFilter}
+              <button
+                onClick={() => handleDepartmentChange('')}
+                className="ml-1 text-indigo-400 hover:text-indigo-600"
+                aria-label="Clear department filter"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          )}
         </div>
       )}
 
