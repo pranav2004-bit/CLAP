@@ -60,6 +60,11 @@ MAX_STATS_BATCH = 3_000   # max rows loaded for stats computation; covers all
 
 BOUNCE_EVENT_MARKERS = ('bounce', 'bounced', 'complaint')
 
+VALID_DEPARTMENTS = frozenset({
+    'CSD', 'CSE', 'CSM', 'CSC', 'IT',
+    'MECH', 'EEE', 'ECE', 'CHEM', 'CIVIL', 'BIOTECHNOLOGY',
+})
+
 
 # ---------------------------------------------------------------------------
 # Response helpers
@@ -93,6 +98,22 @@ def _resolve_test_filter(request):
     except ClapTest.DoesNotExist:
         return None, _no_cache_json({'error': 'CLAP test not found'}, status=404)
     return test, None
+
+
+def _resolve_department_filter(request):
+    """
+    Parse optional ?department=<CODE> query param.
+    Returns (department_code|None, error_response|None).
+    """
+    raw = (request.GET.get('department') or '').strip().upper()
+    if not raw:
+        return None, None
+    if raw not in VALID_DEPARTMENTS:
+        return None, _no_cache_json({
+            'error': f'Invalid department "{raw}". '
+                     f'Valid options: {", ".join(sorted(VALID_DEPARTMENTS))}'
+        }, status=400)
+    return raw, None
 
 
 def _test_payload(test) -> dict | None:
@@ -227,6 +248,10 @@ def email_delivery_status(request):
     if err:
         return err
 
+    selected_department, err = _resolve_department_filter(request)
+    if err:
+        return err
+
     page                   = _parse_page(request)
     delivery_status_filter = (request.GET.get('delivery_status') or '').strip().lower()
     student_id_filter      = (request.GET.get('student_id') or '').strip()
@@ -244,6 +269,8 @@ def email_delivery_status(request):
     )
     if selected_test is not None:
         qs = qs.filter(assessment=selected_test)
+    if selected_department is not None:
+        qs = qs.filter(user__department=selected_department)
     if student_id_filter:
         qs = qs.filter(user_id=student_id_filter)
 
@@ -282,6 +309,7 @@ def email_delivery_status(request):
 
     return _no_cache_json({
         'selected_test': _test_payload(selected_test),
+        'selected_department': selected_department,
         'rows': [_serialize_row(s, e, ds) for s, e, ds in page_rows],
         'stats': {
             'total_sent': total_email_sent,
@@ -586,6 +614,10 @@ def bounce_complaint_logs(request):
     if err:
         return err
 
+    selected_department, err = _resolve_department_filter(request)
+    if err:
+        return err
+
     page = _parse_page(request)
 
     qs = (
@@ -603,6 +635,8 @@ def bounce_complaint_logs(request):
     # Scope to test if provided
     if selected_test is not None:
         qs = qs.filter(submission__assessment=selected_test)
+    if selected_department is not None:
+        qs = qs.filter(submission__user__department=selected_department)
 
     # Optional date range
     created_from = request.GET.get('created_from')
@@ -635,6 +669,7 @@ def bounce_complaint_logs(request):
 
     return _no_cache_json({
         'selected_test': _test_payload(selected_test),
+        'selected_department': selected_department,
         'rows': rows,
         'pagination': {
             'page':        page,

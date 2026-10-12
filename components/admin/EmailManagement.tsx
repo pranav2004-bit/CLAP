@@ -134,6 +134,40 @@ function fmtDate(iso: string | null | undefined): string {
   return d.toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })
 }
 
+const DEPARTMENTS = [
+  'CSD', 'CSE', 'CSM', 'CSC', 'IT',
+  'MECH', 'EEE', 'ECE', 'CHEM', 'CIVIL', 'BIOTECHNOLOGY',
+]
+
+// ── Department Scope Selector ───────────────────────────────────────────────
+
+interface DepartmentScopeSelectorProps {
+  selectedDepartment: string | null
+  onChange:           (dept: string | null) => void
+}
+
+function DepartmentScopeSelector({ selectedDepartment, onChange }: DepartmentScopeSelectorProps) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-xs text-gray-500 font-medium whitespace-nowrap hidden sm:block">Department:</span>
+      <div className="relative">
+        <select
+          className="appearance-none pl-3 pr-8 py-1.5 text-sm border border-gray-200 rounded-lg bg-white text-gray-700 font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-400 min-w-[150px] cursor-pointer"
+          value={selectedDepartment ?? ''}
+          onChange={e => onChange(e.target.value || null)}
+          aria-label="Select department scope"
+        >
+          <option value="">All Departments</option>
+          {DEPARTMENTS.map(d => (
+            <option key={d} value={d}>{d}</option>
+          ))}
+        </select>
+        <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+      </div>
+    </div>
+  )
+}
+
 // ── Test Scope Selector ──────────────────────────────────────────────────────
 
 interface TestScopeSelectorProps {
@@ -261,6 +295,7 @@ export function EmailManagement() {
   const [tests, setTests]                       = useState<ClapTestOption[]>([])
   const [testsLoading, setTestsLoading]         = useState(true)
   const [selectedTestId, setSelectedTestId]     = useState<string | null>(null)
+  const [selectedDepartment, setSelectedDepartment] = useState<string | null>(null)
 
   // ── Refs ───────────────────────────────────────────────────────────────
   /**
@@ -359,9 +394,11 @@ export function EmailManagement() {
     try {
       const statusQs = new URLSearchParams({ page: String(statusPage) })
       if (selectedTestId) statusQs.set('test_id', selectedTestId)
+      if (selectedDepartment) statusQs.set('department', selectedDepartment)
 
       const logsQs = new URLSearchParams({ page: String(logsPage) })
       if (selectedTestId) logsQs.set('test_id', selectedTestId)
+      if (selectedDepartment) logsQs.set('department', selectedDepartment)
 
       // Fetch both tabs in parallel — one round-trip pair for both datasets
       const [statusRes, logsRes] = await Promise.all([
@@ -399,7 +436,7 @@ export function EmailManagement() {
     } finally {
       if (!ctrl.signal.aborted) setLoading(false)
     }
-  }, [selectedTestId, statusPage, logsPage])
+  }, [selectedTestId, selectedDepartment, statusPage, logsPage])
 
   // ── Interval management ───────────────────────────────────────────────
   const resetTimer = useCallback(() => {
@@ -449,6 +486,16 @@ export function EmailManagement() {
   // ── Test scope change — reset pages + clear stale data immediately ────
   const handleTestChange = useCallback((id: string | null) => {
     setSelectedTestId(id)
+    setStatusPage(1)
+    setLogsPage(1)
+    setStatusData(null)
+    setLogsData(null)
+    setSearchQuery('')
+  }, [])
+
+  // ── Department scope change — same reset pattern as test scope ────────
+  const handleDepartmentChange = useCallback((dept: string | null) => {
+    setSelectedDepartment(dept)
     setStatusPage(1)
     setLogsPage(1)
     setStatusData(null)
@@ -593,6 +640,11 @@ export function EmailManagement() {
             testsLoading={testsLoading}
             selectedTestId={selectedTestId}
             onChange={handleTestChange}
+          />
+
+          <DepartmentScopeSelector
+            selectedDepartment={selectedDepartment}
+            onChange={handleDepartmentChange}
           />
 
           <Button
