@@ -27,6 +27,11 @@ import { API_BASE_URL, getAuthHeaders } from '@/lib/api-config'
 import { feedback } from '@/lib/user-feedback'
 import { toast } from 'sonner'
 
+const DEPARTMENTS = [
+    'CSD', 'CSE', 'CSM', 'CSC', 'IT',
+    'MECH', 'EEE', 'ECE', 'CHEM', 'CIVIL', 'BIOTECHNOLOGY'
+]
+
 interface Student {
     id: string
     email: string
@@ -34,6 +39,7 @@ interface Student {
     full_name: string | null
     is_active: boolean
     profile_completed: boolean
+    department: string | null
     created_at: string
 }
 
@@ -58,6 +64,7 @@ export function BatchStudentsModal({ batch, onClose }: BatchStudentsModalProps) 
     const [filteredStudents, setFilteredStudents] = useState<Student[]>([])
     const [loading, setLoading] = useState(true)
     const [searchQuery, setSearchQuery] = useState('')
+    const [departmentFilter, setDepartmentFilter] = useState('')
     const [editingStudent, setEditingStudent] = useState<Student | null>(null)
     const [editFormData, setEditFormData] = useState({
         full_name: '',
@@ -71,21 +78,26 @@ export function BatchStudentsModal({ batch, onClose }: BatchStudentsModalProps) 
     }, [batch.id])
 
     useEffect(() => {
-        // Filter students based on search query
-        if (searchQuery.trim() === '') {
-            setFilteredStudents(students)
-        } else {
+        // Filter students based on search query + department
+        let result = students
+
+        if (searchQuery.trim() !== '') {
             const query = searchQuery.toLowerCase()
-            const filtered = students.filter(student =>
+            result = result.filter(student =>
                 student.student_id?.toLowerCase().includes(query) ||
                 student.full_name?.toLowerCase().includes(query) ||
                 student.email?.toLowerCase().includes(query)
             )
-            setFilteredStudents(filtered)
         }
-        // Reset to first page when search changes
+
+        if (departmentFilter) {
+            result = result.filter(student => student.department === departmentFilter)
+        }
+
+        setFilteredStudents(result)
+        // Reset to first page when filters change
         setCurrentPage(1)
-    }, [searchQuery, students])
+    }, [searchQuery, departmentFilter, students])
 
     // Pagination calculations
     const totalPages = Math.ceil(filteredStudents.length / ITEMS_PER_PAGE)
@@ -325,8 +337,8 @@ export function BatchStudentsModal({ batch, onClose }: BatchStudentsModalProps) 
     }
 
     return (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[70] p-4">
-            <Card className="w-full max-w-6xl max-h-[90vh] flex flex-col">
+        <div className="fixed inset-0 bg-background z-[70] flex flex-col">
+            <Card className="w-full h-full flex flex-col rounded-none border-0">
                 <CardHeader className="border-b flex-shrink-0 p-4">
                     <div className="flex items-center justify-between">
                         <div>
@@ -356,8 +368,8 @@ export function BatchStudentsModal({ batch, onClose }: BatchStudentsModalProps) 
 
                 <CardContent className="flex-1 overflow-auto p-6">
                     {/* Search Bar */}
-                    <div className="mb-6">
-                        <div className="relative">
+                    <div className="mb-6 flex flex-col sm:flex-row gap-4">
+                        <div className="relative flex-1">
                             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
                             <Input
                                 placeholder="Search by student ID, name, or email..."
@@ -366,6 +378,16 @@ export function BatchStudentsModal({ batch, onClose }: BatchStudentsModalProps) 
                                 className="pl-10"
                             />
                         </div>
+                        <select
+                            value={departmentFilter}
+                            onChange={(e) => setDepartmentFilter(e.target.value)}
+                            className="border border-input rounded-md px-3 py-2 text-sm bg-background sm:w-48"
+                        >
+                            <option value="">All departments</option>
+                            {DEPARTMENTS.map((dept) => (
+                                <option key={dept} value={dept}>{dept}</option>
+                            ))}
+                        </select>
                     </div>
 
                     {/* Loading State */}
@@ -394,7 +416,7 @@ export function BatchStudentsModal({ batch, onClose }: BatchStudentsModalProps) 
                             <Search className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
                             <h3 className="text-lg font-medium mb-2">No students found</h3>
                             <p className="text-muted-foreground">
-                                Try adjusting your search query
+                                Try adjusting your search query or department filter
                             </p>
                         </div>
                     )}
@@ -460,7 +482,7 @@ export function BatchStudentsModal({ batch, onClose }: BatchStudentsModalProps) 
                                                         </div>
 
                                                         {/* Student Info */}
-                                                        <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-4">
+                                                        <div className="flex-1 grid grid-cols-1 md:grid-cols-4 gap-4">
                                                             <div>
                                                                 <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1">
                                                                     <Hash className="w-3 h-3" />
@@ -474,6 +496,17 @@ export function BatchStudentsModal({ batch, onClose }: BatchStudentsModalProps) 
                                                                     <span>Name</span>
                                                                 </div>
                                                                 <p className="font-medium">{student.full_name || 'Not set'}</p>
+                                                            </div>
+                                                            <div>
+                                                                <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1">
+                                                                    <Users className="w-3 h-3" />
+                                                                    <span>Department</span>
+                                                                </div>
+                                                                {student.department ? (
+                                                                    <Badge variant="secondary">{student.department}</Badge>
+                                                                ) : (
+                                                                    <p className="font-medium text-muted-foreground">-</p>
+                                                                )}
                                                             </div>
                                                             <div>
                                                                 <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1">
