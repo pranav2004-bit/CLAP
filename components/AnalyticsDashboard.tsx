@@ -48,6 +48,11 @@ const EXPORT_TIMEOUT_MS = 30_000
 
 type Period = 'last24h' | 'week' | 'month' | 'quarter'
 
+const DEPARTMENTS = [
+  'CSD', 'CSE', 'CSM', 'CSC', 'IT',
+  'MECH', 'EEE', 'ECE', 'CHEM', 'CIVIL', 'BIOTECHNOLOGY',
+]
+
 interface ClapTestOption {
   id:      string
   test_id: string | null
@@ -56,6 +61,7 @@ interface ClapTestOption {
 
 interface AnalyticsData {
   selected_test:     { id: string; test_id: string | null; name: string } | null
+  selected_department: string | null
   period:            string
   period_days:       number
   submissions_trend: Array<{ date: string | null; count: number }>
@@ -165,6 +171,35 @@ function TestScopeSelector({ tests, testsLoading, selectedTestId, onChange }: Te
   )
 }
 
+// ── Department Scope Selector ───────────────────────────────────────────────
+
+interface DepartmentScopeSelectorProps {
+  selectedDepartment: string | null
+  onChange:           (dept: string | null) => void
+}
+
+function DepartmentScopeSelector({ selectedDepartment, onChange }: DepartmentScopeSelectorProps) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-xs text-gray-500 font-medium whitespace-nowrap hidden sm:block">Department:</span>
+      <div className="relative">
+        <select
+          className="appearance-none pl-3 pr-8 py-1.5 text-sm border border-gray-200 rounded-lg bg-white text-gray-700 font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-400 min-w-[150px] cursor-pointer"
+          value={selectedDepartment ?? ''}
+          onChange={e => onChange(e.target.value || null)}
+          aria-label="Select department scope"
+        >
+          <option value="">All Departments</option>
+          {DEPARTMENTS.map(d => (
+            <option key={d} value={d}>{d}</option>
+          ))}
+        </select>
+        <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+      </div>
+    </div>
+  )
+}
+
 // ── Component ──────────────────────────────────────────────────────────────
 
 export default function AnalyticsDashboard() {
@@ -180,6 +215,9 @@ export default function AnalyticsDashboard() {
   const [tests, setTests]               = useState<ClapTestOption[]>([])
   const [testsLoading, setTestsLoading] = useState(true)
   const [selectedTestId, setSelectedTestId] = useState<string | null>(null)
+
+  // Per-department scope selector
+  const [selectedDepartment, setSelectedDepartment] = useState<string | null>(null)
 
   /**
    * AbortController ref — cancels the in-flight analytics request when:
@@ -266,6 +304,7 @@ export default function AnalyticsDashboard() {
     try {
       const qs = new URLSearchParams({ period })
       if (selectedTestId) qs.set('test_id', selectedTestId)
+      if (selectedDepartment) qs.set('department', selectedDepartment)
 
       const res = await fetch(
         getApiUrl(`admin/stats/analytics?${qs.toString()}`),
@@ -288,7 +327,7 @@ export default function AnalyticsDashboard() {
     } finally {
       if (!ctrl.signal.aborted) setLoading(false)
     }
-  }, [period, selectedTestId])
+  }, [period, selectedTestId, selectedDepartment])
 
   // ── Interval management ───────────────────────────────────────────────
   const resetTimer = useCallback(() => {
@@ -417,6 +456,10 @@ export default function AnalyticsDashboard() {
         : data.selected_test.name)
     : 'All Tests (Global)'
 
+  const departmentScopeLabel = data?.selected_department
+    ? ` · ${data.selected_department} only`
+    : ''
+
   // ── Render ───────────────────────────────────────────────────────────────
 
   return (
@@ -428,7 +471,7 @@ export default function AnalyticsDashboard() {
           <h1 className="text-xl font-bold text-gray-900">Analytics</h1>
           <p className="text-sm text-gray-500 mt-0.5">
             {data
-              ? `${scopeLabel} · Last updated ${staleSec}s ago · auto-refreshes every 60 s`
+              ? `${scopeLabel}${departmentScopeLabel} · Last updated ${staleSec}s ago · auto-refreshes every 60 s`
               : 'Loading analytics…'}
           </p>
         </div>
@@ -441,6 +484,15 @@ export default function AnalyticsDashboard() {
             selectedTestId={selectedTestId}
             onChange={id => {
               setSelectedTestId(id)
+              setData(null)
+            }}
+          />
+
+          {/* Department scope */}
+          <DepartmentScopeSelector
+            selectedDepartment={selectedDepartment}
+            onChange={dept => {
+              setSelectedDepartment(dept)
               setData(null)
             }}
           />

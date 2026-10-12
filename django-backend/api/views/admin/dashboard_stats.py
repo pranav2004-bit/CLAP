@@ -47,6 +47,11 @@ from api.utils.auth import require_admin as _require_admin
 # Constants
 # ---------------------------------------------------------------------------
 
+VALID_DEPARTMENTS = frozenset({
+    'CSD', 'CSE', 'CSM', 'CSC', 'IT',
+    'MECH', 'EEE', 'ECE', 'CHEM', 'CIVIL', 'BIOTECHNOLOGY',
+})
+
 PERIOD_DAYS: dict[str, int] = {
     'last24h': 1,   # today 00:00 → now (calendar day, not rolling 24 h)
     'week':    7,
@@ -130,6 +135,28 @@ def _resolve_test_filter(request):
         return None, _no_cache_json({'error': 'CLAP test not found'}, status=404)
 
     return test, None
+
+
+def _resolve_department_filter(request):
+    """
+    Parse optional ?department=<CODE> query param.
+
+    Returns (department_or_None, error_response_or_None):
+      • absent        → (None, None)   caller proceeds with all departments
+      • invalid code  → (None, 400 response)
+      • valid         → (upper-cased department code, None)
+    """
+    raw = (request.GET.get('department') or '').strip().upper()
+    if not raw:
+        return None, None
+
+    if raw not in VALID_DEPARTMENTS:
+        return None, _no_cache_json(
+            {'error': f'Invalid department "{raw}". Valid options: {", ".join(sorted(VALID_DEPARTMENTS))}'},
+            status=400,
+        )
+
+    return raw, None
 
 
 def _validate_period(raw: str) -> tuple[str, int] | None:
@@ -336,6 +363,10 @@ def analytics_stats(request):
     if err:
         return err
 
+    selected_department, err = _resolve_department_filter(request)
+    if err:
+        return err
+
     period_result = _validate_period(request.GET.get('period', 'month'))
     if period_result is None:
         return _no_cache_json(
@@ -357,6 +388,9 @@ def analytics_stats(request):
     if selected_test is not None:
         sub_base   = sub_base.filter(assessment=selected_test)
         score_base = score_base.filter(submission__assessment=selected_test)
+    if selected_department is not None:
+        sub_base   = sub_base.filter(user__department=selected_department)
+        score_base = score_base.filter(submission__user__department=selected_department)
 
     # ── Submissions trend (daily count within selected period) ─────────────
     trend_qs = (
@@ -430,7 +464,8 @@ def analytics_stats(request):
     ]
 
     return _no_cache_json({
-        'selected_test':     _test_payload(selected_test),
+        'selected_test':       _test_payload(selected_test),
+        'selected_department': selected_department,
         'period':            period,
         'period_days':       days,
         'submissions_trend': submissions_trend,
