@@ -44,8 +44,14 @@ interface IntegrityFlags {
   similarity_flags: number
 }
 
+const DEPARTMENTS = [
+  'CSD', 'CSE', 'CSM', 'CSC', 'IT',
+  'MECH', 'EEE', 'ECE', 'CHEM', 'CIVIL', 'BIOTECHNOLOGY'
+]
+
 interface ResultRow {
   student_id: string
+  department: string | null
   assigned_set_label: string
   status: string
   total_score: number | null
@@ -114,6 +120,7 @@ export default function ClapTestResultsPage() {
   const [searchInput, setSearchInput] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
+  const [departmentFilter, setDepartmentFilter] = useState('all')
   const [sortBy, setSortBy] = useState('')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
 
@@ -137,6 +144,7 @@ export default function ClapTestResultsPage() {
       })
       if (searchQuery) params.set('search', searchQuery)
       if (statusFilter && statusFilter !== 'all') params.set('status', statusFilter)
+      if (departmentFilter && departmentFilter !== 'all') params.set('department', departmentFilter)
       if (sortBy) {
         params.set('sort_by', sortBy)
         params.set('sort_order', sortOrder)
@@ -169,7 +177,7 @@ export default function ClapTestResultsPage() {
     } finally {
       setLoading(false)
     }
-  }, [testId, page, searchQuery, statusFilter, sortBy, sortOrder, router])
+  }, [testId, page, searchQuery, statusFilter, departmentFilter, sortBy, sortOrder, router])
 
   // Answers Preview
   const openPreview = useCallback(async (row: ResultRow) => {
@@ -227,6 +235,7 @@ export default function ClapTestResultsPage() {
         })
         if (searchQuery) params.set('search', searchQuery)
         if (statusFilter && statusFilter !== 'all') params.set('status', statusFilter)
+        if (departmentFilter && departmentFilter !== 'all') params.set('department', departmentFilter)
         if (sortBy) {
           params.set('sort_by', sortBy)
           params.set('sort_order', sortOrder)
@@ -248,13 +257,14 @@ export default function ClapTestResultsPage() {
         currentPage++
       }
       const headers = [
-        'Student ID', 'Set', 'Status',
+        'Student ID', 'Department', 'Set', 'Status',
         'Start Time', 'End Time', 'Duration',
         'Listening', 'Speaking', 'Writing', 'Reading', 'Verbal Ability',
         'Total Marks', 'Grade',
       ]
       const rows = allResults.map(r => [
         r.student_id,
+        r.department || '-',
         r.assigned_set_label || '-',
         formatStatus(r.status),
         r.started_at ? new Date(r.started_at).toLocaleString() : '',
@@ -277,7 +287,8 @@ export default function ClapTestResultsPage() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `${testInfo?.test_name || 'CLAP_Test'}_results_${new Date().toISOString().split('T')[0]}.csv`
+      const deptSuffix = departmentFilter !== 'all' ? `_${departmentFilter}` : ''
+      a.download = `${testInfo?.test_name || 'CLAP_Test'}_results${deptSuffix}_${new Date().toISOString().split('T')[0]}.csv`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -458,6 +469,17 @@ export default function ClapTestResultsPage() {
                   <SelectItem value="completed">Completed</SelectItem>
                 </SelectContent>
               </Select>
+              <Select value={departmentFilter} onValueChange={v => { setDepartmentFilter(v); setPage(1) }}>
+                <SelectTrigger className="w-[160px]">
+                  <SelectValue placeholder="All Departments" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Departments</SelectItem>
+                  {DEPARTMENTS.map(dept => (
+                    <SelectItem key={dept} value={dept}>{dept}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             {/* Data Table */}
@@ -473,12 +495,12 @@ export default function ClapTestResultsPage() {
                   <div className="text-center py-16 text-gray-500">
                     <Users className="w-12 h-12 mx-auto mb-3 text-gray-300" />
                     <p className="font-medium">
-                      {searchQuery || statusFilter !== 'all'
+                      {searchQuery || statusFilter !== 'all' || departmentFilter !== 'all'
                         ? 'No students match your filters'
                         : 'No students assigned to this test yet'}
                     </p>
                     <p className="text-sm mt-1">
-                      {searchQuery || statusFilter !== 'all'
+                      {searchQuery || statusFilter !== 'all' || departmentFilter !== 'all'
                         ? 'Try adjusting your search or filter criteria.'
                         : 'Assign a batch to see results here.'}
                     </p>
@@ -498,6 +520,7 @@ export default function ClapTestResultsPage() {
                                 <SortIcon field="student_id" sortBy={sortBy} sortOrder={sortOrder} />
                               </button>
                             </th>
+                            <th className="py-3 px-3 text-left font-medium text-gray-600 whitespace-nowrap">Department</th>
                             <th className="py-3 px-3 text-center font-medium text-gray-600 whitespace-nowrap">Set</th>
                             <th className="py-3 px-3 text-left font-medium text-gray-600 whitespace-nowrap">Status</th>
                             <th className="py-3 px-3 text-left font-medium text-gray-600 whitespace-nowrap">Start Time</th>
@@ -544,6 +567,15 @@ export default function ClapTestResultsPage() {
                             return (
                               <tr key={i} className="border-b last:border-0 hover:bg-gray-50/50 transition-colors">
                                 <td className="py-3 px-3 font-medium text-gray-900 whitespace-nowrap">{r.student_id}</td>
+                                <td className="py-3 px-3 whitespace-nowrap">
+                                  {r.department ? (
+                                    <span className="text-xs font-bold px-2 py-0.5 bg-gray-100 text-gray-700 rounded">
+                                      {r.department}
+                                    </span>
+                                  ) : (
+                                    <span className="text-gray-300">-</span>
+                                  )}
+                                </td>
                                 <td className="py-3 px-3 text-center">
                                   {r.assigned_set_label ? (
                                     <span className="text-xs font-bold px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded">

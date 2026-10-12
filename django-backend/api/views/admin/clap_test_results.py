@@ -33,6 +33,11 @@ from api.utils.jwt_utils import get_user_from_request
 logger = logging.getLogger(__name__)
 
 # SubmissionScore stores rule-based domain as 'vocab'; ClapTestComponent uses 'vocabulary'
+_VALID_DEPARTMENTS = frozenset({
+    'CSD', 'CSE', 'CSM', 'CSC', 'IT',
+    'MECH', 'EEE', 'ECE', 'CHEM', 'CIVIL', 'BIOTECHNOLOGY',
+})
+
 _SCORE_DOMAIN_TO_TEST_TYPE = {
     'listening': 'listening',
     'reading':   'reading',
@@ -88,6 +93,14 @@ def clap_test_results_handler(request, test_id):
         except ClapTest.DoesNotExist:
             return JsonResponse({'error': 'CLAP test not found'}, status=404)
 
+        # ── Department filter ──────────────────────────────────────────────────
+        department = (request.GET.get('department') or '').strip().upper()
+        if department and department not in _VALID_DEPARTMENTS:
+            return JsonResponse({
+                'error': f'Invalid department "{department}". '
+                         f'Valid options: {", ".join(sorted(_VALID_DEPARTMENTS))}'
+            }, status=400)
+
         # ── Component metadata ────────────────────────────────────────────────
         components = list(ClapTestComponent.objects.filter(clap_test_id=test_id))
         component_max = {comp.test_type: comp.max_marks for comp in components}
@@ -126,7 +139,11 @@ def clap_test_results_handler(request, test_id):
                 entry[sc.domain] = float(sc.score)
 
         # ── Base queryset for assignments ─────────────────────────────────────
+        # Department filter applied here (before summary_agg) so the summary
+        # cards are correctly department-scoped too, not just the table rows.
         base_qs = StudentClapAssignment.objects.filter(clap_test_id=test_id)
+        if department:
+            base_qs = base_qs.filter(student__department=department)
 
         summary_agg = base_qs.aggregate(
             total_assigned=Count('id'),
@@ -277,6 +294,7 @@ def clap_test_results_handler(request, test_id):
 
             results.append({
                 'student_id':            student.student_id or '',
+                'department':            student.department or None,
                 'status':                assignment.status,
                 'assigned_set_label':    assignment.assigned_set_label or '',
                 'total_score':           computed_total,
@@ -309,6 +327,7 @@ def clap_test_results_handler(request, test_id):
         return JsonResponse({
             'test_id':            str(clap_test.test_id) if clap_test.test_id else str(clap_test.id),
             'test_name':          clap_test.name,
+            'selected_department': department or None,
             'max_possible_score': max_possible,
             'component_max':      component_max,
             'summary': {
