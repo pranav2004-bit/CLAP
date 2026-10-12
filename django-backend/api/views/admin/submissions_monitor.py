@@ -33,6 +33,28 @@ def _require_admin(request):
     return user, None
 
 
+_VALID_DEPARTMENTS = frozenset({
+    'CSD', 'CSE', 'CSM', 'CSC', 'IT',
+    'MECH', 'EEE', 'ECE', 'CHEM', 'CIVIL', 'BIOTECHNOLOGY',
+})
+
+
+def _resolve_department(request):
+    """
+    Parse optional ?department=<CODE> query param.
+    Returns (department_or_None, error_response_or_None).
+    """
+    raw = (request.GET.get('department') or '').strip().upper()
+    if not raw:
+        return None, None
+    if raw not in _VALID_DEPARTMENTS:
+        return None, JsonResponse({
+            'error': f'Invalid department "{raw}". '
+                     f'Valid options: {", ".join(sorted(_VALID_DEPARTMENTS))}'
+        }, status=400)
+    return raw, None
+
+
 def _redis_client():
     from api.utils.redis_client import get_redis_client
     return get_redis_client()
@@ -62,11 +84,17 @@ def submission_status_overview(request):
     if err:
         return err
 
+    department, err = _resolve_department(request)
+    if err:
+        return err
+
     # Exclude SUPERSEDED submissions (invalidated on retest grant) from all
     # dashboard counts.  Superseded rows are audit-trail-only: including them
     # in totals would inflate "total submissions" and contaminate "failed" /
     # "pending" counts with historical data that is no longer actionable.
     active_qs = AssessmentSubmission.objects.exclude(status__startswith='SUPERSEDED_')
+    if department:
+        active_qs = active_qs.filter(user__department=department)
 
     status_counts = {
         row['status']: row['count']
@@ -100,6 +128,7 @@ def submission_status_overview(request):
         # Full breakdown for detailed views
         'total_submissions': total,
         'status_counts':     status_counts,
+        'selected_department': department,
     })
 
 
@@ -107,6 +136,10 @@ def submission_status_overview(request):
 @require_http_methods(["GET"])
 def submission_list(request):
     _, err = _require_admin(request)
+    if err:
+        return err
+
+    department, err = _resolve_department(request)
     if err:
         return err
 
@@ -120,6 +153,9 @@ def submission_list(request):
     status = request.GET.get('status')
     if status:
         qs = qs.filter(status=status.upper())
+
+    if department:
+        qs = qs.filter(user__department=department)
 
     student_id = request.GET.get('student_id')
     if student_id:

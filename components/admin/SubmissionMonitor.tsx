@@ -74,6 +74,11 @@ const STATUS_COLORS: Record<string, string> = {
   COMPLETE:          'bg-green-100 text-green-800',
 }
 
+const DEPARTMENTS = [
+  'CSD', 'CSE', 'CSM', 'CSC', 'IT',
+  'MECH', 'EEE', 'ECE', 'CHEM', 'CIVIL', 'BIOTECHNOLOGY',
+]
+
 const STATUS_OPTIONS = [
   { value: '',                  label: 'All Statuses'       },
   { value: 'PENDING',           label: 'Pending'            },
@@ -96,6 +101,7 @@ export function SubmissionMonitor() {
   const [initialLoading, setInitialLoading] = useState(true)
   const [filterLoading, setFilterLoading]   = useState(false)
   const [statusFilter, setStatusFilter]     = useState('')
+  const [departmentFilter, setDepartmentFilter] = useState('')
   const [searchQuery, setSearchQuery]       = useState('')
   const [currentPage, setCurrentPage]       = useState(1)
   const [totalPages, setTotalPages]         = useState(1)
@@ -107,8 +113,10 @@ export function SubmissionMonitor() {
 
   // Refs — stable references for interval callbacks
   const statusFilterRef = useRef(statusFilter)
+  const departmentFilterRef = useRef(departmentFilter)
   const currentPageRef  = useRef(currentPage)
   useEffect(() => { statusFilterRef.current = statusFilter }, [statusFilter])
+  useEffect(() => { departmentFilterRef.current = departmentFilter }, [departmentFilter])
   useEffect(() => { currentPageRef.current  = currentPage  }, [currentPage])
 
   // ── Fetch health once (manual refresh / initial) ──────────────────────────
@@ -128,6 +136,7 @@ export function SubmissionMonitor() {
   const fetchPage = useCallback(async (
     filter: string,
     page: number,
+    department: string = '',
     opts: { isFilterChange?: boolean; isManual?: boolean } = {}
   ) => {
     if (opts.isFilterChange) setFilterLoading(true)
@@ -136,9 +145,13 @@ export function SubmissionMonitor() {
     try {
       const params = new URLSearchParams({ page: String(page), page_size: String(PAGE_SIZE) })
       if (filter) params.set('status', filter)
+      if (department) params.set('department', department)
+
+      const overviewParams = new URLSearchParams()
+      if (department) overviewParams.set('department', department)
 
       const [overviewRes, listRes] = await Promise.allSettled([
-        fetch(getApiUrl('admin/submissions/overview'), { headers: getAuthHeaders(), cache: 'no-store' }),
+        fetch(getApiUrl(`admin/submissions/overview?${overviewParams}`), { headers: getAuthHeaders(), cache: 'no-store' }),
         fetch(getApiUrl(`admin/submissions?${params}`),  { headers: getAuthHeaders(), cache: 'no-store' }),
       ])
 
@@ -164,7 +177,7 @@ export function SubmissionMonitor() {
 
   // ── Initial load ──────────────────────────────────────────────────────────
   useEffect(() => {
-    Promise.allSettled([fetchPage('', 1), fetchHealth()])
+    Promise.allSettled([fetchPage('', 1, ''), fetchHealth()])
       .finally(() => setInitialLoading(false))
   }, [fetchPage, fetchHealth])
 
@@ -194,7 +207,7 @@ export function SubmissionMonitor() {
   // ── Auto-poll overview + list every 60 s ──────────────────────────────────
   useEffect(() => {
     const id = setInterval(
-      () => fetchPage(statusFilterRef.current, currentPageRef.current),
+      () => fetchPage(statusFilterRef.current, currentPageRef.current, departmentFilterRef.current),
       OVERVIEW_POLL_MS
     )
     return () => clearInterval(id)
@@ -204,18 +217,24 @@ export function SubmissionMonitor() {
   const handleFilterChange = (value: string) => {
     setStatusFilter(value)
     setCurrentPage(1)
-    fetchPage(value, 1, { isFilterChange: true })
+    fetchPage(value, 1, departmentFilter, { isFilterChange: true })
+  }
+
+  const handleDepartmentChange = (value: string) => {
+    setDepartmentFilter(value)
+    setCurrentPage(1)
+    fetchPage(statusFilter, 1, value, { isFilterChange: true })
   }
 
   // ── Pagination ────────────────────────────────────────────────────────────
   const goToPage = (page: number) => {
     setCurrentPage(page)
-    fetchPage(statusFilter, page)
+    fetchPage(statusFilter, page, departmentFilter)
   }
 
   // ── Manual refresh ────────────────────────────────────────────────────────
   const handleRefresh = () => {
-    fetchPage(statusFilter, currentPage, { isManual: true })
+    fetchPage(statusFilter, currentPage, departmentFilter, { isManual: true })
     fetchHealth()
   }
 
@@ -389,6 +408,20 @@ export function SubmissionMonitor() {
               <option key={o.value} value={o.value}>{o.label}</option>
             ))}
           </select>
+
+          <select
+            value={departmentFilter}
+            onChange={(e) => handleDepartmentChange(e.target.value)}
+            disabled={filterLoading}
+            className="px-3 py-2 text-sm border border-gray-300 rounded-lg
+                       focus:ring-2 focus:ring-indigo-500 disabled:opacity-60 cursor-pointer"
+          >
+            <option value="">All Departments</option>
+            {DEPARTMENTS.map((d) => (
+              <option key={d} value={d}>{d}</option>
+            ))}
+          </select>
+
           {filterLoading && (
             <Loader2 className="w-4 h-4 animate-spin text-indigo-500 flex-shrink-0" />
           )}
@@ -413,7 +446,9 @@ export function SubmissionMonitor() {
             </div>
           ) : filtered.length === 0 ? (
             <p className="text-sm text-gray-500 text-center py-10">
-              {statusFilter ? `No submissions with status "${STATUS_OPTIONS.find(o => o.value === statusFilter)?.label}"` : 'No submissions found'}
+              {statusFilter || departmentFilter
+                ? `No submissions found${statusFilter ? ` with status "${STATUS_OPTIONS.find(o => o.value === statusFilter)?.label}"` : ''}${departmentFilter ? ` in ${departmentFilter}` : ''}`
+                : 'No submissions found'}
             </p>
           ) : (
             <>
