@@ -26,6 +26,11 @@ import { toast } from 'sonner'
 import { API_BASE_URL, getAuthHeaders } from '@/lib/api-config'
 import { feedback } from '@/lib/user-feedback'
 
+const DEPARTMENTS = [
+  'CSD', 'CSE', 'CSM', 'CSC', 'IT',
+  'MECH', 'EEE', 'ECE', 'CHEM', 'CIVIL', 'BIOTECHNOLOGY'
+]
+
 interface Student {
   id: string
   student_id: string
@@ -34,6 +39,7 @@ interface Student {
   full_name: string
   is_active: boolean
   profile_completed: boolean
+  department: string | null
   created_at: string
 }
 
@@ -57,6 +63,7 @@ export function EnhancedStudentManagement({ refreshKey = 0 }: EnhancedStudentMan
   const [filteredStudents, setFilteredStudents] = useState<Student[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
+  const [departmentFilter, setDepartmentFilter] = useState('')
   const [editingStudent, setEditingStudent] = useState<Student | null>(null)
   const [currentPage, setCurrentPage] = useState(1)
   const [editFormData, setEditFormData] = useState<EditStudentData>({
@@ -75,22 +82,27 @@ export function EnhancedStudentManagement({ refreshKey = 0 }: EnhancedStudentMan
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshKey])
 
-  // Filter students based on search query (client-side, across all loaded data)
+  // Filter students based on search query + department (client-side, across all loaded data)
   useEffect(() => {
-    if (!searchQuery.trim()) {
-      setFilteredStudents(students)
-    } else {
+    let result = students
+
+    if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase()
-      const filtered = students.filter(student =>
+      result = result.filter(student =>
         student.student_id?.toLowerCase().includes(query) ||
         student.username?.toLowerCase().includes(query) ||
         student.full_name?.toLowerCase().includes(query) ||
         student.email?.toLowerCase().includes(query)
       )
-      setFilteredStudents(filtered)
     }
+
+    if (departmentFilter) {
+      result = result.filter(student => student.department === departmentFilter)
+    }
+
+    setFilteredStudents(result)
     setCurrentPage(1)
-  }, [searchQuery, students])
+  }, [searchQuery, departmentFilter, students])
 
   // Pagination calculations
   const totalPages = Math.ceil(filteredStudents.length / ITEMS_PER_PAGE)
@@ -112,19 +124,9 @@ export function EnhancedStudentManagement({ refreshKey = 0 }: EnhancedStudentMan
       toast.dismiss(loadingToast)
 
       if (data.students) {
+        // setFilteredStudents is handled by the search/department filter effect below,
+        // which re-runs automatically whenever `students` changes.
         setStudents(data.students)
-        // Also update filtered students
-        if (!searchQuery.trim()) {
-          setFilteredStudents(data.students)
-        } else {
-          const filtered = data.students.filter((student: Student) =>
-            student.student_id?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            student.username?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            student.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            student.email?.toLowerCase().includes(searchQuery.toLowerCase())
-          )
-          setFilteredStudents(filtered)
-        }
       }
     } catch (error) {
       console.error('Error fetching students:', error)
@@ -345,6 +347,16 @@ export function EnhancedStudentManagement({ refreshKey = 0 }: EnhancedStudentMan
             className="pl-10"
           />
         </div>
+        <select
+          value={departmentFilter}
+          onChange={(e) => setDepartmentFilter(e.target.value)}
+          className="border border-input rounded-md px-3 py-2 text-sm bg-background sm:w-48"
+        >
+          <option value="">All departments</option>
+          {DEPARTMENTS.map((dept) => (
+            <option key={dept} value={dept}>{dept}</option>
+          ))}
+        </select>
         <Button onClick={fetchStudents} variant="outline">
           <RotateCcw className="w-4 h-4 mr-2" />
           Refresh
@@ -367,6 +379,7 @@ export function EnhancedStudentManagement({ refreshKey = 0 }: EnhancedStudentMan
                 <tr className="border-b border-border bg-secondary/50">
                   <th className="text-center p-4 text-sm font-medium text-muted-foreground">Status</th>
                   <th className="text-left p-4 text-sm font-medium text-muted-foreground">Student ID</th>
+                  <th className="text-left p-4 text-sm font-medium text-muted-foreground">Department</th>
                   <th className="text-left p-4 text-sm font-medium text-muted-foreground">Username</th>
                   <th className="text-left p-4 text-sm font-medium text-muted-foreground">Email</th>
                   <th className="text-center p-4 text-sm font-medium text-muted-foreground">Actions</th>
@@ -375,8 +388,8 @@ export function EnhancedStudentManagement({ refreshKey = 0 }: EnhancedStudentMan
               <tbody>
                 {filteredStudents.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="text-center p-8 text-muted-foreground">
-                      {searchQuery ? 'No students found matching your search' : 'No students found'}
+                    <td colSpan={6} className="text-center p-8 text-muted-foreground">
+                      {searchQuery || departmentFilter ? 'No students found matching your filters' : 'No students found'}
                     </td>
                   </tr>
                 ) : (
@@ -410,6 +423,13 @@ export function EnhancedStudentManagement({ refreshKey = 0 }: EnhancedStudentMan
                             {student.student_id}
                           </code>
                         </div>
+                      </td>
+                      <td className="p-4">
+                        {student.department ? (
+                          <Badge variant="secondary">{student.department}</Badge>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
                       </td>
                       <td className="p-4">
                         {student.profile_completed && student.username ? (
